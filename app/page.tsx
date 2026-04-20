@@ -48,6 +48,8 @@ export default function PlanPage() {
   const [showUserPicker, setShowUserPicker] = useState(false)
   // Fun mode
   const [funMode, setFunMode] = useState(false)
+  const [funDayPicker, setFunDayPicker] = useState(false)
+  const [funSelectedDates, setFunSelectedDates] = useState<Set<string>>(new Set())
   const [nominations, setNominations] = useState<Nomination[]>([])
   const [funDayIndex, setFunDayIndex] = useState(0)
   const [funCardIndex, setFunCardIndex] = useState(0)
@@ -146,6 +148,18 @@ export default function PlanPage() {
 
   const openFunMode = () => {
     if (!currentUser) { showToast('Pick a profile first'); return }
+    // Pre-select empty days
+    const emptyDates = new Set(
+      days
+        .filter(d => !entries.find(e => e.date === format(d, 'yyyy-MM-dd')))
+        .map(d => format(d, 'yyyy-MM-dd'))
+    )
+    setFunSelectedDates(emptyDates)
+    setFunDayPicker(true)
+  }
+
+  const startFunMode = () => {
+    setFunDayPicker(false)
     setFunDayIndex(0)
     setFunCardIndex(0)
     setFunDone(false)
@@ -195,8 +209,12 @@ export default function PlanPage() {
     setEntries(prev => prev.filter(e => e.id !== id))
   }
 
-  // Fun mode: days without a confirmed meal, in current week
-  const funDays = days.filter(d => !entries.find(e => e.date === format(d, 'yyyy-MM-dd')))
+  // Fun mode: days without a confirmed meal, filtered to user-selected dates
+  const funDays = days.filter(d => {
+    const ds = format(d, 'yyyy-MM-dd')
+    if (funSelectedDates.size > 0) return funSelectedDates.has(ds)
+    return !entries.find(e => e.date === ds)
+  })
 
   const advanceFunCard = (newVotes: typeof funVotes) => {
     const nextCard = funCardIndex + 1
@@ -892,6 +910,66 @@ export default function PlanPage() {
           </div>
         )
       })()}
+
+      {/* Fun mode day picker */}
+      {funDayPicker && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-sm bg-[#141414] border border-[#2a2a2a] rounded-2xl overflow-hidden shadow-2xl animate-slide-up">
+            <div className="flex items-center justify-between p-4 border-b border-[#222]">
+              <div>
+                <p className="font-semibold text-white">Fun mode</p>
+                <p className="text-xs text-[#555] mt-0.5">Pick which days to fill</p>
+              </div>
+              <button onClick={() => setFunDayPicker(false)}
+                className="p-1.5 rounded-lg hover:bg-[#222] text-[#555] hover:text-white transition-all">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-4 space-y-2">
+              {days.map(day => {
+                const ds = format(day, 'yyyy-MM-dd')
+                const hasEntry = !!entries.find(e => e.date === ds)
+                const selected = funSelectedDates.has(ds)
+                return (
+                  <button
+                    key={ds}
+                    onClick={() => {
+                      if (hasEntry) return
+                      setFunSelectedDates(prev => {
+                        const next = new Set(prev)
+                        next.has(ds) ? next.delete(ds) : next.add(ds)
+                        return next
+                      })
+                    }}
+                    disabled={hasEntry}
+                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border transition-all ${
+                      hasEntry
+                        ? 'border-[#1e1e1e] bg-[#0f0f0f] opacity-40 cursor-not-allowed'
+                        : selected
+                          ? 'border-primary/40 bg-primary/10 text-white'
+                          : 'border-[#2a2a2a] bg-[#1a1a1a] text-[#666] hover:text-white hover:border-[#333]'
+                    }`}
+                  >
+                    <span className="text-sm font-medium">{format(day, 'EEEE')}</span>
+                    <span className="text-xs text-[#555]">
+                      {hasEntry ? 'already planned' : format(day, 'MMM d')}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+            <div className="p-4 pt-0">
+              <button
+                onClick={startFunMode}
+                disabled={funSelectedDates.size === 0}
+                className="w-full py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-40"
+              >
+                Start for {funSelectedDates.size} day{funSelectedDates.size !== 1 ? 's' : ''} 🎲
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Toast */}
       {toast && (

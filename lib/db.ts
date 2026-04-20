@@ -343,6 +343,10 @@ export function deleteNominationsForDate(date: string) {
   getDb().prepare('DELETE FROM nominations WHERE date = ?').run(date)
 }
 
+export function deleteNominationsOlderThan(cutoffDate: string) {
+  getDb().prepare('DELETE FROM nominations WHERE date < ?').run(cutoffDate)
+}
+
 // --- Shopping List ---
 export type ShoppingItem = {
   id: string

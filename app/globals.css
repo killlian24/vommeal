@@ -58,6 +58,7 @@ input::placeholder, textarea::placeholder {
 
 /* Transitions */
 .page-enter { animation: slideUp 0.2s ease-out; }
+.animate-slide-up { animation: slideUp 0.2s ease-out; }
 
 @keyframes slideUp {
   from { opacity: 0; transform: translateY(6px); }

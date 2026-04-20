@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
   getNominationsForRange, addNomination, addMealPlanEntry,
-  deleteNominationsForDate, getMealPlanRange, getSetting, getAllRecipes
+  deleteNominationsForDate, deleteNominationsOlderThan, getMealPlanRange, getSetting, getAllRecipes
 } from '@/lib/db'
 import { v4 as uuidv4 } from 'uuid'
 
@@ -10,6 +10,12 @@ export async function GET(req: NextRequest) {
   const start = searchParams.get('start') || ''
   const end = searchParams.get('end') || ''
   if (!start || !end) return NextResponse.json({ error: 'start and end required' }, { status: 400 })
+
+  // Clean up nominations older than 14 days that never resolved into a meal
+  const cutoff = new Date()
+  cutoff.setDate(cutoff.getDate() - 14)
+  deleteNominationsOlderThan(cutoff.toISOString().slice(0, 10))
+
   return NextResponse.json(getNominationsForRange(start, end))
 }
 
