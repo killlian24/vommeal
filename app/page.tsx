@@ -343,56 +343,64 @@ export default function PlanPage() {
       )}
 
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div>
-            <h1 className="text-2xl font-bold text-white">This Week</h1>
-            <p className="text-sm text-[#555] mt-0.5">
-              {format(weekStart, 'MMM d')} – {format(addDays(weekStart, 6), 'MMM d')}
-            </p>
+      <div className="space-y-3">
+        {/* Row 1: title + week nav */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="min-w-0">
+              <h1 className="text-2xl font-bold text-white">This Week</h1>
+              <p className="text-sm text-[#555] mt-0.5">
+                {format(weekStart, 'MMM d')} – {format(addDays(weekStart, 6), 'MMM d')}
+              </p>
+            </div>
+            {pendingForMe > 0 && (
+              <span className="px-2 py-0.5 rounded-full bg-primary/20 text-primary text-xs font-semibold border border-primary/30 flex-shrink-0">
+                {pendingForMe} pending
+              </span>
+            )}
           </div>
-          {pendingForMe > 0 && (
-            <span className="px-2 py-0.5 rounded-full bg-primary/20 text-primary text-xs font-semibold border border-primary/30">
-              {pendingForMe} pending
-            </span>
-          )}
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <button onClick={() => setWeekStart(w => addDays(w, -7))}
+              className="p-2 rounded-lg hover:bg-[#1c1c1c] text-[#555] hover:text-white transition-all">
+              <ChevronLeft size={18} />
+            </button>
+            <button onClick={() => setWeekStart(startOfWeek(new Date(), { weekStartsOn: 1 }))}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[#1c1c1c] hover:bg-[#252525] text-[#666] hover:text-white transition-all border border-[#2a2a2a]">
+              Today
+            </button>
+            <button onClick={() => setWeekStart(w => addDays(w, 7))}
+              className="p-2 rounded-lg hover:bg-[#1c1c1c] text-[#555] hover:text-white transition-all">
+              <ChevronRight size={18} />
+            </button>
+          </div>
         </div>
+        {/* Row 2: action buttons */}
         <div className="flex items-center gap-2">
-          {/* User switcher */}
           {currentUser && (
             <button onClick={switchUser} title={`Switch to ${partner}`}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] transition-all">
               <Avatar name={currentUser} />
-              <span className="text-xs text-[#888] hidden sm:inline">{currentUser}</span>
+              <span className="text-xs text-[#888]">{currentUser}</span>
               <RefreshCw size={11} className="text-[#555]" />
             </button>
           )}
           <button onClick={openFunMode}
-            className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-[#888] hover:text-pink-400 transition-all"
-            title="Fun mode — pick meals together">
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-[#888] hover:text-pink-400 transition-all"
+            title="Fun mode">
             <Dices size={15} />
+            <span className="text-xs">Fun</span>
           </button>
           <button onClick={autofillWeek} disabled={autofilling}
-            className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-[#888] hover:text-primary transition-all disabled:opacity-50"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-[#888] hover:text-primary transition-all disabled:opacity-50"
             title="Fill empty days automatically">
             <Zap size={15} className={autofilling ? 'animate-pulse' : ''} />
+            <span className="text-xs">Fast</span>
           </button>
           <button onClick={generateShopping}
-            className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-[#888] hover:text-white transition-all"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-[#888] hover:text-white transition-all"
             title="Add this week's ingredients to shopping list">
             <ShoppingCart size={15} />
-          </button>
-          <button onClick={() => setWeekStart(w => addDays(w, -7))}
-            className="p-2 rounded-lg hover:bg-[#1c1c1c] text-[#555] hover:text-white transition-all">
-            <ChevronLeft size={18} />
-          </button>
-          <button onClick={() => setWeekStart(startOfWeek(new Date(), { weekStartsOn: 1 }))}
-            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[#1c1c1c] hover:bg-[#252525] text-[#666] hover:text-white transition-all border border-[#2a2a2a]">
-            Today
-          </button>
-          <button onClick={() => setWeekStart(w => addDays(w, 7))}
-            className="p-2 rounded-lg hover:bg-[#1c1c1c] text-[#555] hover:text-white transition-all">
-            <ChevronRight size={18} />
+            <span className="text-xs">To list</span>
           </button>
         </div>
       </div>

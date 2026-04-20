@@ -200,65 +200,68 @@ export default function ShoppingPage() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-start justify-between">
+      <div className="space-y-3">
+        {/* Row 1: title + count */}
         <div>
           <h1 className="text-2xl font-bold text-white">Shopping List</h1>
           <p className="text-sm text-[#666] mt-0.5">
             {checkedCount}/{totalCount} items checked
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        {/* Row 2: action buttons */}
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => syncList(false)}
             disabled={syncing}
-            title="Sync from your shopping list"
-            className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm text-[#888] hover:text-white transition-all"
+            title="Sync with Home Assistant"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-xs text-[#888] hover:text-white transition-all"
           >
-            <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
-            <span className="hidden sm:inline text-xs">Sync</span>
+            <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} />
+            Sync
           </button>
           <button
             onClick={addTonight}
             disabled={addingTonight}
             title="Add tonight's ingredients"
-            className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm text-[#888] hover:text-white transition-all"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-xs text-[#888] hover:text-white transition-all"
           >
-            <Moon size={14} className={addingTonight ? 'animate-pulse' : ''} />
-            <span className="hidden sm:inline text-xs">Tonight</span>
+            <Moon size={13} className={addingTonight ? 'animate-pulse' : ''} />
+            Tonight
           </button>
           <button
             onClick={generate}
             disabled={generating}
             title="Generate from this week's plan"
-            className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm text-[#888] hover:text-white transition-all"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-xs text-[#888] hover:text-white transition-all"
           >
-            <RefreshCw size={14} className={generating ? 'animate-spin' : ''} />
-            <span className="hidden sm:inline text-xs">From plan</span>
+            <RefreshCw size={13} className={generating ? 'animate-spin' : ''} />
+            From plan
           </button>
           <button
             onClick={() => { setShowAdd(false); setShowPantry(p => !p) }}
             title="Pantry staples"
-            className={`flex items-center gap-1.5 px-2.5 py-2 rounded-lg border text-sm transition-all ${
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-all ${
               showPantry
                 ? 'bg-primary/15 border-primary/30 text-primary'
                 : 'bg-[#1c1c1c] hover:bg-[#252525] border-[#2a2a2a] text-[#888] hover:text-white'
             }`}
           >
-            <Package size={14} />
-            <span className="hidden sm:inline text-xs">Pantry</span>
+            <Package size={13} />
+            Pantry
           </button>
           <button
             onClick={copyList}
             title="Copy list to clipboard"
-            className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm text-[#888] hover:text-white transition-all"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-xs text-[#888] hover:text-white transition-all"
           >
-            <Copy size={14} />
+            <Copy size={13} />
+            Copy
           </button>
           <button
             onClick={() => { setShowPantry(false); setShowAdd(a => !a) }}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-all"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-xs font-medium transition-all ml-auto"
           >
-            {showAdd ? <X size={15} /> : <Plus size={15} />}
+            {showAdd ? <X size={14} /> : <Plus size={14} />}
           </button>
         </div>
       </div>
