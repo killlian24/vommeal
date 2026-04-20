@@ -84,10 +84,14 @@ Your database in `data/` is never touched by updates.
 
 ## Access outside home
 
-Use **Tailscale** — install on the NAS, access via the tailnet IP. No ports to open, no auth to add.
+Use **Tailscale** — install it on the NAS and your devices, then access Vommeal via the NAS tailnet IP or MagicDNS name. No router ports need to be opened.
+
+Do **not** port-forward Vommeal directly from your router, and do not use Tailscale Funnel for this app unless you add authentication first. Vommeal is intended for trusted LAN/Tailscale access.
 
 ---
 
 ## Backup
 
 Everything lives in `/volume1/docker/vommeal/data/vommeal.db`. Back that file up and you can restore the full app state.
+
+Treat the database backup as private: it may contain Mealie/Home Assistant tokens and meal-planning data.
