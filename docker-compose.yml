@@ -9,7 +9,9 @@ services:
       # "127.0.0.1:3333:3000" so the container is only reachable via the proxy.
       - "3333:3000"
     volumes:
-      - vommeal_data:/app/data
+      # Synology bind mount: the SQLite database is stored in this visible folder
+      # so it is easy to inspect, back up, and restore from File Station.
+      - /volume1/docker/vommeal/data:/app/data
     environment:
       - NODE_ENV=production
       - DATA_DIR=/app/data
@@ -25,7 +27,3 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-
-volumes:
-  vommeal_data:
-    driver: local

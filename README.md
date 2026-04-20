@@ -8,18 +8,24 @@ Meal planning PWA for two. Weekly planner, Mealie recipe sync, HA shopping list 
 
 Assumes Docker + Portainer are already running on your NAS.
 
-### 1. Clone the repo on the NAS
+### 1. Create the data folder
 
-SSH into your NAS and clone into your docker folder:
+SSH into your NAS and create the folder where Vommeal stores its database:
 
 ```bash
-git clone https://github.com/killlian24/vommeal.git /volume1/docker/vommeal
 mkdir -p /volume1/docker/vommeal/data
 ```
 
-### 2. Adjust the compose file
+You do not need `git` installed on the NAS when deploying through Portainer's repository mode.
 
-Edit `/volume1/docker/vommeal/docker-compose.yml` — change the volume line to use a bind mount:
+### 2. Deploy in Portainer
+
+Portainer → **Stacks** → **Add stack** → choose **Repository**:
+
+- **Repository URL:** `https://github.com/killlian24/vommeal`
+- **Compose path:** `docker-compose.yml`
+
+The compose file already stores the database in the Synology folder:
 
 ```yaml
 services:
@@ -41,20 +47,6 @@ services:
       retries: 3
 ```
 
-### 3. Deploy in Portainer
-
-Portainer → **Stacks** → **Add stack** → choose **Repository**:
-
-- **Repository URL:** `https://github.com/killlian24/vommeal`
-- **Compose path:** `docker-compose.yml`
-
-Or just SSH and run:
-
-```bash
-cd /volume1/docker/vommeal
-docker compose up -d --build
-```
-
 First build takes 3–5 minutes (Node deps + Next.js compile). The container is healthy when `http://<nas-ip>:3333` loads.
 
 ---
@@ -72,13 +64,9 @@ Open `http://<nas-ip>:3333` → **Settings**:
 
 ## Updating
 
-```bash
-cd /volume1/docker/vommeal
-git pull
-docker compose up -d --build
-```
+In Portainer, redeploy the stack from the repository and enable pulling the latest image/source if Portainer asks.
 
-Your database in `data/` is never touched by updates.
+Your database in `/volume1/docker/vommeal/data/` is never touched by updates.
 
 ---
 
