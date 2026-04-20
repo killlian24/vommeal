@@ -1,0 +1,453 @@
+'use client'
+
+import { useState, useEffect } from 'react'
+import { Check, Plus, Copy, RefreshCw, ChevronDown, ChevronRight, X, Moon, Package } from 'lucide-react'
+import { format, startOfWeek, addDays } from 'date-fns'
+
+type ShoppingItem = {
+  id: string; name: string; amount: string; unit: string
+  category: string; checked: boolean; source: string
+}
+type PantryStaple = { id: string; name: string }
+
+const CATEGORY_LABELS: Record<string, string> = {
+  produce: '🥦 Produce',
+  meat: '🥩 Meat & Fish',
+  dairy: '🧀 Dairy & Eggs',
+  bakery: '🍞 Bakery & Pasta',
+  pantry: '🫙 Pantry',
+  frozen: '🧊 Frozen',
+  beverages: '🥤 Beverages',
+  other: '📦 Other',
+}
+
+const DEFAULT_categoryOrder = ['produce', 'meat', 'dairy', 'bakery', 'pantry', 'frozen', 'beverages', 'other']
+
+export default function ShoppingPage() {
+  const [items, setItems] = useState<ShoppingItem[]>([])
+  const [categoryOrder, setCategoryOrder] = useState<string[]>(DEFAULT_categoryOrder)
+  const [loading, setLoading] = useState(true)
+  const [generating, setGenerating] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [addingTonight, setAddingTonight] = useState(false)
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const [newItem, setNewItem] = useState('')
+  const [newAmount, setNewAmount] = useState('')
+  const [showAdd, setShowAdd] = useState(false)
+  const [showPantry, setShowPantry] = useState(false)
+  const [staples, setStaples] = useState<PantryStaple[]>([])
+  const [newStaple, setNewStaple] = useState('')
+  const [toastMsg, setToastMsg] = useState('')
+
+  const showToast = (msg: string) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 2500) }
+
+  const load = async () => {
+    setLoading(true)
+    const res = await fetch('/api/shopping')
+    setItems(await res.json())
+    setLoading(false)
+  }
+
+  const loadStaples = async () => {
+    const res = await fetch('/api/pantry')
+    setStaples(await res.json())
+  }
+
+  useEffect(() => {
+    fetch('/api/settings').then(r => r.json()).then(s => {
+      if (s.category_order) {
+        try { setCategoryOrder(JSON.parse(s.category_order)) } catch { /* use default */ }
+      }
+    })
+    load()
+    loadStaples()
+    syncList(true)
+  }, [])
+
+  const toggle = async (id: string) => {
+    setItems(prev => prev.map(i => i.id === id ? { ...i, checked: !i.checked } : i))
+    await fetch(`/api/shopping/${id}`, { method: 'PATCH' })
+  }
+
+  const remove = async (id: string) => {
+    setItems(prev => prev.filter(i => i.id !== id))
+    await fetch(`/api/shopping/${id}`, { method: 'DELETE' })
+  }
+
+  const clearChecked = async () => {
+    setItems(prev => prev.filter(i => !i.checked))
+    await fetch('/api/shopping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'clear_checked' }) })
+    showToast('Cleared checked items')
+  }
+
+  const clearAll = async () => {
+    if (!confirm('Clear all items?')) return
+    setItems([])
+    await fetch('/api/shopping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'clear_all' }) })
+    showToast('Shopping list cleared')
+  }
+
+  const addTonight = async () => {
+    setAddingTonight(true)
+    const today = format(new Date(), 'yyyy-MM-dd')
+    const res = await fetch('/api/shopping', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'add_date', date: today }),
+    })
+    const data = await res.json()
+    setAddingTonight(false)
+    if (data.added > 0) {
+      showToast(`Added ${data.added} ingredients for tonight`)
+      load()
+    } else {
+      showToast('Nothing to add — no dinner planned or already on list')
+    }
+  }
+
+  const addStaple = async () => {
+    if (!newStaple.trim()) return
+    const res = await fetch('/api/pantry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newStaple.trim() }),
+    })
+    const staple = await res.json()
+    setStaples(prev => [...prev, staple].sort((a, b) => a.name.localeCompare(b.name)))
+    setNewStaple('')
+  }
+
+  const removeStaple = async (id: string) => {
+    setStaples(prev => prev.filter(s => s.id !== id))
+    await fetch(`/api/pantry/${id}`, { method: 'DELETE' })
+  }
+
+  const generate = async () => {
+    setGenerating(true)
+    const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 })
+    const start = format(weekStart, 'yyyy-MM-dd')
+    const end = format(addDays(weekStart, 6), 'yyyy-MM-dd')
+    const res = await fetch('/api/shopping', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'generate', start, end }),
+    })
+    const data = await res.json()
+    setGenerating(false)
+    showToast(data.ok ? `Added ${data.added} ingredients from this week` : `Error: ${data.error}`)
+    load()
+  }
+
+  const syncList = async (silent = false) => {
+    setSyncing(true)
+    try {
+      const res = await fetch('/api/ha/sync', { method: 'POST' })
+      const data = await res.json()
+      if (data.ok) {
+        const changed = (data.added ?? 0) + (data.checked ?? 0)
+        if (changed > 0) {
+          await load()
+          const parts = []
+          if (data.added > 0) parts.push(`${data.added} new`)
+          if (data.checked > 0) parts.push(`${data.checked} checked off`)
+          if (!silent) showToast(`Synced: ${parts.join(', ')}`)
+        } else if (!silent) showToast('Nothing new on your list')
+      } else if (!silent) {
+        showToast(`Sync failed: ${data.error}`)
+      }
+    } catch {
+      if (!silent) showToast('Sync failed — check Settings')
+    }
+    setSyncing(false)
+  }
+
+  const addItem = async () => {
+    if (!newItem.trim()) return
+    const res = await fetch('/api/shopping', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newItem.trim(), amount: newAmount.trim() }),
+    })
+    const item = await res.json()
+    setItems(prev => [...prev, item])
+    setNewItem(''); setNewAmount(''); setShowAdd(false)
+  }
+
+  const copyList = () => {
+    const unchecked = items.filter(i => !i.checked)
+    const text = categoryOrder.flatMap(cat => {
+      const catItems = unchecked.filter(i => i.category === cat)
+      if (!catItems.length) return []
+      return [
+        CATEGORY_LABELS[cat] || cat,
+        ...catItems.map(i => `• ${[i.amount, i.unit, i.name].filter(Boolean).join(' ')}`),
+        '',
+      ]
+    }).join('\n')
+    navigator.clipboard.writeText(text.trim())
+    showToast('Copied to clipboard!')
+  }
+
+  const grouped = categoryOrder.reduce<Record<string, ShoppingItem[]>>((acc, cat) => {
+    const catItems = items.filter(i => i.category === cat)
+    if (catItems.length) acc[cat] = catItems
+    return acc
+  }, {})
+
+  const checkedCount = items.filter(i => i.checked).length
+  const totalCount = items.length
+
+  return (
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Shopping List</h1>
+          <p className="text-sm text-[#666] mt-0.5">
+            {checkedCount}/{totalCount} items checked
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => syncList(false)}
+            disabled={syncing}
+            title="Sync from your shopping list"
+            className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm text-[#888] hover:text-white transition-all"
+          >
+            <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
+            <span className="hidden sm:inline text-xs">Sync</span>
+          </button>
+          <button
+            onClick={addTonight}
+            disabled={addingTonight}
+            title="Add tonight's ingredients"
+            className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm text-[#888] hover:text-white transition-all"
+          >
+            <Moon size={14} className={addingTonight ? 'animate-pulse' : ''} />
+            <span className="hidden sm:inline text-xs">Tonight</span>
+          </button>
+          <button
+            onClick={generate}
+            disabled={generating}
+            title="Generate from this week's plan"
+            className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm text-[#888] hover:text-white transition-all"
+          >
+            <RefreshCw size={14} className={generating ? 'animate-spin' : ''} />
+            <span className="hidden sm:inline text-xs">From plan</span>
+          </button>
+          <button
+            onClick={() => { setShowAdd(false); setShowPantry(p => !p) }}
+            title="Pantry staples"
+            className={`flex items-center gap-1.5 px-2.5 py-2 rounded-lg border text-sm transition-all ${
+              showPantry
+                ? 'bg-primary/15 border-primary/30 text-primary'
+                : 'bg-[#1c1c1c] hover:bg-[#252525] border-[#2a2a2a] text-[#888] hover:text-white'
+            }`}
+          >
+            <Package size={14} />
+            <span className="hidden sm:inline text-xs">Pantry</span>
+          </button>
+          <button
+            onClick={copyList}
+            title="Copy list to clipboard"
+            className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm text-[#888] hover:text-white transition-all"
+          >
+            <Copy size={14} />
+          </button>
+          <button
+            onClick={() => { setShowPantry(false); setShowAdd(a => !a) }}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-all"
+          >
+            {showAdd ? <X size={15} /> : <Plus size={15} />}
+          </button>
+        </div>
+      </div>
+
+      {/* Add item */}
+      {showAdd && (
+        <div className="bg-[#141414] border border-[#2a2a2a] rounded-xl p-4 space-y-3 animate-slide-up">
+          <div className="flex gap-2">
+            <input
+              value={newAmount}
+              onChange={e => setNewAmount(e.target.value)}
+              placeholder="500g"
+              className="w-20"
+              onKeyDown={e => e.key === 'Enter' && addItem()}
+            />
+            <input
+              value={newItem}
+              onChange={e => setNewItem(e.target.value)}
+              placeholder="Item name"
+              className="flex-1"
+              autoFocus
+              onKeyDown={e => e.key === 'Enter' && addItem()}
+            />
+          </div>
+          <button
+            onClick={addItem}
+            className="w-full py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-all"
+          >
+            Add to list
+          </button>
+        </div>
+      )}
+
+      {/* Pantry staples panel */}
+      {showPantry && (
+        <div className="bg-[#141414] border border-[#2a2a2a] rounded-xl p-4 space-y-3 animate-slide-up">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-white">Pantry Staples</p>
+              <p className="text-xs text-[#555] mt-0.5">These are skipped when generating your list</p>
+            </div>
+            <button onClick={() => setShowPantry(false)} className="p-1 text-[#555] hover:text-white transition-colors">
+              <X size={14} />
+            </button>
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={newStaple}
+              onChange={e => setNewStaple(e.target.value)}
+              placeholder="e.g. olive oil, salt, garlic…"
+              className="flex-1 text-sm"
+              onKeyDown={e => e.key === 'Enter' && addStaple()}
+              autoFocus
+            />
+            <button
+              onClick={addStaple}
+              className="px-3 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-all"
+            >
+              Add
+            </button>
+          </div>
+          {staples.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {staples.map(s => (
+                <span key={s.id} className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#1e1e1e] border border-[#2a2a2a] text-xs text-[#aaa]">
+                  {s.name}
+                  <button onClick={() => removeStaple(s.id)} className="text-[#555] hover:text-red-400 transition-colors">
+                    <X size={10} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-[#444]">No staples yet — add things you always have at home</p>
+          )}
+        </div>
+      )}
+
+      {/* Progress bar */}
+      {totalCount > 0 && (
+        <div className="h-1.5 bg-[#1c1c1c] rounded-full overflow-hidden">
+          <div
+            className="h-full bg-primary rounded-full transition-all duration-500"
+            style={{ width: `${(checkedCount / totalCount) * 100}%` }}
+          />
+        </div>
+      )}
+
+      {/* List */}
+      {loading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => <div key={i} className="skeleton h-12 rounded-xl" />)}
+        </div>
+      ) : totalCount === 0 ? (
+        <div className="text-center py-16">
+          <div className="text-5xl mb-3">🛒</div>
+          <p className="text-[#555]">Your list is empty</p>
+          <p className="text-xs text-[#444] mt-1">Add items manually or generate from this week's meal plan</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {Object.entries(grouped).map(([cat, catItems]) => {
+            const isCollapsed = collapsed.has(cat)
+            const doneCount = catItems.filter(i => i.checked).length
+            return (
+              <div key={cat} className="bg-[#141414] border border-[#1e1e1e] rounded-xl overflow-hidden">
+                <button
+                  onClick={() => setCollapsed(prev => {
+                    const next = new Set(prev)
+                    next.has(cat) ? next.delete(cat) : next.add(cat)
+                    return next
+                  })}
+                  className="w-full flex items-center justify-between px-4 py-3 hover:bg-[#191919] transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-white">{CATEGORY_LABELS[cat] || cat}</span>
+                    <span className="text-xs text-[#555]">{doneCount}/{catItems.length}</span>
+                  </div>
+                  {isCollapsed ? <ChevronRight size={14} className="text-[#555]" /> : <ChevronDown size={14} className="text-[#555]" />}
+                </button>
+                {!isCollapsed && (
+                  <div className="border-t border-[#1e1e1e]">
+                    {catItems.map((item, idx) => (
+                      <div
+                        key={item.id}
+                        className={`flex items-center gap-3 px-4 py-3 transition-colors ${
+                          idx < catItems.length - 1 ? 'border-b border-[#1a1a1a]' : ''
+                        } ${item.checked ? 'opacity-50' : ''}`}
+                      >
+                        <button
+                          onClick={() => toggle(item.id)}
+                          className={`w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-all ${
+                            item.checked
+                              ? 'bg-primary border-primary'
+                              : 'border-[#3a3a3a] hover:border-primary'
+                          }`}
+                        >
+                          {item.checked && <Check size={10} className="text-white" strokeWidth={3} />}
+                        </button>
+                        <div className="flex-1 min-w-0">
+                          <span className={`text-sm ${item.checked ? 'line-through text-[#555]' : 'text-white'}`}>
+                            {item.name}
+                          </span>
+                          {(item.amount || item.unit) && (
+                            <span className="text-xs text-primary ml-2">
+                              {[item.amount, item.unit].filter(Boolean).join(' ')}
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => remove(item.id)}
+                          className="text-[#333] hover:text-red-400 transition-colors p-1"
+                        >
+                          <X size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+
+          {/* Clear actions */}
+          {checkedCount > 0 && (
+            <div className="flex gap-2">
+              <button
+                onClick={clearChecked}
+                className="flex-1 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-xs text-[#666] hover:text-white transition-all"
+              >
+                Clear {checkedCount} checked
+              </button>
+              <button
+                onClick={clearAll}
+                className="px-4 py-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-xs text-red-400 transition-all"
+              >
+                Clear all
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Toast */}
+      {toastMsg && (
+        <div className="fixed bottom-24 md:bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 bg-[#1e1e1e] border border-[#333] rounded-full text-sm text-white shadow-xl animate-slide-up whitespace-nowrap">
+          {toastMsg}
+        </div>
+      )}
+    </div>
+  )
+}

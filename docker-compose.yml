@@ -1,0 +1,27 @@
+services:
+  vommeal:
+    build: .
+    container_name: vommeal
+    restart: unless-stopped
+    ports:
+      # Exposed on LAN + Tailscale interfaces at <nas-ip>:3333.
+      # If you later put a reverse proxy in front, change this to
+      # "127.0.0.1:3333:3000" so the container is only reachable via the proxy.
+      - "3333:3000"
+    volumes:
+      - vommeal_data:/app/data
+    environment:
+      - NODE_ENV=production
+      - DATA_DIR=/app/data
+      # Optional: pre-configure Mealie (or set via Settings page)
+      # - MEALIE_URL=https://mealie.your-domain.com
+      # - MEALIE_TOKEN=your-api-token-here
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  vommeal_data:
+    driver: local

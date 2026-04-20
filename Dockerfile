@@ -1,0 +1,52 @@
+FROM node:20-alpine AS base
+
+# Install build dependencies for better-sqlite3
+RUN apk add --no-cache libc6-compat python3 make g++
+
+WORKDIR /app
+
+# ---- Dependencies ----
+FROM base AS deps
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# ---- Builder ----
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+ENV NEXT_TELEMETRY_DISABLED 1
+RUN npm run build
+
+# ---- Runner ----
+FROM node:20-alpine AS runner
+RUN apk add --no-cache libc6-compat
+
+WORKDIR /app
+
+ENV NODE_ENV production
+ENV NEXT_TELEMETRY_DISABLED 1
+ENV DATA_DIR /app/data
+
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
+
+# Copy standalone output
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+# Copy native modules (better-sqlite3)
+COPY --from=builder /app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
+COPY --from=builder /app/node_modules/bindings ./node_modules/bindings 2>/dev/null || true
+COPY --from=builder /app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path 2>/dev/null || true
+
+RUN mkdir -p /app/data && chown -R nextjs:nodejs /app/data
+
+USER nextjs
+
+EXPOSE 3000
+ENV PORT 3000
+ENV HOSTNAME "0.0.0.0"
+
+CMD ["node", "server.js"]
