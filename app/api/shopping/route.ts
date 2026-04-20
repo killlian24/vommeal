@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
   getAllShoppingItems, addShoppingItem, clearCheckedItems, clearAllItems,
-  getAllRecipes, getMealPlanRange, getSetting, setShoppingItemHaUid,
+  getAllRecipes, getMealPlanRange, setShoppingItemHaUid,
   getAllPantryStaples, PantryStaple,
 } from '@/lib/db'
+import { getHomeAssistantConfig } from '@/lib/config'
 import { v4 as uuidv4 } from 'uuid'
 
 type HATodoItem = { summary: string; uid: string; status: string }
@@ -91,10 +92,9 @@ function buildStapleSet(staples: PantryStaple[]): Set<string> {
 }
 
 async function pushToHAAndTrack(items: { localId: string; name: string }[]) {
-  const haUrl = getSetting('ha_url')
-  const token = getSetting('ha_token')
-  const entity = getSetting('ha_entity')
-  if (!haUrl || !token || !entity || items.length === 0) return
+  const config = getHomeAssistantConfig()
+  if (!config || items.length === 0) return
+  const { baseUrl: haUrl, token, entity } = config
 
   // Push all items
   await Promise.allSettled(items.map(({ name }) =>
@@ -158,8 +158,7 @@ export async function POST(req: NextRequest) {
       for (const ing of recipe.ingredients) {
         if (!ing.name) continue
         if (ALWAYS_SKIP.has(ing.name.toLowerCase().trim())) continue
-        if (ALWAYS_SKIP.has(ing.name.toLowerCase().trim())) continue
-      if (stapleNames.has(ing.name.toLowerCase().trim())) continue
+        if (stapleNames.has(ing.name.toLowerCase().trim())) continue
         const scaledAmount = ing.amount
           ? (parseFloat(ing.amount) * scale || ing.amount).toString()
           : ''
@@ -200,6 +199,9 @@ export async function POST(req: NextRequest) {
     const entries = getMealPlanRange(date, date)
     const entry = entries[0]
     if (!entry?.recipe_id) return NextResponse.json({ ok: true, added: 0 })
+    const existing = getAllShoppingItems()
+    const alreadyAddedPlanIds = new Set(existing.map(i => i.meal_plan_id).filter(Boolean))
+    if (alreadyAddedPlanIds.has(entry.id)) return NextResponse.json({ ok: true, added: 0 })
 
     const recipes = getAllRecipes()
     const recipe = recipes.find(r => r.id === entry.recipe_id)

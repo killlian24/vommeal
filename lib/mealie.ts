@@ -1,5 +1,5 @@
-import { getSetting } from './db'
 import type { Ingredient, Instruction } from './db'
+import { getMealieConfig } from './config'
 
 export type MealieRecipe = {
   id: string
@@ -26,29 +26,8 @@ export type MealieRecipe = {
   [key: string]: unknown  // allow any other fields Mealie returns
 }
 
-export type MealieConfig = {
-  baseUrl: string
-  apiToken: string
-}
-
-function sanitizeUrl(raw: string): string {
-  // Fix accidental double-protocol (e.g. "https:https://...")
-  raw = raw.replace(/^https?:https?:\/\//, 'https://')
-  // Ensure it starts with a protocol
-  if (raw && !raw.startsWith('http')) raw = 'https://' + raw
-  // Strip trailing slash
-  return raw.replace(/\/$/, '')
-}
-
-function getConfig(): MealieConfig | null {
-  const baseUrl = sanitizeUrl(getSetting('mealie_url') || process.env.MEALIE_URL || '')
-  const apiToken = getSetting('mealie_token') || process.env.MEALIE_TOKEN || ''
-  if (!baseUrl || !apiToken) return null
-  return { baseUrl, apiToken }
-}
-
 async function mealieRequest<T>(method: string, path: string, body?: unknown, timeoutMs = 15000): Promise<T> {
-  const config = getConfig()
+  const config = getMealieConfig()
   if (!config) throw new Error('Mealie not configured')
 
   const url = `${config.baseUrl}/api${path}`
@@ -183,7 +162,7 @@ export async function fetchMealieRecipeDetail(slug: string): Promise<{
     })) || [],
     instructions: r.recipeInstructions?.map(i => ({ text: i.text })) || [],
     image_url: r.image
-      ? `${getConfig()?.baseUrl}/api/media/recipes/${r.id}/images/original.webp`
+      ? `${getMealieConfig()?.baseUrl}/api/media/recipes/${r.id}/images/original.webp`
       : '',
     rating: r.rating ?? null,
   }
@@ -194,7 +173,7 @@ export async function updateMealieRating(slug: string, rating: number | null, me
   // The recipe body's `rating` field is read-only (aggregated average).
   const ratingValue = rating ?? 0
 
-  const config = getConfig()
+  const config = getMealieConfig()
   if (!config) throw new Error('Mealie not configured')
 
   // Primary: use the dedicated user-ratings endpoint (requires recipe UUID)
@@ -224,11 +203,11 @@ export async function updateMealieRating(slug: string, rating: number | null, me
 }
 
 export function getMealieRecipeUrl(slug: string): string {
-  const config = getConfig()
+  const config = getMealieConfig()
   if (!config) return ''
   return `${config.baseUrl}/g/home/r/${slug}`
 }
 
 export function isMealieConfigured(): boolean {
-  return getConfig() !== null
+  return getMealieConfig() !== null
 }

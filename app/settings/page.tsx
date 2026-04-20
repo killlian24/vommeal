@@ -8,6 +8,10 @@ type Settings = {
   user1_name: string; user2_name: string
   ha_url: string; ha_token: string; has_ha_token: boolean; ha_entity: string
   dinner_category: string; category_order: string
+  env?: {
+    mealie_url: boolean; mealie_token: boolean
+    ha_url: boolean; ha_token: boolean; ha_entity: boolean
+  }
 }
 type MealieCategory = { id: string; name: string; slug: string }
 
@@ -179,8 +183,11 @@ export default function SettingsPage() {
               value={settings.mealie_url}
               onChange={e => setSettings(s => ({ ...s, mealie_url: e.target.value }))}
               placeholder="https://mealie.your-domain.com"
+              disabled={settings.env?.mealie_url}
             />
-            <p className="text-xs text-[#444] mt-1">Your Mealie instance URL (no trailing slash)</p>
+            <p className="text-xs text-[#444] mt-1">
+              {settings.env?.mealie_url ? 'Controlled by MEALIE_URL in Docker.' : 'Your Mealie instance URL (no trailing slash)'}
+            </p>
           </div>
           <div>
             <label className="block text-xs font-medium text-[#888] mb-1.5">API Token</label>
@@ -189,10 +196,11 @@ export default function SettingsPage() {
               onChange={e => setSettings(s => ({ ...s, mealie_token: e.target.value }))}
               type="password"
               placeholder={settings.has_token ? '••••••••' : 'Your Mealie API token'}
+              disabled={settings.env?.mealie_token}
             />
             <div className="flex items-start gap-1.5 mt-1.5 text-[#444] text-xs">
               <Info size={11} className="mt-0.5 flex-shrink-0" />
-              <span>Get your token in Mealie → Profile → API Tokens</span>
+              <span>{settings.env?.mealie_token ? 'Controlled by MEALIE_TOKEN in Docker.' : 'Get your token in Mealie → Profile → API Tokens'}</span>
             </div>
           </div>
 
@@ -308,7 +316,9 @@ export default function SettingsPage() {
               value={settings.ha_url}
               onChange={e => setSettings(s => ({ ...s, ha_url: e.target.value }))}
               placeholder="http://192.168.0.16:8123"
+              disabled={settings.env?.ha_url}
             />
+            {settings.env?.ha_url && <p className="text-xs text-[#444] mt-1">Controlled by HA_URL in Docker.</p>}
           </div>
           <div>
             <label className="block text-xs font-medium text-[#888] mb-1.5">Long-Lived Access Token</label>
@@ -317,8 +327,11 @@ export default function SettingsPage() {
               onChange={e => setSettings(s => ({ ...s, ha_token: e.target.value }))}
               type="password"
               placeholder={settings.has_ha_token ? '••••••••' : 'eyJhbGci...'}
+              disabled={settings.env?.ha_token}
             />
-            <p className="text-xs text-[#444] mt-1">HA → Profile → Security → Long-Lived Access Tokens</p>
+            <p className="text-xs text-[#444] mt-1">
+              {settings.env?.ha_token ? 'Controlled by HA_TOKEN in Docker.' : 'HA → Profile → Security → Long-Lived Access Tokens'}
+            </p>
           </div>
           <div>
             <label className="block text-xs font-medium text-[#888] mb-1.5">Todo entity ID</label>
@@ -326,8 +339,11 @@ export default function SettingsPage() {
               value={settings.ha_entity}
               onChange={e => setSettings(s => ({ ...s, ha_entity: e.target.value }))}
               placeholder="todo.google_keep_einkaufsliste"
+              disabled={settings.env?.ha_entity}
             />
-            <p className="text-xs text-[#444] mt-1">HA → Developer Tools → States → search todo.</p>
+            <p className="text-xs text-[#444] mt-1">
+              {settings.env?.ha_entity ? 'Controlled by HA_ENTITY in Docker.' : 'HA → Developer Tools → States → search todo.'}
+            </p>
           </div>
           <button
             onClick={saveHa}
@@ -360,6 +376,10 @@ export default function SettingsPage() {
           <p><span className="text-[#444]"># Optional: pre-configure Mealie</span></p>
           <p>MEALIE_URL=https://mealie.example.com</p>
           <p>MEALIE_TOKEN=your-token-here</p>
+          <p><span className="text-[#444]"># Optional: pre-configure Home Assistant</span></p>
+          <p>HA_URL=http://homeassistant.local:8123</p>
+          <p>HA_TOKEN=your-token-here</p>
+          <p>HA_ENTITY=todo.shopping_list</p>
           <p><span className="text-[#444]"># Data persistence</span></p>
           <p>DATA_DIR=/app/data</p>
         </div>

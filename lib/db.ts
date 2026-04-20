@@ -425,8 +425,9 @@ export function getAllPantryStaples(): PantryStaple[] {
 }
 
 export function addPantryStaple(id: string, name: string): PantryStaple {
-  getDb().prepare('INSERT OR IGNORE INTO pantry_staples (id, name) VALUES (?, ?)').run(id, name.trim())
-  return getDb().prepare('SELECT * FROM pantry_staples WHERE id = ?').get(id) as PantryStaple
+  const trimmed = name.trim()
+  getDb().prepare('INSERT OR IGNORE INTO pantry_staples (id, name) VALUES (?, ?)').run(id, trimmed)
+  return getDb().prepare('SELECT * FROM pantry_staples WHERE LOWER(name) = LOWER(?)').get(trimmed) as PantryStaple
 }
 
 export function deletePantryStaple(id: string) {

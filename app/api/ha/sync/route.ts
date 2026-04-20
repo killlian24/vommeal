@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSetting, addShoppingItem, haUidExists, getAllShoppingItems, checkShoppingItem, setShoppingItemHaUid, findUntrackedItemByName } from '@/lib/db'
+import { getHomeAssistantConfig } from '@/lib/config'
 import { v4 as uuidv4 } from 'uuid'
 
 type HATodoItem = { summary: string; uid: string; status: string }
@@ -19,13 +20,12 @@ async function fetchHAItems(haUrl: string, token: string, entity: string): Promi
 }
 
 export async function POST() {
-  const haUrl = getSetting('ha_url')
-  const token = getSetting('ha_token')
-  const entity = getSetting('ha_entity')
+  const config = getHomeAssistantConfig()
 
-  if (!haUrl || !token || !entity) {
+  if (!config) {
     return NextResponse.json({ error: 'Home Assistant not configured. Add your credentials in Settings.' }, { status: 400 })
   }
+  const { baseUrl: haUrl, token, entity } = config
 
   // Push any local unchecked items that haven't been sent to HA yet,
   // in category order so Google Keep reflects supermarket aisle sequence
