@@ -51,13 +51,40 @@ First build takes 3–5 minutes (Node deps + Next.js compile). The container is 
 
 ---
 
+## Mealie and Home Assistant tokens
+
+Recommended: set tokens and service URLs in the Portainer stack environment.
+
+```yaml
+environment:
+  - NODE_ENV=production
+  - DATA_DIR=/app/data
+
+  # Mealie
+  - MEALIE_URL=http://your-mealie-address:9000
+  - MEALIE_TOKEN=your-mealie-api-token
+
+  # Home Assistant
+  - HA_URL=http://your-home-assistant-address:8123
+  - HA_TOKEN=your-home-assistant-long-lived-token
+  - HA_ENTITY=todo.your_shopping_list_entity
+```
+
+Use addresses that the NAS/container can reach, usually LAN addresses such as `http://192.168.x.x:8123`. Do not use `localhost` unless the service runs inside the same container.
+
+When these values are set in Portainer, Vommeal treats them as Docker-controlled. The Settings page will show the active values, but those fields are disabled and must be changed in Portainer.
+
+You can also leave these environment variables out and enter the values in Vommeal under **Settings**. That is easier, but stores the tokens in the SQLite database.
+
+---
+
 ## First-run setup
 
 Open `http://<nas-ip>:3333` → **Settings**:
 
 - **User names** — yours and your partner's (remembered per browser via localStorage)
-- **Mealie URL + API token** — for recipe sync
-- **Home Assistant URL + token + todo entity** — for shopping list sync with Google Keep
+- **Mealie URL + API token** — for recipe sync, unless set in Portainer
+- **Home Assistant URL + token + todo entity** — for shopping list sync with Google Keep, unless set in Portainer
 - **Dinner category** — Mealie category to filter recipes (e.g. `Abendessen`)
 
 ---
