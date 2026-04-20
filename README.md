@@ -51,30 +51,48 @@ First build takes 3–5 minutes (Node deps + Next.js compile). The container is 
 
 ---
 
-## Mealie and Home Assistant tokens
+## Mealie and Home Assistant setup
 
-Recommended: set tokens and service URLs in the Portainer stack environment.
+Easiest: deploy Vommeal first, open `http://<nas-ip>:3333/settings`, and enter the Mealie and Home Assistant values in the app.
+
+Cleaner Docker option: set them in Portainer's **Environment variables** section for the stack. The included compose file already passes these variables into the container.
+
+In Portainer's environment-variable table, use the variable name without spaces as the **name**, and put the token or URL as the **value**:
+
+```text
+MEALIE_URL=http://your-mealie-address:9000
+MEALIE_TOKEN=your-mealie-api-token
+HA_URL=http://your-home-assistant-address:8123
+HA_TOKEN=your-home-assistant-long-lived-token
+HA_ENTITY=todo.your_shopping_list_entity
+```
+
+Do not paste YAML list items into Portainer's environment-variable table. These are wrong there:
+
+```text
+- MEALIE_URL=http://your-mealie-address:9000
+Home Assistant Token=your-token
+HA TOKEN=your-token
+```
+
+The compose file maps the Portainer variables like this:
 
 ```yaml
 environment:
   - NODE_ENV=production
   - DATA_DIR=/app/data
-
-  # Mealie
-  - MEALIE_URL=http://your-mealie-address:9000
-  - MEALIE_TOKEN=your-mealie-api-token
-
-  # Home Assistant
-  - HA_URL=http://your-home-assistant-address:8123
-  - HA_TOKEN=your-home-assistant-long-lived-token
-  - HA_ENTITY=todo.your_shopping_list_entity
+  - MEALIE_URL=${MEALIE_URL:-}
+  - MEALIE_TOKEN=${MEALIE_TOKEN:-}
+  - HA_URL=${HA_URL:-}
+  - HA_TOKEN=${HA_TOKEN:-}
+  - HA_ENTITY=${HA_ENTITY:-}
 ```
 
 Use addresses that the NAS/container can reach, usually LAN addresses such as `http://192.168.x.x:8123`. Do not use `localhost` unless the service runs inside the same container.
 
 When these values are set in Portainer, Vommeal treats them as Docker-controlled. The Settings page will show the active values, but those fields are disabled and must be changed in Portainer.
 
-You can also leave these environment variables out and enter the values in Vommeal under **Settings**. That is easier, but stores the tokens in the SQLite database.
+If you leave these variables empty, Vommeal Settings stays editable. That is simpler, but stores the tokens in the SQLite database.
 
 ---
 

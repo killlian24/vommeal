@@ -15,13 +15,13 @@ services:
     environment:
       - NODE_ENV=production
       - DATA_DIR=/app/data
-      # Optional: pre-configure Mealie (or set via Settings page)
-      # - MEALIE_URL=https://mealie.your-domain.com
-      # - MEALIE_TOKEN=your-api-token-here
-      # Optional: pre-configure Home Assistant (or set via Settings page)
-      # - HA_URL=http://homeassistant.local:8123
-      # - HA_TOKEN=your-long-lived-token-here
-      # - HA_ENTITY=todo.shopping_list
+      # Optional: set these in Portainer's stack environment variables.
+      # If left empty, configure them later in Vommeal Settings.
+      - MEALIE_URL=${MEALIE_URL:-}
+      - MEALIE_TOKEN=${MEALIE_TOKEN:-}
+      - HA_URL=${HA_URL:-}
+      - HA_TOKEN=${HA_TOKEN:-}
+      - HA_ENTITY=${HA_ENTITY:-}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
       interval: 30s
