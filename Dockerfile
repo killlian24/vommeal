@@ -21,13 +21,13 @@ RUN npm run build
 
 # ---- Runner ----
 FROM node:20-alpine AS runner
-RUN apk add --no-cache libc6-compat
+RUN apk add --no-cache libc6-compat su-exec
 
 WORKDIR /app
 
-ENV NODE_ENV production
-ENV NEXT_TELEMETRY_DISABLED 1
-ENV DATA_DIR /app/data
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV DATA_DIR=/app/data
 
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
@@ -40,13 +40,13 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
 COPY --from=builder /app/node_modules/bindings ./node_modules/bindings
 COPY --from=builder /app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
 
 RUN mkdir -p /app/data && chown -R nextjs:nodejs /app/data
 
-USER nextjs
-
 EXPOSE 3000
-ENV PORT 3000
-ENV HOSTNAME "0.0.0.0"
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
 
+ENTRYPOINT ["sh", "/app/docker-entrypoint.sh"]
 CMD ["node", "server.js"]

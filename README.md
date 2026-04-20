@@ -96,6 +96,22 @@ If you leave these variables empty, Vommeal Settings stays editable. That is sim
 
 ---
 
+## Troubleshooting
+
+If the app keeps loading or Settings values do not save, the container probably cannot write to the SQLite database folder. The Docker image fixes `/app/data` ownership on startup, so redeploy the latest stack from GitHub first.
+
+If it still cannot save, check that this folder exists on the NAS:
+
+```bash
+mkdir -p /volume1/docker/vommeal/data
+```
+
+Then redeploy the stack in Portainer.
+
+If Mealie or Home Assistant fields do not show as Docker-controlled, the variables are not reaching the container. In Portainer, either leave them empty and configure Vommeal in **Settings**, or add them in the stack **Environment variables** table using exact names like `MEALIE_URL` and `HA_TOKEN`.
+
+---
+
 ## First-run setup
 
 Open `http://<nas-ip>:3333` → **Settings**:
