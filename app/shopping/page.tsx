@@ -235,7 +235,7 @@ export default function ShoppingPage() {
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-xs text-[#888] hover:text-white transition-all"
           >
             <RefreshCw size={13} className={generating ? 'animate-spin' : ''} />
-            Generate
+            From plan
           </button>
           <button
             onClick={() => { setShowAdd(false); setShowPantry(p => !p) }}
