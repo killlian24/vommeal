@@ -233,33 +233,29 @@ export default function RecipesPage() {
               className="group bg-[#141414] border border-[#1e1e1e] hover:border-[#2d2d2d] rounded-xl overflow-hidden transition-all hover:-translate-y-0.5 hover:shadow-xl hover:shadow-black/30"
             >
               {/* Image */}
-              <div className="relative h-28 bg-[#1a1a1a] overflow-hidden">
+              <div className="relative h-28 overflow-hidden">
                 {recipe.image_url ? (
-                  <Image
-                    src={recipe.image_url}
-                    alt={recipe.name}
-                    fill
-                    className="object-cover group-hover:scale-105 transition-transform duration-500"
-                    unoptimized
-                  />
+                  <>
+                    <Image
+                      src={recipe.image_url}
+                      alt={recipe.name}
+                      fill
+                      className="object-cover group-hover:scale-105 transition-transform duration-500"
+                      unoptimized
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-[#141414] to-transparent" />
+                  </>
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center text-3xl">🍽️</div>
+                  <div className="w-full h-full flex items-center justify-center text-3xl"
+                    style={{ background: 'linear-gradient(135deg, rgba(249,115,22,0.12) 0%, rgba(30,18,8,1) 70%)' }}>
+                    🍽️
+                  </div>
                 )}
-                <div className="absolute inset-0 bg-gradient-to-t from-[#141414] to-transparent" />
-                <div className="absolute top-2 right-2">
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-                    recipe.source === 'mealie'
-                      ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                      : 'bg-[#222] text-[#666] border border-[#2a2a2a]'
-                  }`}>
-                    {recipe.source === 'mealie' ? '📌' : '📝'}
-                  </span>
-                </div>
               </div>
 
               {/* Info */}
               <div className="p-3">
-                <h3 className="text-sm font-semibold text-white leading-tight line-clamp-2 mb-1.5">{recipe.name}</h3>
+                <h3 className="text-sm font-semibold text-white leading-tight line-clamp-1 mb-1.5">{recipe.name}</h3>
                 <div className="flex items-center gap-2 text-[10px] text-[#555]">
                   {(recipe.prep_time + recipe.cook_time) > 0 && (
                     <span className="flex items-center gap-0.5">

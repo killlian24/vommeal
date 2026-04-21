@@ -134,7 +134,7 @@ export default function SettingsPage() {
     <div className="space-y-8 max-w-lg">
       <div>
         <h1 className="text-2xl font-bold text-white">Settings</h1>
-        <p className="text-sm text-[#666] mt-0.5">Configure your Mealie connection</p>
+        <p className="text-sm text-[#666] mt-0.5">Profiles, connections & preferences</p>
       </div>
 
       {/* Profiles */}

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { format, startOfWeek, addDays, isToday, parseISO } from 'date-fns'
-import { ChevronLeft, ChevronRight, Plus, X, Search, ShoppingCart, ThumbsUp, RefreshCw, Zap, Dices, Heart, XCircle, PackagePlus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus, X, Search, ShoppingCart, ThumbsUp, RefreshCw, Zap, Dices, Heart, XCircle } from 'lucide-react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { StarRating } from '@/components/StarRating'
@@ -18,7 +18,12 @@ type MealEntry = {
 }
 
 function getInitials(name: string) {
-  return name.trim().split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2)
+  return name.trim().split(' ')
+    .filter(p => /[a-zA-ZäöüÄÖÜ]/.test(p[0] ?? ''))
+    .map(p => p[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2)
 }
 
 function Avatar({ name, size = 'sm' }: { name: string; size?: 'sm' | 'md' }) {
@@ -418,7 +423,7 @@ export default function PlanPage() {
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-[#888] hover:text-white transition-all"
             title="Add this week's ingredients to shopping list">
             <ShoppingCart size={15} />
-            <span className="text-xs">To list</span>
+            <span className="text-xs">Send</span>
           </button>
         </div>
       </div>
@@ -461,8 +466,8 @@ export default function PlanPage() {
                     title="Add tonight's ingredients to shopping list"
                     className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary/15 hover:bg-primary/25 text-primary text-xs font-medium transition-all disabled:opacity-50 flex-shrink-0"
                   >
-                    <PackagePlus size={14} />
-                    <span className="hidden sm:inline">Add to list</span>
+                    <ShoppingCart size={14} />
+                    <span>Add</span>
                   </button>
                 )}
               </div>
@@ -517,7 +522,7 @@ export default function PlanPage() {
                       <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/20 font-medium">✓ set</span>
                     )}
                     {isMySuggestion && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/20 font-medium">waiting…</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/20 font-medium">Waiting…</span>
                     )}
                     {isPendingForMe && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/20 font-medium animate-pulse">vote!</span>
@@ -593,7 +598,7 @@ export default function PlanPage() {
                           title="Add ingredients to shopping list"
                           className="p-1 rounded-lg bg-black/50 text-[#888] hover:text-primary transition-all disabled:opacity-50"
                         >
-                          <PackagePlus size={12} />
+                          <ShoppingCart size={12} />
                         </button>
                       )}
                       <button onClick={() => removeEntry(entry.id)}
