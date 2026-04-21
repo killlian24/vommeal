@@ -65,9 +65,15 @@ export default function TonightPage() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-bold text-white">Tonight</h1>
-        <p className="text-sm text-[#555] mt-0.5">{format(new Date(), 'EEEE, MMMM d')}</p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Tonight</h1>
+          <p className="text-sm text-[#555] mt-0.5">{format(new Date(), 'EEEE, MMMM d')}</p>
+        </div>
+        <Link href="/"
+          className="flex items-center gap-1 text-xs text-[#555] hover:text-white transition-colors mt-1.5">
+          Full week <ChevronRight size={13} />
+        </Link>
       </div>
 
       {/* Tonight — big card */}
@@ -90,7 +96,7 @@ export default function TonightPage() {
               <p className="text-2xl font-bold text-white leading-tight mb-2">{todayEntry.custom_meal_name}</p>
             )}
             {todayEntry.recipe?.rating ? (
-              <div className="mb-3"><StarRating rating={todayEntry.recipe.rating} size={14} /></div>
+              <div className="mb-3"><StarRating rating={todayEntry.recipe.rating} size={16} /></div>
             ) : null}
             <div className="flex items-center gap-4 text-sm text-[#666] mb-4">
               {todayEntry.recipe?.prep_time ? (

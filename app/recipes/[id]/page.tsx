@@ -216,7 +216,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
             </span>
             <StarRating
               rating={recipe.rating}
-              size={16}
+              size={20}
               editable
               onChange={async (val) => {
                 const newRating = val === 0 ? null : val

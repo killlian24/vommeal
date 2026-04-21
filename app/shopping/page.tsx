@@ -384,12 +384,12 @@ export default function ShoppingPage() {
                 </button>
                 {!isCollapsed && (
                   <div className="border-t border-[#1e1e1e]">
-                    {catItems.map((item, idx) => (
+                    {[...catItems].sort((a, b) => (a.checked ? 1 : 0) - (b.checked ? 1 : 0)).map((item, idx, arr) => (
                       <div
                         key={item.id}
                         className={`flex items-center gap-3 px-4 py-3 transition-colors ${
-                          idx < catItems.length - 1 ? 'border-b border-[#1a1a1a]' : ''
-                        } ${item.checked ? 'opacity-50' : ''}`}
+                          idx < arr.length - 1 ? 'border-b border-[#1a1a1a]' : ''
+                        } ${item.checked ? 'opacity-40' : ''}`}
                       >
                         <button
                           onClick={() => toggle(item.id)}

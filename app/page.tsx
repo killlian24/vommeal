@@ -423,6 +423,66 @@ export default function PlanPage() {
         </div>
       </div>
 
+      {/* Today banner — only visible when today is in current week */}
+      {(() => {
+        const todayStr = format(new Date(), 'yyyy-MM-dd')
+        const isCurrentWeek = days.some(d => format(d, 'yyyy-MM-dd') === todayStr)
+        if (!isCurrentWeek) return null
+        const todayEntry = entries.find(e => e.date === todayStr)
+        return (
+          <div className={`rounded-xl border overflow-hidden transition-all ${
+            todayEntry ? 'border-primary/30 bg-[#141414]' : 'border-[#1e1e1e] bg-[#111]'
+          }`}>
+            {todayEntry ? (
+              <div className="flex items-center gap-3 p-3">
+                {todayEntry.recipe?.image_url ? (
+                  <div className="relative w-14 h-14 rounded-lg overflow-hidden flex-shrink-0">
+                    <Image src={todayEntry.recipe.image_url} alt="" fill className="object-cover" unoptimized />
+                  </div>
+                ) : (
+                  <div className="w-14 h-14 rounded-lg bg-[#1e1e1e] flex items-center justify-center text-2xl flex-shrink-0">🍽️</div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-primary mb-0.5">Tonight</p>
+                  {todayEntry.recipe_id ? (
+                    <Link href={`/recipes/${todayEntry.recipe_id}`}
+                      className="text-sm font-bold text-white leading-tight hover:text-primary transition-colors line-clamp-1 block">
+                      {todayEntry.recipe?.name}
+                    </Link>
+                  ) : (
+                    <p className="text-sm font-bold text-white leading-tight line-clamp-1">{todayEntry.custom_meal_name}</p>
+                  )}
+                  {todayEntry.recipe?.rating ? <StarRating rating={todayEntry.recipe.rating} size={12} /> : null}
+                </div>
+                {todayEntry.recipe_id && (
+                  <button
+                    onClick={() => addToList(todayStr)}
+                    disabled={addingToList === todayStr}
+                    title="Add tonight's ingredients to shopping list"
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary/15 hover:bg-primary/25 text-primary text-xs font-medium transition-all disabled:opacity-50 flex-shrink-0"
+                  >
+                    <PackagePlus size={14} />
+                    <span className="hidden sm:inline">Add to list</span>
+                  </button>
+                )}
+              </div>
+            ) : (
+              <button
+                onClick={() => { setAdding({ date: todayStr }); setServings(2) }}
+                className="w-full flex items-center gap-3 p-3 text-left hover:bg-[#161616] transition-all"
+              >
+                <div className="w-14 h-14 rounded-lg bg-[#1a1a1a] flex items-center justify-center text-2xl flex-shrink-0">🍽️</div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-primary mb-0.5">Tonight</p>
+                  <p className="text-sm text-[#555]">Nothing planned — tap to suggest dinner</p>
+                </div>
+                <Plus size={16} className="text-[#444] flex-shrink-0" />
+              </button>
+            )}
+          </div>
+        )
+      })()}
+
       {/* Day cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
         {days.map(day => {
@@ -467,7 +527,7 @@ export default function PlanPage() {
               </div>
 
               {/* Content */}
-              <div className="bg-[#141414] min-h-[110px]">
+              <div className="bg-[#141414] min-h-[88px]">
                 {loading ? (
                   <div className="p-3"><div className="skeleton h-16 rounded-lg" /></div>
                 ) : entry ? (
@@ -495,7 +555,7 @@ export default function PlanPage() {
                       {/* Rating */}
                       {entry.recipe?.rating ? (
                         <div className="mb-1.5">
-                          <StarRating rating={entry.recipe.rating} size={11} />
+                          <StarRating rating={entry.recipe.rating} size={13} />
                         </div>
                       ) : null}
 
@@ -590,7 +650,7 @@ export default function PlanPage() {
                   ) : (
                     <button
                       onClick={() => { setAdding({ date: dateStr }); setServings(2) }}
-                      className="w-full h-full min-h-[110px] flex flex-col items-center justify-center gap-1.5 text-[#333] hover:text-[#555] hover:bg-[#181818] transition-all"
+                      className="w-full h-full min-h-[88px] flex flex-col items-center justify-center gap-1.5 text-[#333] hover:text-[#555] hover:bg-[#181818] transition-all"
                     >
                       <Plus size={18} />
                       <span className="text-xs">Suggest dinner</span>

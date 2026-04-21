@@ -206,8 +206,22 @@ export default function RecipesPage() {
         <div className="text-center py-16">
           <BookOpen size={40} className="mx-auto text-[#333] mb-3" />
           <p className="text-[#555]">{search ? 'No recipes match your search' : 'No recipes yet'}</p>
-          {!search && (
-            <p className="text-xs text-[#444] mt-1">Add a local recipe or sync from Mealie</p>
+          {!search ? (
+            <div className="mt-4 flex flex-col items-center gap-2">
+              <button
+                onClick={sync}
+                disabled={syncing}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-all disabled:opacity-50"
+              >
+                <RefreshCw size={15} className={syncing ? 'animate-spin' : ''} />
+                Sync from Mealie →
+              </button>
+              <Link href="/recipes/new" className="text-xs text-[#555] hover:text-white transition-colors">
+                or add a local recipe
+              </Link>
+            </div>
+          ) : (
+            <p className="text-xs text-[#444] mt-1">Try a different search term</p>
           )}
         </div>
       ) : (
@@ -259,7 +273,7 @@ export default function RecipesPage() {
                       {recipe.servings}
                     </span>
                   )}
-                  {recipe.rating ? <StarRating rating={recipe.rating} size={10} /> : null}
+                  {recipe.rating ? <StarRating rating={recipe.rating} size={13} /> : null}
                   {recipe.tags.slice(0, 2).map(tag => (
                     <span key={tag} className="bg-[#1e1e1e] px-1.5 py-0.5 rounded-full">{tag}</span>
                   ))}
