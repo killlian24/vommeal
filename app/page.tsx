@@ -570,16 +570,15 @@ export default function PlanPage() {
                         </div>
                       )}
                       <div className="flex gap-1.5 mt-1">
-                        {bothVoted && !hasMatch && (
-                          <button onClick={() => setSettleDate(dateStr)}
-                            className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/25 text-amber-400 text-xs font-medium transition-all">
-                            ⚖️ Settle
-                          </button>
-                        )}
-                        {bothVoted && hasMatch && (
+                        {hasMatch ? (
                           <button onClick={() => setSettleDate(dateStr)}
                             className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-pink-500/15 hover:bg-pink-500/25 border border-pink-500/25 text-pink-400 text-xs font-medium transition-all">
                             ❤️ Match!
+                          </button>
+                        ) : (
+                          <button onClick={() => setSettleDate(dateStr)}
+                            className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/25 text-amber-400 text-xs font-medium transition-all">
+                            ⚖️ {bothVoted ? 'Settle' : 'Pick'}
                           </button>
                         )}
                         <button onClick={() => { setAdding({ date: dateStr }); setServings(2) }}
