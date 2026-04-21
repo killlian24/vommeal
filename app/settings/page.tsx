@@ -48,6 +48,13 @@ export default function SettingsPage() {
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<TestResult>(null)
   const [saved, setSaved] = useState(false)
+  const [open, setOpen] = useState<Set<string>>(new Set(['profiles']))
+
+  const toggle = (id: string) => setOpen(prev => {
+    const next = new Set(prev)
+    next.has(id) ? next.delete(id) : next.add(id)
+    return next
+  })
 
   useEffect(() => {
     fetch('/api/settings').then(r => r.json()).then(s => {
@@ -132,51 +139,67 @@ export default function SettingsPage() {
 
       {/* Profiles */}
       <div className="bg-[#141414] border border-[#1e1e1e] rounded-xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-[#1e1e1e]">
-          <div className="flex items-center gap-2">
-            <span className="text-base">👥</span>
-            <h2 className="font-semibold text-white">Profiles</h2>
-          </div>
-          <p className="text-xs text-[#555] mt-1">Set your names so you can vote on each other's dinner suggestions</p>
-        </div>
-        <div className="px-5 py-4 space-y-3">
-          {[
-            { key: 'user1_name' as const, label: 'Person 1' },
-            { key: 'user2_name' as const, label: 'Person 2' },
-          ].map(({ key, label }) => (
-            <div key={key} className="flex items-center gap-3">
-              {settings[key] ? (
-                <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
-                  style={{ background: key === 'user1_name' ? '#f97316' : '#3b82f6' }}>
-                  {getInitials(settings[key])}
-                </div>
-              ) : (
-                <div className="w-8 h-8 rounded-full bg-[#222] border border-[#333] flex-shrink-0" />
+        <button onClick={() => toggle('profiles')}
+          className="w-full flex items-center justify-between px-5 py-4 hover:bg-[#191919] transition-colors text-left">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-base">👥</span>
+              <h2 className="font-semibold text-white">Profiles</h2>
+              {(settings.user1_name || settings.user2_name) && (
+                <span className="text-xs text-[#555]">
+                  {[settings.user1_name, settings.user2_name].filter(Boolean).join(' & ')}
+                </span>
               )}
-              <input
-                value={settings[key]}
-                onChange={e => setSettings(s => ({ ...s, [key]: e.target.value }))}
-                placeholder={label}
-              />
             </div>
-          ))}
-          <button onClick={save} disabled={saving}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-all disabled:opacity-50 mt-1">
-            {saved ? <><Check size={13} /> Saved</> : <><Save size={13} /> Save profiles</>}
-          </button>
-        </div>
+          </div>
+          <ChevronDown size={15} className={`text-[#555] transition-transform flex-shrink-0 ${open.has('profiles') ? 'rotate-180' : ''}`} />
+        </button>
+        {open.has('profiles') && (
+          <div className="px-5 py-4 space-y-3 border-t border-[#1e1e1e]">
+            {[
+              { key: 'user1_name' as const, label: 'Person 1' },
+              { key: 'user2_name' as const, label: 'Person 2' },
+            ].map(({ key, label }) => (
+              <div key={key} className="flex items-center gap-3">
+                {settings[key] ? (
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                    style={{ background: key === 'user1_name' ? '#f97316' : '#3b82f6' }}>
+                    {getInitials(settings[key])}
+                  </div>
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-[#222] border border-[#333] flex-shrink-0" />
+                )}
+                <input
+                  value={settings[key]}
+                  onChange={e => setSettings(s => ({ ...s, [key]: e.target.value }))}
+                  placeholder={label}
+                />
+              </div>
+            ))}
+            <button onClick={save} disabled={saving}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-all disabled:opacity-50 mt-1">
+              {saved ? <><Check size={13} /> Saved</> : <><Save size={13} /> Save profiles</>}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Mealie connection */}
       <div className="bg-[#141414] border border-[#1e1e1e] rounded-xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-[#1e1e1e]">
+        <button onClick={() => toggle('mealie')}
+          className="w-full flex items-center justify-between px-5 py-4 hover:bg-[#191919] transition-colors text-left">
           <div className="flex items-center gap-2">
             <span className="text-base">📌</span>
             <h2 className="font-semibold text-white">Mealie</h2>
+            {settings.mealie_url && (
+              <span className="text-xs text-[#555] truncate max-w-[140px]">{settings.mealie_url.replace('https://', '')}</span>
+            )}
+            {settings.has_token && <span className="text-xs text-green-500">✓ token set</span>}
           </div>
-          <p className="text-xs text-[#555] mt-1">Connect to your self-hosted Mealie instance to sync recipes</p>
-        </div>
-        <div className="px-5 py-4 space-y-4">
+          <ChevronDown size={15} className={`text-[#555] transition-transform flex-shrink-0 ${open.has('mealie') ? 'rotate-180' : ''}`} />
+        </button>
+        {open.has('mealie') && (
+        <div className="px-5 py-4 space-y-4 border-t border-[#1e1e1e]">
           <div>
             <label className="block text-xs font-medium text-[#888] mb-1.5">Mealie URL</label>
             <input
@@ -265,124 +288,142 @@ export default function SettingsPage() {
             </button>
           </div>
         </div>
+        )}
       </div>
 
       {/* Shopping category order */}
       <div className="bg-[#141414] border border-[#1e1e1e] rounded-xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-[#1e1e1e]">
+        <button onClick={() => toggle('shopping')}
+          className="w-full flex items-center justify-between px-5 py-4 hover:bg-[#191919] transition-colors text-left">
           <div className="flex items-center gap-2">
             <span className="text-base">🛒</span>
             <h2 className="font-semibold text-white">Shopping list order</h2>
           </div>
-          <p className="text-xs text-[#555] mt-1">Drag categories into your supermarket's aisle order — items sync to Google Keep in this sequence</p>
-        </div>
-        <div className="px-5 py-4 space-y-2">
-          {categoryOrder.map((cat, i) => (
-            <div key={cat} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-[#0f0f0f] border border-[#1e1e1e]">
-              <span className="text-xs text-[#444] w-4 text-center">{i + 1}</span>
-              <span className="flex-1 text-sm text-white">{CATEGORY_LABELS[cat] || cat}</span>
-              <div className="flex gap-1">
-                <button onClick={() => moveCat(i, -1)} disabled={i === 0}
-                  className="p-1 rounded hover:bg-[#222] text-[#555] hover:text-white disabled:opacity-20 transition-all">
-                  <ChevronUp size={13} />
-                </button>
-                <button onClick={() => moveCat(i, 1)} disabled={i === categoryOrder.length - 1}
-                  className="p-1 rounded hover:bg-[#222] text-[#555] hover:text-white disabled:opacity-20 transition-all">
-                  <ChevronDown size={13} />
-                </button>
+          <ChevronDown size={15} className={`text-[#555] transition-transform flex-shrink-0 ${open.has('shopping') ? 'rotate-180' : ''}`} />
+        </button>
+        {open.has('shopping') && (
+          <div className="px-5 py-4 space-y-2 border-t border-[#1e1e1e]">
+            {categoryOrder.map((cat, i) => (
+              <div key={cat} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-[#0f0f0f] border border-[#1e1e1e]">
+                <span className="text-xs text-[#444] w-4 text-center">{i + 1}</span>
+                <span className="flex-1 text-sm text-white">{CATEGORY_LABELS[cat] || cat}</span>
+                <div className="flex gap-1">
+                  <button onClick={() => moveCat(i, -1)} disabled={i === 0}
+                    className="p-1 rounded hover:bg-[#222] text-[#555] hover:text-white disabled:opacity-20 transition-all">
+                    <ChevronUp size={13} />
+                  </button>
+                  <button onClick={() => moveCat(i, 1)} disabled={i === categoryOrder.length - 1}
+                    className="p-1 rounded hover:bg-[#222] text-[#555] hover:text-white disabled:opacity-20 transition-all">
+                    <ChevronDown size={13} />
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
-          <button onClick={saveCategoryOrder}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-all mt-2">
-            {catOrderSaved ? <><Check size={13} /> Saved</> : <><Save size={13} /> Save order</>}
-          </button>
-        </div>
+            ))}
+            <button onClick={saveCategoryOrder}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-all mt-2">
+              {catOrderSaved ? <><Check size={13} /> Saved</> : <><Save size={13} /> Save order</>}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Home Assistant */}
       <div className="bg-[#141414] border border-[#1e1e1e] rounded-xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-[#1e1e1e]">
+        <button onClick={() => toggle('ha')}
+          className="w-full flex items-center justify-between px-5 py-4 hover:bg-[#191919] transition-colors text-left">
           <div className="flex items-center gap-2">
             <span className="text-base">🏠</span>
             <h2 className="font-semibold text-white">Home Assistant</h2>
+            {settings.ha_url && <span className="text-xs text-[#555] truncate max-w-[120px]">{settings.ha_url.replace('http://', '')}</span>}
+            {settings.has_ha_token && <span className="text-xs text-green-500">✓ token set</span>}
           </div>
-          <p className="text-xs text-[#555] mt-1">Sync your Google Keep shopping list via Home Assistant</p>
-        </div>
-        <div className="px-5 py-4 space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-[#888] mb-1.5">HA URL</label>
-            <input
-              value={settings.ha_url}
-              onChange={e => setSettings(s => ({ ...s, ha_url: e.target.value }))}
-              placeholder="http://192.168.0.16:8123"
-              disabled={settings.env?.ha_url}
-            />
-            {settings.env?.ha_url && <p className="text-xs text-[#444] mt-1">Controlled by HA_URL in Docker.</p>}
+          <ChevronDown size={15} className={`text-[#555] transition-transform flex-shrink-0 ${open.has('ha') ? 'rotate-180' : ''}`} />
+        </button>
+        {open.has('ha') && (
+          <div className="px-5 py-4 space-y-4 border-t border-[#1e1e1e]">
+            <div>
+              <label className="block text-xs font-medium text-[#888] mb-1.5">HA URL</label>
+              <input
+                value={settings.ha_url}
+                onChange={e => setSettings(s => ({ ...s, ha_url: e.target.value }))}
+                placeholder="http://192.168.0.16:8123"
+                disabled={settings.env?.ha_url}
+              />
+              {settings.env?.ha_url && <p className="text-xs text-[#444] mt-1">Controlled by HA_URL in Docker.</p>}
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-[#888] mb-1.5">Long-Lived Access Token</label>
+              <input
+                value={settings.ha_token}
+                onChange={e => setSettings(s => ({ ...s, ha_token: e.target.value }))}
+                type="password"
+                placeholder={settings.has_ha_token ? '••••••••' : 'eyJhbGci...'}
+                disabled={settings.env?.ha_token}
+              />
+              <p className="text-xs text-[#444] mt-1">
+                {settings.env?.ha_token ? 'Controlled by HA_TOKEN in Docker.' : 'HA → Profile → Security → Long-Lived Access Tokens'}
+              </p>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-[#888] mb-1.5">Todo entity ID</label>
+              <input
+                value={settings.ha_entity}
+                onChange={e => setSettings(s => ({ ...s, ha_entity: e.target.value }))}
+                placeholder="todo.google_keep_einkaufsliste"
+                disabled={settings.env?.ha_entity}
+              />
+              <p className="text-xs text-[#444] mt-1">
+                {settings.env?.ha_entity ? 'Controlled by HA_ENTITY in Docker.' : 'HA → Developer Tools → States → search todo.'}
+              </p>
+            </div>
+            <button
+              onClick={saveHa}
+              disabled={saving}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-all disabled:opacity-50"
+            >
+              {haSaved ? <><Check size={13} /> Saved</> : <><Save size={13} /> Save</>}
+            </button>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-[#888] mb-1.5">Long-Lived Access Token</label>
-            <input
-              value={settings.ha_token}
-              onChange={e => setSettings(s => ({ ...s, ha_token: e.target.value }))}
-              type="password"
-              placeholder={settings.has_ha_token ? '••••••••' : 'eyJhbGci...'}
-              disabled={settings.env?.ha_token}
-            />
-            <p className="text-xs text-[#444] mt-1">
-              {settings.env?.ha_token ? 'Controlled by HA_TOKEN in Docker.' : 'HA → Profile → Security → Long-Lived Access Tokens'}
-            </p>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-[#888] mb-1.5">Todo entity ID</label>
-            <input
-              value={settings.ha_entity}
-              onChange={e => setSettings(s => ({ ...s, ha_entity: e.target.value }))}
-              placeholder="todo.google_keep_einkaufsliste"
-              disabled={settings.env?.ha_entity}
-            />
-            <p className="text-xs text-[#444] mt-1">
-              {settings.env?.ha_entity ? 'Controlled by HA_ENTITY in Docker.' : 'HA → Developer Tools → States → search todo.'}
-            </p>
-          </div>
-          <button
-            onClick={saveHa}
-            disabled={saving}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-all disabled:opacity-50"
-          >
-            {haSaved ? <><Check size={13} /> Saved</> : <><Save size={13} /> Save</>}
-          </button>
-        </div>
+        )}
       </div>
 
-      {/* About */}
-      <div className="bg-[#141414] border border-[#1e1e1e] rounded-xl px-5 py-4 space-y-3">
-        <h2 className="font-semibold text-white">About Vommeal</h2>
-        <div className="space-y-2 text-sm text-[#666]">
-          <p>A meal planner made for two. Plan your week, sync recipes from Mealie, and generate shopping lists automatically.</p>
-          <div className="border-t border-[#1e1e1e] pt-3 space-y-1 text-xs text-[#444]">
-            <p>• Recipes are stored locally in SQLite</p>
-            <p>• Mealie recipes are mirrored — edit in Mealie, re-sync here</p>
-            <p>• Shopping list auto-categorizes ingredients</p>
-            <p>• Use "Copy" on the shopping list to share with anyone</p>
+      {/* About + Docker */}
+      <div className="bg-[#141414] border border-[#1e1e1e] rounded-xl overflow-hidden">
+        <button onClick={() => toggle('about')}
+          className="w-full flex items-center justify-between px-5 py-4 hover:bg-[#191919] transition-colors text-left">
+          <div className="flex items-center gap-2">
+            <span className="text-base">ℹ️</span>
+            <h2 className="font-semibold text-white">About & Docker</h2>
           </div>
-        </div>
-      </div>
-
-      {/* Docker env info */}
-      <div className="bg-[#0f0f0f] border border-[#1e1e1e] rounded-xl px-5 py-4">
-        <h2 className="font-semibold text-white mb-2 text-sm">Docker environment variables</h2>
-        <div className="font-mono text-xs text-[#555] space-y-1">
-          <p><span className="text-[#444]"># Optional: pre-configure Mealie</span></p>
-          <p>MEALIE_URL=https://mealie.example.com</p>
-          <p>MEALIE_TOKEN=your-token-here</p>
-          <p><span className="text-[#444]"># Optional: pre-configure Home Assistant</span></p>
-          <p>HA_URL=http://homeassistant.local:8123</p>
-          <p>HA_TOKEN=your-token-here</p>
-          <p>HA_ENTITY=todo.shopping_list</p>
-          <p><span className="text-[#444]"># Data persistence</span></p>
-          <p>DATA_DIR=/app/data</p>
-        </div>
+          <ChevronDown size={15} className={`text-[#555] transition-transform flex-shrink-0 ${open.has('about') ? 'rotate-180' : ''}`} />
+        </button>
+        {open.has('about') && (
+          <div className="border-t border-[#1e1e1e] px-5 py-4 space-y-4">
+            <div className="space-y-2 text-sm text-[#666]">
+              <p>A meal planner made for two. Plan your week, sync recipes from Mealie, and generate shopping lists automatically.</p>
+              <div className="border-t border-[#1e1e1e] pt-3 space-y-1 text-xs text-[#444]">
+                <p>• Recipes are stored locally in SQLite</p>
+                <p>• Mealie recipes are mirrored — edit in Mealie, re-sync here</p>
+                <p>• Shopping list auto-categorizes ingredients</p>
+                <p>• Use "Copy" on the shopping list to share with anyone</p>
+              </div>
+            </div>
+            <div className="bg-[#0f0f0f] border border-[#1e1e1e] rounded-lg px-4 py-3">
+              <p className="text-xs font-semibold text-[#555] mb-2">Docker environment variables</p>
+              <div className="font-mono text-xs text-[#555] space-y-1">
+                <p><span className="text-[#444]"># Optional: pre-configure Mealie</span></p>
+                <p>MEALIE_URL=https://mealie.example.com</p>
+                <p>MEALIE_TOKEN=your-token-here</p>
+                <p><span className="text-[#444]"># Optional: pre-configure Home Assistant</span></p>
+                <p>HA_URL=http://homeassistant.local:8123</p>
+                <p>HA_TOKEN=your-token-here</p>
+                <p>HA_ENTITY=todo.shopping_list</p>
+                <p><span className="text-[#444]"># Data persistence</span></p>
+                <p>DATA_DIR=/app/data</p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
