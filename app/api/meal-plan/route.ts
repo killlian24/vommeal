@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getMealPlanRange, addMealPlanEntry } from '@/lib/db'
+import { getMealPlanRange, addMealPlanEntry, deleteMealPlanRange } from '@/lib/db'
 import { v4 as uuidv4 } from 'uuid'
 
 export async function GET(req: NextRequest) {
@@ -8,6 +8,15 @@ export async function GET(req: NextRequest) {
   const end = searchParams.get('end') || ''
   if (!start || !end) return NextResponse.json({ error: 'start and end required' }, { status: 400 })
   return NextResponse.json(getMealPlanRange(start, end))
+}
+
+export async function DELETE(req: NextRequest) {
+  const { searchParams } = new URL(req.url)
+  const start = searchParams.get('start') || ''
+  const end = searchParams.get('end') || ''
+  if (!start || !end) return NextResponse.json({ error: 'start and end required' }, { status: 400 })
+  deleteMealPlanRange(start, end)
+  return NextResponse.json({ ok: true })
 }
 
 export async function POST(req: NextRequest) {

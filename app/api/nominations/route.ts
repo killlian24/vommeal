@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
   getNominationsForRange, addNomination, addMealPlanEntry,
-  deleteNominationsForDate, deleteNominationsOlderThan, getMealPlanRange, getSetting, getAllRecipes
+  deleteNominationsForDate, deleteNominationsOlderThan, deleteNominationsForRange,
+  getMealPlanRange, getSetting, getAllRecipes
 } from '@/lib/db'
 import { v4 as uuidv4 } from 'uuid'
 
@@ -17,6 +18,15 @@ export async function GET(req: NextRequest) {
   deleteNominationsOlderThan(cutoff.toISOString().slice(0, 10))
 
   return NextResponse.json(getNominationsForRange(start, end))
+}
+
+export async function DELETE(req: NextRequest) {
+  const { searchParams } = new URL(req.url)
+  const start = searchParams.get('start') || ''
+  const end = searchParams.get('end') || ''
+  if (!start || !end) return NextResponse.json({ error: 'start and end required' }, { status: 400 })
+  deleteNominationsForRange(start, end)
+  return NextResponse.json({ ok: true })
 }
 
 export async function POST(req: NextRequest) {

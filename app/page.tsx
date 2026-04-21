@@ -296,6 +296,17 @@ export default function PlanPage() {
     setSettleDate(null)
   }
 
+  const clearWeek = async () => {
+    if (!confirm(`Clear all meals and votes for ${format(weekStart, 'MMM d')} – ${format(addDays(weekStart, 6), 'MMM d')}? This cannot be undone.`)) return
+    await Promise.all([
+      fetch(`/api/meal-plan?start=${startStr}&end=${endStr}`, { method: 'DELETE' }),
+      fetch(`/api/nominations?start=${startStr}&end=${endStr}`, { method: 'DELETE' }),
+    ])
+    await loadEntries()
+    await loadNominations()
+    showToast('Week cleared')
+  }
+
   const generateShopping = async () => {
     const res = await fetch('/api/shopping', {
       method: 'POST',
@@ -666,6 +677,16 @@ export default function PlanPage() {
             </div>
           )
         })}
+      </div>
+
+      {/* Clear week */}
+      <div className="flex justify-center pt-2 pb-1">
+        <button
+          onClick={clearWeek}
+          className="text-xs text-[#333] hover:text-red-500 transition-colors px-3 py-1.5"
+        >
+          Clear week
+        </button>
       </div>
 
       {/* Add / suggest modal */}

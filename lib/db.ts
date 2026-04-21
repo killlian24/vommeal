@@ -281,6 +281,10 @@ export function deleteMealPlanEntry(id: string) {
   getDb().prepare('DELETE FROM meal_plan WHERE id = ?').run(id)
 }
 
+export function deleteMealPlanRange(startDate: string, endDate: string) {
+  getDb().prepare('DELETE FROM meal_plan WHERE date BETWEEN ? AND ?').run(startDate, endDate)
+}
+
 // --- Nominations (Fun mode) ---
 export type Nomination = {
   id: string
@@ -345,6 +349,10 @@ export function deleteNominationsForDate(date: string) {
 
 export function deleteNominationsOlderThan(cutoffDate: string) {
   getDb().prepare('DELETE FROM nominations WHERE date < ?').run(cutoffDate)
+}
+
+export function deleteNominationsForRange(startDate: string, endDate: string) {
+  getDb().prepare('DELETE FROM nominations WHERE date BETWEEN ? AND ?').run(startDate, endDate)
 }
 
 // --- Shopping List ---
