@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSetting, addShoppingItem, haUidExists, getAllShoppingItems, checkShoppingItem, setShoppingItemHaUid, findUntrackedItemByName } from '@/lib/db'
 import { getHomeAssistantConfig } from '@/lib/config'
+import { categorize } from '@/lib/categorize'
 import { v4 as uuidv4 } from 'uuid'
 
 type HATodoItem = { summary: string; uid: string; status: string }
@@ -122,5 +123,34 @@ export async function POST() {
     }
   }
 
-  return NextResponse.json({ ok: true, added, checked })
+  // Sort HA list by category order using move_item (requires HA Google Keep integration v1.1.0+)
+  let sorted = 0
+  try {
+    const categorized = haItems.map(item => ({
+      ...item,
+      catIndex: (() => {
+        const cat = categorize(item.summary ?? '')
+        const idx = categoryOrder.indexOf(cat)
+        return idx === -1 ? 999 : idx
+      })(),
+    }))
+    categorized.sort((a, b) => a.catIndex - b.catIndex)
+
+    let prevUid: string | null = null
+    for (const item of categorized) {
+      await fetch(`${haUrl}/api/services/todo/move_item`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entity_id: entity,
+          uid: item.uid,
+          ...(prevUid ? { previous_uid: prevUid } : {}),
+        }),
+      })
+      prevUid = item.uid
+      sorted++
+    }
+  } catch { /* move_item not supported on this HA version — skip silently */ }
+
+  return NextResponse.json({ ok: true, added, checked, sorted })
 }
