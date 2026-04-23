@@ -146,7 +146,7 @@ export async function POST() {
     }))
     categorized.sort((a, b) => a.catIndex - b.catIndex)
 
-    let prevUid: string | null = null
+    let prevSummary: string | null = null
     for (const item of categorized) {
       try {
         const res = await fetch(`${haUrl}/api/services/todo/move_item`, {
@@ -154,20 +154,20 @@ export async function POST() {
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             entity_id: entity,
-            uid: item.uid,
-            ...(prevUid ? { previous_uid: prevUid } : {}),
+            item: item.summary,
+            ...(prevSummary ? { previous_item: prevSummary } : {}),
           }),
         })
-        if (!res.ok && !sortError) {
+        if (res.ok) {
+          sorted++
+        } else if (!sortError) {
           const text = await res.text()
           sortError = `move_item failed (${res.status}): ${text.slice(0, 200)}`
-        } else {
-          sorted++
         }
       } catch (e) {
         if (!sortError) sortError = `move_item error: ${String(e)}`
       }
-      prevUid = item.uid
+      prevSummary = item.summary
     }
   }
 
