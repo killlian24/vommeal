@@ -80,6 +80,7 @@ const MEAT_KEYWORDS = [
   'rindfleisch', 'rind', 'rinderhack',
   'schwein', 'schweinefleisch', 'schweinebauch', 'schweinekotelett',
   'hackfleisch', 'hack', 'mett', 'gehacktes',
+  'fisch',
   'lachs', 'thunfisch', 'kabeljau', 'dorsch', 'seelachs', 'forelle', 'hering',
   'makrele', 'wolfsbarsch', 'dorade', 'zander', 'hecht', 'pangasius', 'tilapia',
   'garnele', 'krabbe', 'hummer', 'muschel', 'tintenfisch', 'oktopus', 'anchovis',
