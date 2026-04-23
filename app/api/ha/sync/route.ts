@@ -132,13 +132,15 @@ export async function POST() {
     }
   }
 
-  // Sort HA list by deleting all items and re-adding in category order.
-  // move_item is not supported by the Google Keep integration so we fall back
-  // to remove + add. UIDs change, so we re-fetch to update local DB afterwards.
-  let sorted = 0
-  let sortError: string | null = null
+  // Return sync results immediately — sorting runs in the background so the
+  // UI gets instant feedback without waiting for all the remove+add calls.
+  const response = NextResponse.json({ ok: true, added, checked })
+
+  // Background sort: delete all HA items and re-add in category order.
+  // move_item is not supported by this todo integration, so remove+add is
+  // the only way to control order. UIDs change, so we re-fetch afterwards.
   if (haItems.length > 0) {
-    const categorized = [...haItems]
+    const sortItems = [...haItems]
       .filter(i => i.summary?.trim())
       .map(item => ({
         ...item,
@@ -150,47 +152,35 @@ export async function POST() {
       }))
       .sort((a, b) => a.catIndex - b.catIndex)
 
-    try {
-      // Step 1 — remove all items sequentially
-      for (const item of categorized) {
-        const res = await fetch(`${haUrl}/api/services/todo/remove_item`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ entity_id: entity, item: item.summary }),
-        })
-        if (!res.ok && !sortError) {
-          const text = await res.text()
-          sortError = `remove_item failed (${res.status}): ${text.slice(0, 200)}`
-        }
-      }
-
-      // Step 2 — re-add in sorted order (only if nothing failed in step 1)
-      if (!sortError) {
-        for (const item of categorized) {
-          const res = await fetch(`${haUrl}/api/services/todo/add_item`, {
+    ;(async () => {
+      try {
+        // Step 1 — remove all items
+        for (const item of sortItems) {
+          await fetch(`${haUrl}/api/services/todo/remove_item`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ entity_id: entity, item: item.summary }),
           })
-          if (res.ok) sorted++
         }
-
-        // Step 3 — fetch fresh UIDs and update local DB (UIDs changed after re-add)
-        try {
-          const reorderedItems = await fetchHAItems(haUrl, token, entity)
-          const haByName = new Map(reorderedItems.map(i => [i.summary?.toLowerCase().trim(), i.uid]))
-          for (const local of getAllShoppingItems().filter(i => !i.checked)) {
-            // Try full label first (amount + unit + name), then bare name
-            const label = [local.amount, local.unit, local.name].filter(Boolean).join(' ').toLowerCase().trim()
-            const newUid = haByName.get(label) ?? haByName.get(local.name.toLowerCase().trim())
-            if (newUid && newUid !== local.ha_uid) setShoppingItemHaUid(local.id, newUid)
-          }
-        } catch { /* best-effort UID refresh */ }
-      }
-    } catch (e) {
-      sortError = `sort error: ${String(e)}`
-    }
+        // Step 2 — re-add in sorted order
+        for (const item of sortItems) {
+          await fetch(`${haUrl}/api/services/todo/add_item`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entity_id: entity, item: item.summary }),
+          })
+        }
+        // Step 3 — refresh UIDs in local DB (they change after re-add)
+        const reordered = await fetchHAItems(haUrl, token, entity)
+        const haByName = new Map(reordered.map(i => [i.summary?.toLowerCase().trim(), i.uid]))
+        for (const local of getAllShoppingItems().filter(i => !i.checked)) {
+          const label = [local.amount, local.unit, local.name].filter(Boolean).join(' ').toLowerCase().trim()
+          const newUid = haByName.get(label) ?? haByName.get(local.name.toLowerCase().trim())
+          if (newUid && newUid !== local.ha_uid) setShoppingItemHaUid(local.id, newUid)
+        }
+      } catch { /* best-effort background sort */ }
+    })()
   }
 
-  return NextResponse.json({ ok: true, added, checked, sorted, sortError })
+  return response
 }
