@@ -6,8 +6,9 @@ const PRODUCE_KEYWORDS = [
   'broccoli', 'zucchini', 'mushroom', 'celery', 'cucumber', 'avocado', 'berry', 'grape',
   'leek', 'fennel', 'pea', 'bean sprout', 'artichoke', 'asparagus', 'beetroot', 'cabbage', 'cauliflower',
   'kale', 'chard', 'radish', 'spring onion', 'scallion', 'aubergine', 'eggplant', 'pumpkin', 'squash',
-  'corn', 'courgette',
+  'corn', 'courgette', 'fruit', 'vegetable',
   // German
+  'obst', 'gemüse', 'früchte',
   'salat', 'karotte', 'möhre', 'zwiebel', 'schalotte', 'frühlingszwiebel', 'knoblauch', 'tomate', 'kirschtomate',
   'apfel', 'birne', 'pflaume', 'zwetschge', 'kirsche', 'pfirsich', 'mango', 'ananas', 'melone', 'weintraube', 'feige', 'aprikose',
   'zitrone', 'limette', 'orange', 'mandarine', 'grapefruit',
@@ -41,9 +42,10 @@ const DAIRY_KEYWORDS = [
 ]
 const BAKERY_KEYWORDS = [
   // English
-  'bread', 'flour', 'bun', 'roll', 'pasta', 'noodle', 'rice noodle', 'lasagne', 'spaghetti', 'penne', 'fusilli', 'tortilla', 'wrap', 'pita', 'bagel', 'croissant', 'cake', 'pastry',
+  'bread', 'flour', 'bun', 'roll', 'pasta', 'noodle', 'rice noodle', 'lasagne', 'spaghetti', 'penne', 'fusilli', 'tortilla', 'wrap', 'pita', 'bagel', 'croissant', 'cake', 'pastry', 'dough', 'tart',
   // German
   'brot', 'brötchen', 'semmel', 'baguette', 'toastbrot', 'vollkornbrot', 'mehl', 'nudel', 'spaghetti', 'penne', 'lasagne', 'tortellini', 'gnocchi', 'knödel', 'brezel', 'laugenbrezel', 'croissant', 'kuchen',
+  'flammkuchen', 'flammkuchenteig', 'pizzateig', 'teig',
 ]
 const PANTRY_KEYWORDS = [
   // English
@@ -65,7 +67,8 @@ const PANTRY_KEYWORDS = [
   'mandel', 'walnuss', 'haselnuss', 'cashew', 'erdnuss', 'pinienkerne', 'sesam', 'sonnenblumenkerne', 'kürbiskerne',
   'rosinen', 'trockenfrüchte',
 ]
-const FROZEN_KEYWORDS = ['frozen', 'gefroren', 'tiefkühl', 'eis', 'ice cream']
+// 'eis' omitted — it's a substring of 'fleisch'. Rely on tiefkühl/gefroren/specific terms instead.
+const FROZEN_KEYWORDS = ['frozen', 'gefroren', 'tiefkühl', 'tiefgefroren', 'ice cream', 'eiscreme', 'eis am stiel', 'eiskuchen', 'eiswürfel']
 const BEVERAGE_KEYWORDS = [
   // English
   'water', 'sparkling water', 'juice', 'wine', 'beer', 'soda', 'lemonade', 'coffee', 'tea', 'milk drink', 'smoothie', 'energy drink', 'coconut water',
@@ -75,11 +78,13 @@ const BEVERAGE_KEYWORDS = [
 
 export function categorize(name: string): string {
   const n = name.toLowerCase()
+  // frozen first — tiefkühl prefix is unambiguous
   if (FROZEN_KEYWORDS.some(k => n.includes(k))) return 'frozen'
+  // bakery before meat: 'flammkuchen' contains 'lamm', 'teig' etc. must win
+  if (BAKERY_KEYWORDS.some(k => n.includes(k))) return 'bakery'
   if (PRODUCE_KEYWORDS.some(k => n.includes(k))) return 'produce'
   if (MEAT_KEYWORDS.some(k => n.includes(k))) return 'meat'
   if (DAIRY_KEYWORDS.some(k => n.includes(k))) return 'dairy'
-  if (BAKERY_KEYWORDS.some(k => n.includes(k))) return 'bakery'
   if (PANTRY_KEYWORDS.some(k => n.includes(k))) return 'pantry'
   if (BEVERAGE_KEYWORDS.some(k => n.includes(k))) return 'beverages'
   return 'other'
