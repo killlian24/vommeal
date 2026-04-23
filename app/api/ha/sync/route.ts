@@ -132,42 +132,63 @@ export async function POST() {
     }
   }
 
-  // Sort HA list by category order using move_item (requires HA Google Keep integration v1.1.0+)
+  // Sort HA list by deleting all items and re-adding in category order.
+  // move_item is not supported by the Google Keep integration so we fall back
+  // to remove + add. UIDs change, so we re-fetch to update local DB afterwards.
   let sorted = 0
   let sortError: string | null = null
   if (haItems.length > 0) {
-    const categorized = haItems.map(item => ({
-      ...item,
-      catIndex: (() => {
-        const cat = categorize(item.summary ?? '')
-        const idx = categoryOrder.indexOf(cat)
-        return idx === -1 ? 999 : idx
-      })(),
-    }))
-    categorized.sort((a, b) => a.catIndex - b.catIndex)
+    const categorized = [...haItems]
+      .filter(i => i.summary?.trim())
+      .map(item => ({
+        ...item,
+        catIndex: (() => {
+          const cat = categorize(item.summary)
+          const idx = categoryOrder.indexOf(cat)
+          return idx === -1 ? 999 : idx
+        })(),
+      }))
+      .sort((a, b) => a.catIndex - b.catIndex)
 
-    let prevSummary: string | null = null
-    for (const item of categorized) {
-      try {
-        const res = await fetch(`${haUrl}/api/services/todo/move_item`, {
+    try {
+      // Step 1 — remove all items sequentially
+      for (const item of categorized) {
+        const res = await fetch(`${haUrl}/api/services/todo/remove_item`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            entity_id: entity,
-            item: item.summary,
-            ...(prevSummary ? { previous_item: prevSummary } : {}),
-          }),
+          body: JSON.stringify({ entity_id: entity, item: item.summary }),
         })
-        if (res.ok) {
-          sorted++
-        } else if (!sortError) {
+        if (!res.ok && !sortError) {
           const text = await res.text()
-          sortError = `move_item failed (${res.status}): ${text.slice(0, 200)}`
+          sortError = `remove_item failed (${res.status}): ${text.slice(0, 200)}`
         }
-      } catch (e) {
-        if (!sortError) sortError = `move_item error: ${String(e)}`
       }
-      prevSummary = item.summary
+
+      // Step 2 — re-add in sorted order (only if nothing failed in step 1)
+      if (!sortError) {
+        for (const item of categorized) {
+          const res = await fetch(`${haUrl}/api/services/todo/add_item`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entity_id: entity, item: item.summary }),
+          })
+          if (res.ok) sorted++
+        }
+
+        // Step 3 — fetch fresh UIDs and update local DB (UIDs changed after re-add)
+        try {
+          const reorderedItems = await fetchHAItems(haUrl, token, entity)
+          const haByName = new Map(reorderedItems.map(i => [i.summary?.toLowerCase().trim(), i.uid]))
+          for (const local of getAllShoppingItems().filter(i => !i.checked)) {
+            // Try full label first (amount + unit + name), then bare name
+            const label = [local.amount, local.unit, local.name].filter(Boolean).join(' ').toLowerCase().trim()
+            const newUid = haByName.get(label) ?? haByName.get(local.name.toLowerCase().trim())
+            if (newUid && newUid !== local.ha_uid) setShoppingItemHaUid(local.id, newUid)
+          }
+        } catch { /* best-effort UID refresh */ }
+      }
+    } catch (e) {
+      sortError = `sort error: ${String(e)}`
     }
   }
 
