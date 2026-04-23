@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getSetting, addShoppingItem, haUidExists, getAllShoppingItems, checkShoppingItem, setShoppingItemHaUid, findUntrackedItemByName } from '@/lib/db'
+import { getSetting, addShoppingItem, haUidExists, getAllShoppingItems, checkShoppingItem, setShoppingItemHaUid, setShoppingItemCategory, findUntrackedItemByName } from '@/lib/db'
 import { getHomeAssistantConfig } from '@/lib/config'
 import { categorize } from '@/lib/categorize'
 import { v4 as uuidv4 } from 'uuid'
@@ -93,7 +93,7 @@ export async function POST() {
       name: item.summary.trim(),
       amount: '',
       unit: '',
-      category: 'other',
+      category: categorize(item.summary.trim()),
       checked: false,
       source: 'ha',
       meal_plan_id: null,
@@ -103,10 +103,19 @@ export async function POST() {
     added++
   }
 
+  // Recategorize any existing HA-sourced items stuck in 'other' (migration for older synced items)
+  const allLocal = getAllShoppingItems()
+  for (const local of allLocal) {
+    if (local.category === 'other' && (local.source === 'ha' || local.ha_uid)) {
+      const cat = categorize(local.name)
+      if (cat !== 'other') setShoppingItemCategory(local.id, cat)
+    }
+  }
+
   // Check off any Vommeal items that are no longer active in HA
   // (they were checked off / deleted in HA/Keep)
   let checked = 0
-  const localItems = getAllShoppingItems().filter(i => !i.checked)
+  const localItems = allLocal.filter(i => !i.checked)
   for (const local of localItems) {
     if (local.ha_uid) {
       // Item was pushed to or came from HA — check if it's still active
@@ -125,7 +134,8 @@ export async function POST() {
 
   // Sort HA list by category order using move_item (requires HA Google Keep integration v1.1.0+)
   let sorted = 0
-  try {
+  let sortError: string | null = null
+  if (haItems.length > 0) {
     const categorized = haItems.map(item => ({
       ...item,
       catIndex: (() => {
@@ -138,19 +148,28 @@ export async function POST() {
 
     let prevUid: string | null = null
     for (const item of categorized) {
-      await fetch(`${haUrl}/api/services/todo/move_item`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          entity_id: entity,
-          uid: item.uid,
-          ...(prevUid ? { previous_uid: prevUid } : {}),
-        }),
-      })
+      try {
+        const res = await fetch(`${haUrl}/api/services/todo/move_item`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entity_id: entity,
+            uid: item.uid,
+            ...(prevUid ? { previous_uid: prevUid } : {}),
+          }),
+        })
+        if (!res.ok && !sortError) {
+          const text = await res.text()
+          sortError = `move_item failed (${res.status}): ${text.slice(0, 200)}`
+        } else {
+          sorted++
+        }
+      } catch (e) {
+        if (!sortError) sortError = `move_item error: ${String(e)}`
+      }
       prevUid = item.uid
-      sorted++
     }
-  } catch { /* move_item not supported on this HA version — skip silently */ }
+  }
 
-  return NextResponse.json({ ok: true, added, checked, sorted })
+  return NextResponse.json({ ok: true, added, checked, sorted, sortError })
 }

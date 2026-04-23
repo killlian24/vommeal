@@ -415,6 +415,10 @@ export function setShoppingItemHaUid(id: string, haUid: string) {
   getDb().prepare('UPDATE shopping_list SET ha_uid = ? WHERE id = ?').run(haUid, id)
 }
 
+export function setShoppingItemCategory(id: string, category: string) {
+  getDb().prepare('UPDATE shopping_list SET category = ? WHERE id = ?').run(category, id)
+}
+
 export function deleteShoppingItem(id: string) {
   getDb().prepare('DELETE FROM shopping_list WHERE id = ?').run(id)
 }
