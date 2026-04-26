@@ -5,11 +5,15 @@ import fs from 'fs'
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data')
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true })
 
+export function getDbPath(): string {
+  return path.join(DATA_DIR, 'vommeal.db')
+}
+
 let _db: Database.Database | null = null
 
 export function getDb(): Database.Database {
   if (_db) return _db
-  _db = new Database(path.join(DATA_DIR, 'vommeal.db'))
+  _db = new Database(getDbPath())
   _db.pragma('journal_mode = WAL')
   _db.pragma('foreign_keys = ON')
   migrate(_db)
@@ -77,6 +81,7 @@ function migrate(db: Database.Database) {
       source       TEXT DEFAULT 'manual',
       meal_plan_id TEXT,
       sort_order   INTEGER DEFAULT 0,
+      updated_at   TEXT DEFAULT (datetime('now')),
       created_at   TEXT DEFAULT (datetime('now'))
     );
 
@@ -93,6 +98,18 @@ function migrate(db: Database.Database) {
   }
   try { db.exec('ALTER TABLE recipes ADD COLUMN rating INTEGER') } catch { /* already exists */ }
   try { db.exec('ALTER TABLE shopping_list ADD COLUMN ha_uid TEXT') } catch { /* already exists */ }
+  try { db.exec("ALTER TABLE shopping_list ADD COLUMN updated_at TEXT DEFAULT (datetime('now'))") } catch { /* already exists */ }
+  try {
+    db.exec(`
+      DELETE FROM meal_plan
+      WHERE rowid NOT IN (
+        SELECT MAX(rowid)
+        FROM meal_plan
+        GROUP BY date, meal_type
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_meal_plan_unique_date_type ON meal_plan(date, meal_type);
+    `)
+  } catch { /* leave existing data untouched if migration cannot be applied */ }
 }
 
 // --- Settings ---
@@ -246,17 +263,25 @@ export function getMealPlanRange(startDate: string, endDate: string): MealPlanEn
 
 export function addMealPlanEntry(entry: Omit<MealPlanEntry, 'created_at' | 'recipe'>): MealPlanEntry {
   const db = getDb()
-  // Enforce one entry per date+meal_type — remove any existing before inserting
-  db.prepare('DELETE FROM meal_plan WHERE date = ? AND meal_type = ?').run(entry.date, 'dinner')
-  db.prepare(`
-    INSERT INTO meal_plan (id, date, meal_type, recipe_id, custom_meal_name, servings, notes, status, suggested_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    entry.id, entry.date, 'dinner',
-    entry.recipe_id ?? null, entry.custom_meal_name ?? null,
-    entry.servings, entry.notes ?? '',
-    entry.status ?? 'suggested', entry.suggested_by ?? ''
-  )
+  db.transaction(() => {
+    db.prepare(`
+      INSERT INTO meal_plan (id, date, meal_type, recipe_id, custom_meal_name, servings, notes, status, suggested_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(date, meal_type) DO UPDATE SET
+        id = excluded.id,
+        recipe_id = excluded.recipe_id,
+        custom_meal_name = excluded.custom_meal_name,
+        servings = excluded.servings,
+        notes = excluded.notes,
+        status = excluded.status,
+        suggested_by = excluded.suggested_by
+    `).run(
+      entry.id, entry.date, 'dinner',
+      entry.recipe_id ?? null, entry.custom_meal_name ?? null,
+      entry.servings, entry.notes ?? '',
+      entry.status ?? 'suggested', entry.suggested_by ?? ''
+    )
+  })()
   return { ...entry, created_at: new Date().toISOString() }
 }
 
@@ -367,6 +392,7 @@ export type ShoppingItem = {
   meal_plan_id: string | null
   ha_uid: string | null
   sort_order: number
+  updated_at: string
   created_at: string
 }
 
@@ -395,28 +421,29 @@ export function findUntrackedItemByName(name: string): ShoppingItem | null {
   return row ? { ...row, checked: !!row.checked, ha_uid: null } as ShoppingItem : null
 }
 
-export function addShoppingItem(item: Omit<ShoppingItem, 'created_at'>): ShoppingItem {
+export function addShoppingItem(item: Omit<ShoppingItem, 'created_at' | 'updated_at'>): ShoppingItem {
   getDb().prepare(`
     INSERT INTO shopping_list (id, name, amount, unit, category, checked, source, meal_plan_id, ha_uid, sort_order)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(item.id, item.name, item.amount, item.unit, item.category, item.checked ? 1 : 0, item.source, item.meal_plan_id ?? null, item.ha_uid ?? null, item.sort_order)
-  return { ...item, created_at: new Date().toISOString() }
+  const now = new Date().toISOString()
+  return { ...item, created_at: now, updated_at: now }
 }
 
 export function toggleShoppingItem(id: string) {
-  getDb().prepare('UPDATE shopping_list SET checked = NOT checked WHERE id = ?').run(id)
+  getDb().prepare("UPDATE shopping_list SET checked = NOT checked, updated_at = datetime('now') WHERE id = ?").run(id)
 }
 
 export function checkShoppingItem(id: string) {
-  getDb().prepare('UPDATE shopping_list SET checked = 1 WHERE id = ?').run(id)
+  getDb().prepare("UPDATE shopping_list SET checked = 1, updated_at = datetime('now') WHERE id = ?").run(id)
 }
 
 export function setShoppingItemHaUid(id: string, haUid: string) {
-  getDb().prepare('UPDATE shopping_list SET ha_uid = ? WHERE id = ?').run(haUid, id)
+  getDb().prepare("UPDATE shopping_list SET ha_uid = ?, updated_at = datetime('now') WHERE id = ?").run(haUid, id)
 }
 
 export function setShoppingItemCategory(id: string, category: string) {
-  getDb().prepare('UPDATE shopping_list SET category = ? WHERE id = ?').run(category, id)
+  getDb().prepare("UPDATE shopping_list SET category = ?, updated_at = datetime('now') WHERE id = ?").run(category, id)
 }
 
 export function deleteShoppingItem(id: string) {

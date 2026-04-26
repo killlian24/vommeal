@@ -21,6 +21,7 @@ type SyncProgress = {
   current?: string
   created?: number
   errors?: number
+  failed?: { slug: string; error: string }[]
   message?: string
   error?: string
 }
@@ -70,7 +71,7 @@ export default function RecipesPage() {
               setSyncProgress(data)
               if (data.status === 'done') {
                 load()
-                setTimeout(() => setSyncProgress(null), 4000)
+                setTimeout(() => setSyncProgress(null), (data.errors ?? 0) > 0 ? 12000 : 4000)
               }
             } catch { /* ignore malformed */ }
           }
@@ -164,6 +165,16 @@ export default function RecipesPage() {
                 className="h-full bg-primary transition-all duration-300"
                 style={{ width: `${((syncProgress.synced ?? 0) / syncProgress.total) * 100}%` }}
               />
+            </div>
+          )}
+          {syncProgress.status === 'done' && (syncProgress.failed?.length ?? 0) > 0 && (
+            <div className="border-t border-green-500/20 px-4 py-3 space-y-1">
+              {syncProgress.failed!.slice(0, 5).map(f => (
+                <p key={f.slug} className="text-xs text-[#aaa]">
+                  <span className="font-mono text-red-300">{f.slug}</span>
+                  <span className="text-[#555]"> — {f.error}</span>
+                </p>
+              ))}
             </div>
           )}
         </div>

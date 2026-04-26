@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Save, RefreshCw, Check, X, Info, ChevronDown, ChevronUp } from 'lucide-react'
+import { Save, RefreshCw, Check, X, Info, ChevronDown, ChevronUp, Download } from 'lucide-react'
 
 type Settings = {
   mealie_url: string; mealie_token: string; has_token: boolean
@@ -408,6 +408,14 @@ export default function SettingsPage() {
                 <p>• Use "Copy" on the shopping list to share with anyone</p>
               </div>
             </div>
+            <a
+              href="/api/backup"
+              download
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm text-[#888] hover:text-white transition-all"
+            >
+              <Download size={13} />
+              Download database backup
+            </a>
             <div className="bg-[#0f0f0f] border border-[#1e1e1e] rounded-lg px-4 py-3">
               <p className="text-xs font-semibold text-[#555] mb-2">Docker environment variables</p>
               <div className="font-mono text-xs text-[#555] space-y-1">

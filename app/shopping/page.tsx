@@ -22,6 +22,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 }
 
 const DEFAULT_categoryOrder = ['produce', 'meat', 'dairy', 'bakery', 'pantry', 'frozen', 'beverages', 'other']
+const CATEGORIES = ['produce', 'meat', 'dairy', 'bakery', 'pantry', 'frozen', 'beverages', 'other']
 
 export default function ShoppingPage() {
   const [items, setItems] = useState<ShoppingItem[]>([])
@@ -67,6 +68,19 @@ export default function ShoppingPage() {
   const toggle = async (id: string) => {
     setItems(prev => prev.map(i => i.id === id ? { ...i, checked: !i.checked } : i))
     await fetch(`/api/shopping/${id}`, { method: 'PATCH' })
+  }
+
+  const changeCategory = async (id: string, category: string) => {
+    setItems(prev => prev.map(i => i.id === id ? { ...i, category } : i))
+    const res = await fetch(`/api/shopping/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category }),
+    })
+    if (!res.ok) {
+      showToast('Could not update category')
+      load()
+    }
   }
 
   const remove = async (id: string) => {
@@ -411,6 +425,17 @@ export default function ShoppingPage() {
                             </span>
                           )}
                         </div>
+                        <select
+                          value={item.category}
+                          onChange={e => changeCategory(item.id, e.target.value)}
+                          disabled={item.checked}
+                          title="Change category"
+                          className="w-24 flex-shrink-0 text-xs py-1 px-2 bg-[#101010] border-[#242424] text-[#777] disabled:opacity-40"
+                        >
+                          {CATEGORIES.map(c => (
+                            <option key={c} value={c}>{CATEGORY_LABELS[c]?.replace(/^.+? /, '') || c}</option>
+                          ))}
+                        </select>
                         <button
                           onClick={() => remove(item.id)}
                           className="text-[#333] hover:text-red-400 transition-colors p-1"

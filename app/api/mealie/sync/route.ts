@@ -31,6 +31,7 @@ export async function POST() {
         let synced = 0
         let created = 0
         let errors = 0
+        const failed: { slug: string; error: string }[] = []
 
         for (const slug of slugs) {
           try {
@@ -56,8 +57,11 @@ export async function POST() {
             })
 
             if (existingRecipe) { synced++ } else { created++ }
-          } catch {
+          } catch (e) {
             errors++
+            if (failed.length < 20) {
+              failed.push({ slug, error: e instanceof Error ? e.message : String(e) })
+            }
           }
 
           send({
@@ -69,7 +73,7 @@ export async function POST() {
           })
         }
 
-        send({ status: 'done', total, synced, created, errors })
+        send({ status: 'done', total, synced, created, errors, failed })
       } catch (e) {
         send({ status: 'error', error: String(e) })
       }
