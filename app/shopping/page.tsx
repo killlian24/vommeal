@@ -9,6 +9,17 @@ type ShoppingItem = {
   category: string; checked: boolean; source: string
 }
 type PantryStaple = { id: string; name: string }
+type SyncResult = {
+  ok: boolean
+  imported?: number
+  linked?: number
+  pushed?: number
+  checked?: number
+  sorted?: number
+  needsCategory?: number
+  restored?: number
+  error?: string
+}
 
 const CATEGORY_LABELS: Record<string, string> = {
   produce: '🥦 Produce',
@@ -40,6 +51,7 @@ export default function ShoppingPage() {
   const [newStaple, setNewStaple] = useState('')
   const [toastMsg, setToastMsg] = useState('')
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null)
+  const [lastSync, setLastSync] = useState<SyncResult | null>(null)
 
   const showToast = (msg: string) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 2500) }
 
@@ -197,18 +209,25 @@ export default function ShoppingPage() {
       const res = await fetch('/api/ha/sync', { method: 'POST' })
       const data = await res.json()
       if (data.ok) {
-        const changed = (data.added ?? 0) + (data.checked ?? 0)
+        setLastSync(data)
+        const changed = (data.imported ?? data.added ?? 0) + (data.linked ?? 0) + (data.pushed ?? 0) + (data.checked ?? 0) + (data.sorted ?? 0)
         if (changed > 0) {
           await load()
           const parts = []
-          if (data.added > 0) parts.push(`${data.added} new`)
+          if ((data.imported ?? data.added) > 0) parts.push(`${data.imported ?? data.added} imported`)
+          if (data.pushed > 0) parts.push(`${data.pushed} sent to HA`)
+          if (data.linked > 0) parts.push(`${data.linked} linked`)
           if (data.checked > 0) parts.push(`${data.checked} checked off`)
+          if (data.sorted > 0) parts.push('sorted')
+          if (data.needsCategory > 0) parts.push(`${data.needsCategory} need category`)
           if (!silent) showToast(`Synced: ${parts.join(', ')}`)
         } else if (!silent) showToast('Nothing new on your list')
       } else if (!silent) {
+        setLastSync({ ok: false, error: data.error || 'Sync failed' })
         showToast(`Sync failed: ${data.error}`)
       }
     } catch {
+      setLastSync({ ok: false, error: 'Sync failed — check Settings' })
       if (!silent) showToast('Sync failed — check Settings')
     }
     setSyncing(false)
@@ -330,6 +349,26 @@ export default function ShoppingPage() {
             {showAdd ? <X size={14} /> : <Plus size={14} />}
           </button>
         </div>
+        {lastSync && (
+          <div className={`rounded-lg border px-3 py-2 text-xs ${
+            lastSync.ok ? 'border-[#243525] bg-[#101810] text-[#8da58f]' : 'border-red-500/30 bg-red-500/10 text-red-300'
+          }`}>
+            {lastSync.ok ? (
+              <p>
+                Last sync: {[
+                  lastSync.imported ? `${lastSync.imported} imported` : '',
+                  lastSync.pushed ? `${lastSync.pushed} sent to HA` : '',
+                  lastSync.linked ? `${lastSync.linked} linked` : '',
+                  lastSync.checked ? `${lastSync.checked} checked` : '',
+                  lastSync.sorted ? 'HA sorted' : '',
+                  lastSync.needsCategory ? `${lastSync.needsCategory} need category` : '',
+                ].filter(Boolean).join(', ') || 'no changes'}
+              </p>
+            ) : (
+              <p>Last sync failed: {lastSync.error}</p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Add item */}

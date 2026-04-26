@@ -81,8 +81,24 @@ function migrate(db: Database.Database) {
       source       TEXT DEFAULT 'manual',
       meal_plan_id TEXT,
       sort_order   INTEGER DEFAULT 0,
+      ha_uid       TEXT,
+      ha_summary   TEXT,
+      normalized_name TEXT,
+      last_seen_in_ha_at TEXT,
+      last_synced_to_ha_at TEXT,
+      sync_status TEXT DEFAULT 'ok',
       updated_at   TEXT DEFAULT (datetime('now')),
       created_at   TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS sync_runs (
+      id          TEXT PRIMARY KEY,
+      type        TEXT NOT NULL,
+      status      TEXT NOT NULL,
+      started_at  TEXT DEFAULT (datetime('now')),
+      finished_at TEXT,
+      summary     TEXT DEFAULT '{}',
+      error       TEXT DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS pantry_staples (
@@ -98,9 +114,20 @@ function migrate(db: Database.Database) {
   }
   try { db.exec('ALTER TABLE recipes ADD COLUMN rating INTEGER') } catch { /* already exists */ }
   try { db.exec('ALTER TABLE shopping_list ADD COLUMN ha_uid TEXT') } catch { /* already exists */ }
+  try { db.exec('ALTER TABLE shopping_list ADD COLUMN ha_summary TEXT') } catch { /* already exists */ }
+  try { db.exec('ALTER TABLE shopping_list ADD COLUMN normalized_name TEXT') } catch { /* already exists */ }
+  try { db.exec('ALTER TABLE shopping_list ADD COLUMN last_seen_in_ha_at TEXT') } catch { /* already exists */ }
+  try { db.exec('ALTER TABLE shopping_list ADD COLUMN last_synced_to_ha_at TEXT') } catch { /* already exists */ }
+  try { db.exec("ALTER TABLE shopping_list ADD COLUMN sync_status TEXT DEFAULT 'ok'") } catch { /* already exists */ }
   try { db.exec('ALTER TABLE shopping_list ADD COLUMN updated_at TEXT') } catch { /* already exists */ }
   try {
     db.exec("UPDATE shopping_list SET updated_at = COALESCE(updated_at, created_at, datetime('now'))")
+  } catch { /* best-effort backfill */ }
+  try {
+    db.exec("UPDATE shopping_list SET normalized_name = LOWER(TRIM(name)) WHERE normalized_name IS NULL OR normalized_name = ''")
+  } catch { /* best-effort backfill */ }
+  try {
+    db.exec("UPDATE shopping_list SET sync_status = COALESCE(sync_status, 'ok')")
   } catch { /* best-effort backfill */ }
 }
 
@@ -388,6 +415,7 @@ export function deleteNominationsForRange(startDate: string, endDate: string) {
 export type ShoppingItem = {
   id: string
   name: string
+  normalized_name: string
   amount: string
   unit: string
   category: string
@@ -395,7 +423,11 @@ export type ShoppingItem = {
   source: 'manual' | 'meal_plan' | 'ha'
   meal_plan_id: string | null
   ha_uid: string | null
+  ha_summary: string | null
   sort_order: number
+  last_seen_in_ha_at: string | null
+  last_synced_to_ha_at: string | null
+  sync_status: string
   updated_at: string
   created_at: string
 }
@@ -404,12 +436,30 @@ const CATEGORIES = ['produce', 'meat', 'dairy', 'bakery', 'pantry', 'frozen', 'b
 
 export function getAllShoppingItems(): ShoppingItem[] {
   const rows = getDb().prepare('SELECT * FROM shopping_list ORDER BY category ASC, sort_order ASC, name ASC').all() as Record<string, unknown>[]
-  return rows.map(row => ({ ...row, checked: !!row.checked, ha_uid: row.ha_uid ?? null } as ShoppingItem))
+  return rows.map(row => ({
+    ...row,
+    checked: !!row.checked,
+    normalized_name: row.normalized_name ?? String(row.name ?? '').toLowerCase().trim(),
+    ha_uid: row.ha_uid ?? null,
+    ha_summary: row.ha_summary ?? null,
+    last_seen_in_ha_at: row.last_seen_in_ha_at ?? null,
+    last_synced_to_ha_at: row.last_synced_to_ha_at ?? null,
+    sync_status: row.sync_status ?? 'ok',
+  } as ShoppingItem))
 }
 
 export function getShoppingItemById(id: string): ShoppingItem | null {
   const row = getDb().prepare('SELECT * FROM shopping_list WHERE id = ?').get(id) as Record<string, unknown> | undefined
-  return row ? { ...row, checked: !!row.checked, ha_uid: row.ha_uid ?? null } as ShoppingItem : null
+  return row ? {
+    ...row,
+    checked: !!row.checked,
+    normalized_name: row.normalized_name ?? String(row.name ?? '').toLowerCase().trim(),
+    ha_uid: row.ha_uid ?? null,
+    ha_summary: row.ha_summary ?? null,
+    last_seen_in_ha_at: row.last_seen_in_ha_at ?? null,
+    last_synced_to_ha_at: row.last_synced_to_ha_at ?? null,
+    sync_status: row.sync_status ?? 'ok',
+  } as ShoppingItem : null
 }
 
 export function haUidExists(haUid: string): boolean {
@@ -422,16 +472,48 @@ export function findUntrackedItemByName(name: string): ShoppingItem | null {
   const row = getDb().prepare(
     'SELECT * FROM shopping_list WHERE LOWER(name) = LOWER(?) AND checked = 0 AND ha_uid IS NULL LIMIT 1'
   ).get(name.trim()) as Record<string, unknown> | undefined
-  return row ? { ...row, checked: !!row.checked, ha_uid: null } as ShoppingItem : null
+  return row ? {
+    ...row,
+    checked: !!row.checked,
+    normalized_name: row.normalized_name ?? String(row.name ?? '').toLowerCase().trim(),
+    ha_uid: null,
+    ha_summary: row.ha_summary ?? null,
+    last_seen_in_ha_at: row.last_seen_in_ha_at ?? null,
+    last_synced_to_ha_at: row.last_synced_to_ha_at ?? null,
+    sync_status: row.sync_status ?? 'ok',
+  } as ShoppingItem : null
 }
 
-export function addShoppingItem(item: Omit<ShoppingItem, 'created_at' | 'updated_at'>): ShoppingItem {
+export function addShoppingItem(
+  item: Omit<ShoppingItem, 'created_at' | 'updated_at' | 'normalized_name' | 'ha_summary' | 'last_seen_in_ha_at' | 'last_synced_to_ha_at' | 'sync_status'>
+    & Partial<Pick<ShoppingItem, 'normalized_name' | 'ha_summary' | 'last_seen_in_ha_at' | 'last_synced_to_ha_at' | 'sync_status'>>
+): ShoppingItem {
+  const normalizedName = item.normalized_name ?? item.name.toLowerCase().trim()
   getDb().prepare(`
-    INSERT INTO shopping_list (id, name, amount, unit, category, checked, source, meal_plan_id, ha_uid, sort_order)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(item.id, item.name, item.amount, item.unit, item.category, item.checked ? 1 : 0, item.source, item.meal_plan_id ?? null, item.ha_uid ?? null, item.sort_order)
+    INSERT INTO shopping_list (
+      id, name, amount, unit, category, checked, source, meal_plan_id,
+      ha_uid, ha_summary, normalized_name, last_seen_in_ha_at,
+      last_synced_to_ha_at, sync_status, sort_order
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    item.id, item.name, item.amount, item.unit, item.category,
+    item.checked ? 1 : 0, item.source, item.meal_plan_id ?? null,
+    item.ha_uid ?? null, item.ha_summary ?? null, normalizedName,
+    item.last_seen_in_ha_at ?? null, item.last_synced_to_ha_at ?? null,
+    item.sync_status ?? 'ok', item.sort_order
+  )
   const now = new Date().toISOString()
-  return { ...item, created_at: now, updated_at: now }
+  return {
+    ...item,
+    normalized_name: normalizedName,
+    ha_summary: item.ha_summary ?? null,
+    last_seen_in_ha_at: item.last_seen_in_ha_at ?? null,
+    last_synced_to_ha_at: item.last_synced_to_ha_at ?? null,
+    sync_status: item.sync_status ?? 'ok',
+    created_at: now,
+    updated_at: now,
+  }
 }
 
 export function toggleShoppingItem(id: string) {
@@ -442,12 +524,38 @@ export function checkShoppingItem(id: string) {
   getDb().prepare("UPDATE shopping_list SET checked = 1, updated_at = datetime('now') WHERE id = ?").run(id)
 }
 
-export function setShoppingItemHaUid(id: string, haUid: string) {
-  getDb().prepare("UPDATE shopping_list SET ha_uid = ?, updated_at = datetime('now') WHERE id = ?").run(haUid, id)
+export function setShoppingItemChecked(id: string, checked: boolean) {
+  getDb().prepare("UPDATE shopping_list SET checked = ?, updated_at = datetime('now') WHERE id = ?").run(checked ? 1 : 0, id)
+}
+
+export function setShoppingItemHaUid(id: string, haUid: string, haSummary?: string) {
+  getDb().prepare(`
+    UPDATE shopping_list
+    SET ha_uid = ?, ha_summary = COALESCE(?, ha_summary), last_synced_to_ha_at = datetime('now'),
+        last_seen_in_ha_at = datetime('now'), sync_status = 'ok', updated_at = datetime('now')
+    WHERE id = ?
+  `).run(haUid, haSummary ?? null, id)
+}
+
+export function markShoppingItemSeenInHa(id: string, haUid: string, haSummary: string) {
+  getDb().prepare(`
+    UPDATE shopping_list
+    SET ha_uid = ?, ha_summary = ?, last_seen_in_ha_at = datetime('now'),
+        sync_status = 'ok', checked = 0, updated_at = datetime('now')
+    WHERE id = ?
+  `).run(haUid, haSummary, id)
+}
+
+export function markShoppingItemSyncStatus(id: string, status: string) {
+  getDb().prepare("UPDATE shopping_list SET sync_status = ?, updated_at = datetime('now') WHERE id = ?").run(status, id)
 }
 
 export function setShoppingItemCategory(id: string, category: string) {
-  getDb().prepare("UPDATE shopping_list SET category = ?, updated_at = datetime('now') WHERE id = ?").run(category, id)
+  getDb().prepare(`
+    UPDATE shopping_list
+    SET category = ?, sync_status = ?, updated_at = datetime('now')
+    WHERE id = ?
+  `).run(category, category === 'other' ? 'needs_category' : 'ok', id)
 }
 
 export function deleteShoppingItem(id: string) {
@@ -463,6 +571,19 @@ export function clearAllItems() {
 }
 
 export { CATEGORIES }
+
+// --- Sync runs ---
+export function createSyncRun(id: string, type: string) {
+  getDb().prepare('INSERT INTO sync_runs (id, type, status) VALUES (?, ?, ?)').run(id, type, 'running')
+}
+
+export function finishSyncRun(id: string, status: string, summary: unknown, error = '') {
+  getDb().prepare(`
+    UPDATE sync_runs
+    SET status = ?, finished_at = datetime('now'), summary = ?, error = ?
+    WHERE id = ?
+  `).run(status, JSON.stringify(summary), error, id)
+}
 
 // --- Pantry Staples ---
 export type PantryStaple = { id: string; name: string; created_at: string }

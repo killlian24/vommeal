@@ -98,6 +98,16 @@ If you leave these variables empty, Vommeal Settings stays editable. That is sim
 
 Optional: set `APP_PASSWORD` to protect sensitive actions such as changing Settings and downloading a database backup. When it is set, Vommeal asks for the password the first time a protected action is used.
 
+### Home Assistant sync behavior
+
+Home Assistant is treated as the quick-capture list. Add items there during the day, then press **Sync** in Vommeal.
+
+Sync pulls the active Home Assistant todo items first, links known items by HA UID, imports new HA-only items into Vommeal, categorizes them, sends missing Vommeal items to HA, and then rewrites the active HA list in category order. The rewrite is necessary because Home Assistant todo lists do not expose a reliable move/reorder API for every todo integration.
+
+The sync stores HA UIDs and a small sync log in SQLite so repeated syncs should be idempotent and should not create duplicates when items can be matched by UID or by their exact displayed text.
+
+Items that Vommeal cannot confidently categorize stay in **Other** and are marked internally as needing a category. Change the category in Vommeal and sync again.
+
 ---
 
 ## Troubleshooting
