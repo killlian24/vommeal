@@ -14,9 +14,15 @@ import {
 } from '@/lib/db'
 import { getHomeAssistantConfig } from '@/lib/config'
 import { categorize } from '@/lib/categorize'
+import {
+  addHAItem,
+  fetchHAItems,
+  normalizeShoppingText,
+  removeHAItem,
+  shoppingLabel,
+} from '@/lib/ha'
+import type { HATodoItem } from '@/lib/ha'
 import { randomUUID } from 'crypto'
-
-type HATodoItem = { summary: string; uid: string; status: string }
 
 type SyncStats = {
   imported: number
@@ -29,19 +35,7 @@ type SyncStats = {
 }
 
 const DEFAULT_CATEGORY_ORDER = ['produce', 'meat', 'dairy', 'bakery', 'pantry', 'frozen', 'beverages', 'other']
-
-function normalizeShoppingText(value: string): string {
-  return value
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function labelFor(item: Pick<ShoppingItem, 'amount' | 'unit' | 'name'>): string {
-  return [item.amount, item.unit, item.name].filter(Boolean).join(' ').trim()
-}
+let syncInProgress = false
 
 function categoryOrder(): string[] {
   const savedOrder = getSetting('category_order')
@@ -55,40 +49,9 @@ function categoryOrder(): string[] {
   return DEFAULT_CATEGORY_ORDER
 }
 
-async function haService<T = unknown>(haUrl: string, token: string, path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${haUrl}/api/services/${path}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`HA ${path} returned ${res.status}: ${text.slice(0, 200)}`)
-  }
-  return res.json().catch(() => ({} as T))
-}
-
-async function fetchHAItems(haUrl: string, token: string, entity: string): Promise<HATodoItem[]> {
-  const data = await haService<{ service_response?: Record<string, { items?: HATodoItem[] }> }>(
-    haUrl,
-    token,
-    'todo/get_items?return_response',
-    { entity_id: entity, status: ['needs_action'] }
-  )
-  return data?.service_response?.[entity]?.items?.filter(item => item.summary?.trim()) ?? []
-}
-
-async function addHAItem(haUrl: string, token: string, entity: string, summary: string) {
-  await haService(haUrl, token, 'todo/add_item', { entity_id: entity, item: summary })
-}
-
-async function removeHAItem(haUrl: string, token: string, entity: string, summary: string) {
-  await haService(haUrl, token, 'todo/remove_item', { entity_id: entity, item: summary })
-}
-
 function localKeys(item: ShoppingItem): string[] {
   return Array.from(new Set([
-    normalizeShoppingText(labelFor(item)),
+    normalizeShoppingText(shoppingLabel(item)),
     normalizeShoppingText(item.name),
     item.ha_summary ? normalizeShoppingText(item.ha_summary) : '',
   ].filter(Boolean)))
@@ -96,9 +59,9 @@ function localKeys(item: ShoppingItem): string[] {
 
 function findLocalByHaSummary(haItem: HATodoItem, localItems: ShoppingItem[], usedLocalIds: Set<string>): ShoppingItem | null {
   const summaryKey = normalizeShoppingText(haItem.summary)
-  const candidates = localItems.filter(item => !item.checked && !item.ha_uid && !usedLocalIds.has(item.id))
+  const candidates = localItems.filter(item => !item.checked && !usedLocalIds.has(item.id))
 
-  return candidates.find(item => normalizeShoppingText(labelFor(item)) === summaryKey)
+  return candidates.find(item => normalizeShoppingText(shoppingLabel(item)) === summaryKey)
     ?? candidates.find(item => normalizeShoppingText(item.name) === summaryKey)
     ?? candidates.find(item => item.ha_summary && normalizeShoppingText(item.ha_summary) === summaryKey)
     ?? null
@@ -126,8 +89,8 @@ function countSummaries(items: string[]): Map<string, number> {
   return counts
 }
 
-async function restoreMissingHAItems(haUrl: string, token: string, entity: string, expectedSummaries: string[]): Promise<number> {
-  const current = await fetchHAItems(haUrl, token, entity)
+async function restoreMissingHAItems(config: NonNullable<ReturnType<typeof getHomeAssistantConfig>>, expectedSummaries: string[]): Promise<number> {
+  const current = await fetchHAItems(config)
   const currentCounts = countSummaries(current.map(item => item.summary))
   let restored = 0
 
@@ -138,7 +101,7 @@ async function restoreMissingHAItems(haUrl: string, token: string, entity: strin
       currentCounts.set(key, count - 1)
       continue
     }
-    await addHAItem(haUrl, token, entity, summary)
+    await addHAItem(config, summary)
     restored++
   }
 
@@ -172,20 +135,24 @@ function refreshUidLinksFromHa(haItems: HATodoItem[], stats: SyncStats) {
 }
 
 export async function POST() {
+  if (syncInProgress) {
+    return NextResponse.json({ ok: false, error: 'Home Assistant sync is already running' }, { status: 409 })
+  }
+
   const config = getHomeAssistantConfig()
   if (!config) {
     return NextResponse.json({ error: 'Home Assistant not configured. Add your credentials in Settings.' }, { status: 400 })
   }
 
+  syncInProgress = true
   const runId = randomUUID()
   const stats: SyncStats = { imported: 0, linked: 0, pushed: 0, checked: 0, sorted: 0, needsCategory: 0, restored: 0 }
   createSyncRun(runId, 'ha_sync')
 
-  const { baseUrl: haUrl, token, entity } = config
   const order = categoryOrder()
 
   try {
-    let haItems = await fetchHAItems(haUrl, token, entity)
+    let haItems = await fetchHAItems(config)
     let localItems = getAllShoppingItems()
     const usedLocalIds = new Set<string>()
 
@@ -256,11 +223,11 @@ export async function POST() {
       )
 
     for (const item of toPush) {
-      await addHAItem(haUrl, token, entity, labelFor(item))
+      await addHAItem(config, shoppingLabel(item))
       stats.pushed++
     }
 
-    haItems = await fetchHAItems(haUrl, token, entity)
+    haItems = await fetchHAItems(config)
     refreshUidLinksFromHa(haItems, stats)
 
     const latestLocal = getAllShoppingItems()
@@ -288,19 +255,25 @@ export async function POST() {
       const expectedSummaries = sortItems.map(item => item.summary)
       try {
         for (const item of haItems) {
-          await removeHAItem(haUrl, token, entity, item.summary)
+          await removeHAItem(config, item.summary)
         }
         for (const item of sortItems) {
-          await addHAItem(haUrl, token, entity, item.summary)
+          await addHAItem(config, item.summary)
         }
         stats.sorted = sortItems.length
+        stats.restored += await restoreMissingHAItems(config, expectedSummaries)
       } catch (error) {
-        stats.restored += await restoreMissingHAItems(haUrl, token, entity, expectedSummaries)
+        try {
+          stats.restored += await restoreMissingHAItems(config, expectedSummaries)
+        } catch (restoreError) {
+          const restoreMessage = restoreError instanceof Error ? restoreError.message : String(restoreError)
+          throw new Error(`${error instanceof Error ? error.message : String(error)}; restore also failed: ${restoreMessage}`)
+        }
         throw error
       }
     }
 
-    haItems = await fetchHAItems(haUrl, token, entity)
+    haItems = await fetchHAItems(config)
     refreshUidLinksFromHa(haItems, stats)
 
     const summary = { runId, ...stats }
@@ -311,5 +284,7 @@ export async function POST() {
     const summary = { runId, ...stats }
     finishSyncRun(runId, 'error', summary, message)
     return NextResponse.json({ ok: false, error: message, ...summary }, { status: 503 })
+  } finally {
+    syncInProgress = false
   }
 }

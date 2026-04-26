@@ -4,22 +4,26 @@
 const EARLY_PANTRY_KEYWORDS = [
   // Stocks & broths
   'brühe', 'fond', 'bouillon', 'broth', 'stock',
+  'grøntsagsbouillon', 'hønsebouillon', 'oksebouillon',
   // Powdered spices that share names with fresh produce
   'paprikapulver', 'chilipulver', 'knoblauchpulver', 'zwiebelpulver',
+  'hvidløgspulver', 'løgpulver',
   // Spice blends
   'ras el hanout', 'ras el habout', 'garam masala', 'harissa', 'curry paste',
   // Coconut milk is pantry (canned), not dairy
-  'kokosmilch', 'coconut milk',
+  'kokosmilch', 'coconut milk', 'kokosmælk',
   // Canned/pureed tomatoes are pantry even though they contain 'tomate'
   'passierte tomaten', 'dosentomaten', 'schältomaten', 'tomatensoße',
+  'flåede tomater', 'hakkede tomater', 'tomatpure', 'tomatpuré',
   // Anything dried is shelf-stable pantry, not fresh produce
-  'getrocknet', 'getrocknete',
+  'getrocknet', 'getrocknete', 'tørret', 'tørrede',
 ]
 
 const FROZEN_KEYWORDS = [
-  'frozen', 'gefroren', 'tiefkühl', 'tiefgefroren',
+  'frozen', 'gefroren', 'tiefkühl', 'tiefgefroren', 'frossen', 'frosne', 'dybfrost',
   // 'eis' omitted — substring of 'fleisch'. Use specific forms instead:
   'ice cream', 'eiscreme', 'eis am stiel', 'eiskuchen', 'eiswürfel',
+  'flødeis', 'ispind', 'ispinde', 'isterning', 'isterninger',
 ]
 
 const PRODUCE_KEYWORDS = [
@@ -60,6 +64,24 @@ const PRODUCE_KEYWORDS = [
   // Herbs
   'petersilie', 'basilikum', 'schnittlauch', 'thymian', 'rosmarin', 'minze',
   'dill', 'salbei', 'koriander', 'majoran', 'estragon', 'lorbeer', 'liebstöckel', 'bärlauch',
+  // ── Danish ──
+  'frugt', 'grønt', 'grøntsag', 'grøntsager', 'salat',
+  // Vegetables
+  'tomat', 'cherrytomat', 'løg', 'rødløg', 'forårsløg', 'skalotteløg', 'hvidløg',
+  'gulerod', 'kartoffel', 'sød kartoffel', 'selleri', 'bladselleri', 'knoldselleri',
+  'fennikel', 'porre', 'asparges', 'rødbede', 'blomkål', 'broccoli', 'romanesco',
+  'rosenkål', 'grønkål', 'bladbede', 'radise', 'rødkål', 'hvidkål', 'spidskål',
+  'savoykål', 'kålrabi', 'aubergine', 'græskar', 'majs', 'squash', 'agurk',
+  'peberfrugt', 'chili', 'avocado', 'spinat', 'ært', 'ærter', 'bønnespire',
+  'bønnespirer', 'artiskok', 'svamp', 'champignon', 'ingefær', 'citrongræs',
+  // Fruit
+  'æble', 'pære', 'blomme', 'kirsebær', 'fersken', 'nektarin', 'ananas',
+  'melon', 'vandmelon', 'vindrue', 'figen', 'abrikos', 'granatæble',
+  'hindbær', 'jordbær', 'brombær', 'blåbær', 'ribs', 'stikkelsbær',
+  'mandarin', 'grapefrugt', 'citron', 'lime', 'papaya',
+  // Herbs
+  'persille', 'basilikum', 'purløg', 'timian', 'rosmarin', 'mynte',
+  'dild', 'salvie', 'koriander', 'merian', 'estragon', 'laurbær',
 ]
 
 const MEAT_KEYWORDS = [
@@ -90,6 +112,13 @@ const MEAT_KEYWORDS = [
   'salami', 'schinken', 'speck', 'fleisch', 'steak', 'schnitzel', 'filet',
   'keule', 'flügel', 'kotelett', 'rippe', 'spareribs',
   'hähnchenbrust', 'putenbrust', 'hähnchenschenkel',
+  // ── Danish ──
+  'kylling', 'oksekød', 'svinekød', 'lam', 'lammekød', 'kalkun', 'and',
+  'kalv', 'kalvekød', 'vildt', 'kanin', 'kød', 'hakket kød', 'hakkekød',
+  'hakket oksekød', 'fars', 'bøf', 'filet', 'bryst', 'lår', 'vinge', 'kølle',
+  'fjerkræ', 'fisk', 'laks', 'tun', 'torsk', 'ørred', 'sild', 'makrel',
+  'havbars', 'reje', 'rejer', 'krabbe', 'hummer', 'musling', 'muslinger',
+  'blæksprutte', 'ansjos', 'skaldyr', 'pølse', 'bacon', 'skinke', 'salami',
 ]
 
 const DAIRY_KEYWORDS = [
@@ -108,6 +137,12 @@ const DAIRY_KEYWORDS = [
   'butter', 'butterschmalz', 'margarine',
   'joghurt', 'naturjoghurt', 'crème fraîche',
   'eier',
+  // ── Danish ──
+  'mælk', 'sødmælk', 'letmælk', 'skummetmælk', 'kærnemælk',
+  'fløde', 'piskefløde', 'madlavningsfløde', 'creme fraiche', 'cremefraiche',
+  'ost', 'friskost', 'hytteost', 'flødeost', 'parmesan', 'mozzarella',
+  'cheddar', 'brie', 'camembert', 'feta', 'gouda', 'ricotta', 'mascarpone',
+  'halloumi', 'smør', 'margarine', 'yoghurt', 'skyr', 'kefir', 'æg',
   // Note: bare 'ei' is handled with word-boundary regex in categorize() below
   // to avoid false positives inside words like 'kleine', 'keine', etc.
 ]
@@ -129,6 +164,14 @@ const BAKERY_KEYWORDS = [
   'paniermehl', 'semmelbrösel', 'panko',
   'maisstärke', 'stärke', 'speisestärke', 'kartoffelstärke',
   'anstellgut', 'sauerteig', 'sauerteigstarter', 'levain',
+  // ── Danish ──
+  'brød', 'bolle', 'boller', 'rundstykke', 'rugbrød', 'franskbrød',
+  'knækbrød', 'baguette', 'toastbrød', 'pasta', 'nudel', 'nudler',
+  'lasagne', 'spaghetti', 'penne', 'tortilla', 'wrap', 'pita', 'bagel',
+  'croissant', 'kage', 'wienerbrød', 'dej', 'pizzadej', 'butterdej',
+  'tærte', 'vaffel', 'pandekage', 'småkage', 'kiks', 'rasp', 'panko',
+  'mel', 'hvedemel', 'rugmel', 'speltmel', 'majsstivelse', 'stivelse',
+  'kartoffelmel', 'gryn', 'polenta', 'bulgur', 'surdej',
 ]
 
 const PANTRY_KEYWORDS = [
@@ -177,6 +220,27 @@ const PANTRY_KEYWORDS = [
   'mandel', 'walnuss', 'haselnuss', 'cashew', 'erdnuss', 'pinienkerne',
   'sesam', 'sonnenblumenkerne', 'kürbiskerne', 'leinsamen', 'chiasamen',
   'fett', 'pflanzenfett', 'kokosfett', 'schmalz', 'butterschmalz',
+  // ── Danish oils, vinegars, sauces ──
+  'olie', 'olivenolie', 'solsikkeolie', 'rapsolie', 'sesamolie', 'kokosolie',
+  'eddike', 'balsamico', 'æblecidereddike', 'sauce', 'ketchup', 'sennep',
+  'mayo', 'mayonnaise', 'soja', 'sojasovs', 'pesto', 'tomatpuré', 'tomatpure',
+  'sriracha', 'tabasco', 'worcestershire', 'miso', 'fiskesauce', 'østerssauce',
+  // ── Danish sweeteners, spreads ──
+  'salt', 'peber', 'sukker', 'flormelis', 'rørsukker', 'honning', 'ahornsirup',
+  'marmelade', 'peanutbutter', 'chokolade', 'kakao', 'vanilje',
+  // ── Danish grains, pulses, canned ──
+  'ris', 'couscous', 'quinoa', 'havregryn', 'müsli', 'bønne', 'bønner',
+  'linse', 'linser', 'kikært', 'kikærter', 'dåse', 'rosin', 'rosiner',
+  'tranebær', 'tørret frugt',
+  // ── Danish spices & baking ──
+  'krydderi', 'kanel', 'spidskommen', 'gurkemeje', 'chili', 'karry',
+  'muskatnød', 'kardemomme', 'nellike', 'paprikapulver', 'korianderpulver',
+  'bagepulver', 'natron', 'gær',
+  // ── Danish nuts & seeds ──
+  'mandel', 'mandler', 'valnød', 'valnødder', 'hasselnød', 'hasselnødder',
+  'cashew', 'jordnød', 'jordnødder', 'pinjekerne', 'pinjekerner',
+  'sesamfrø', 'solsikkekerne', 'solsikkekerner', 'græskarkerne',
+  'græskarkerner', 'hørfrø', 'chiafrø',
 ]
 
 const BEVERAGE_KEYWORDS = [
@@ -193,6 +257,11 @@ const BEVERAGE_KEYWORDS = [
   'limonade', 'cola', 'kaffee', 'tee', 'kakao', 'smoothie',
   'kräutertee', 'früchtetee', 'grüntee', 'schwarztee', 'pfefferminztee',
   'espresso',
+  // ── Danish ──
+  'vand', 'danskvand', 'kildevand', 'saft', 'juice', 'æblejuice',
+  'appelsinjuice', 'druesaft', 'vin', 'rødvin', 'hvidvin', 'rosé',
+  'øl', 'sodavand', 'limonade', 'cola', 'kaffe', 'te', 'kakao',
+  'smoothie', 'energidrik', 'espresso',
 ]
 
 export function categorize(name: string): string {

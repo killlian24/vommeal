@@ -6,6 +6,7 @@ import {
 } from '@/lib/db'
 import { getHomeAssistantConfig } from '@/lib/config'
 import { categorize } from '@/lib/categorize'
+import { removeActiveHAItemsForLocalItems } from '@/lib/ha'
 import { randomUUID } from 'crypto'
 
 type HATodoItem = { summary: string; uid: string; status: string }
@@ -15,68 +16,69 @@ type HATodoItem = { summary: string; uid: string; status: string }
 const STAPLE_ALIASES: Record<string, string[]> = {
   // Basics
   'salz': ['salt'],                         'salt': ['salz'],
-  'pfeffer': ['pepper', 'black pepper'],    'pepper': ['pfeffer'], 'black pepper': ['pfeffer'],
-  'zucker': ['sugar'],                      'sugar': ['zucker'],
-  'mehl': ['flour'],                        'flour': ['mehl'],
+  'pfeffer': ['pepper', 'black pepper', 'peber'], 'pepper': ['pfeffer', 'peber'], 'black pepper': ['pfeffer', 'peber'], 'peber': ['pepper', 'pfeffer'],
+  'zucker': ['sugar', 'sukker'],            'sugar': ['zucker', 'sukker'], 'sukker': ['sugar', 'zucker'],
+  'mehl': ['flour', 'mel'],                 'flour': ['mehl', 'mel'], 'mel': ['flour', 'mehl'],
   'butter': ['butter'],
   // Oils & vinegar
-  'öl': ['oil'],                            'oil': ['öl'],
-  'olivenöl': ['olive oil'],               'olive oil': ['olivenöl'],
-  'sonnenblumenöl': ['sunflower oil'],     'sunflower oil': ['sonnenblumenöl'],
-  'rapsöl': ['canola oil', 'rapeseed oil'],
-  'essig': ['vinegar'],                     'vinegar': ['essig'],
+  'öl': ['oil', 'olie'],                    'oil': ['öl', 'olie'], 'olie': ['oil', 'öl'],
+  'olivenöl': ['olive oil', 'olivenolie'], 'olive oil': ['olivenöl', 'olivenolie'], 'olivenolie': ['olive oil', 'olivenöl'],
+  'sonnenblumenöl': ['sunflower oil', 'solsikkeolie'], 'sunflower oil': ['sonnenblumenöl', 'solsikkeolie'], 'solsikkeolie': ['sunflower oil', 'sonnenblumenöl'],
+  'rapsöl': ['canola oil', 'rapeseed oil', 'rapsolie'],
+  'essig': ['vinegar', 'eddike'],           'vinegar': ['essig', 'eddike'], 'eddike': ['vinegar', 'essig'],
   'balsamico': ['balsamic vinegar'],        'balsamic vinegar': ['balsamico'],
   // Alliums
-  'knoblauch': ['garlic'],                  'garlic': ['knoblauch'],
-  'zwiebel': ['onion', 'onions'],
-  'zwiebeln': ['onion', 'onions'],         'onion': ['zwiebel', 'zwiebeln'], 'onions': ['zwiebel', 'zwiebeln'],
+  'knoblauch': ['garlic', 'hvidløg'],       'garlic': ['knoblauch', 'hvidløg'], 'hvidløg': ['garlic', 'knoblauch'],
+  'zwiebel': ['onion', 'onions', 'løg'],
+  'zwiebeln': ['onion', 'onions', 'løg'],  'onion': ['zwiebel', 'zwiebeln', 'løg'], 'onions': ['zwiebel', 'zwiebeln', 'løg'], 'løg': ['onion', 'zwiebel'],
   // Dairy & eggs
-  'milch': ['milk'],                        'milk': ['milch'],
-  'ei': ['egg', 'eggs'],
-  'eier': ['egg', 'eggs'],                 'egg': ['ei', 'eier'], 'eggs': ['ei', 'eier'],
-  'sahne': ['cream', 'heavy cream'],       'cream': ['sahne'], 'heavy cream': ['sahne'],
+  'milch': ['milk', 'mælk'],                'milk': ['milch', 'mælk'], 'mælk': ['milk', 'milch'],
+  'ei': ['egg', 'eggs', 'æg'],
+  'eier': ['egg', 'eggs', 'æg'],           'egg': ['ei', 'eier', 'æg'], 'eggs': ['ei', 'eier', 'æg'], 'æg': ['egg', 'eier'],
+  'sahne': ['cream', 'heavy cream', 'fløde'], 'cream': ['sahne', 'fløde'], 'heavy cream': ['sahne', 'fløde'], 'fløde': ['cream', 'sahne'],
   // Sweeteners
-  'honig': ['honey'],                       'honey': ['honig'],
-  'ahornsirup': ['maple syrup'],            'maple syrup': ['ahornsirup'],
+  'honig': ['honey', 'honning'],            'honey': ['honig', 'honning'], 'honning': ['honey', 'honig'],
+  'ahornsirup': ['maple syrup', 'ahornsirup'], 'maple syrup': ['ahornsirup'],
   // Sauces & pastes
   'tomatenmark': ['tomato paste', 'tomato puree'],
   'tomato paste': ['tomatenmark'],          'tomato puree': ['tomatenmark'],
   'sojasoße': ['soy sauce', 'soya sauce'], 'soy sauce': ['sojasoße'], 'soya sauce': ['sojasoße'],
-  'senf': ['mustard'],                      'mustard': ['senf'],
+  'senf': ['mustard', 'sennep'],            'mustard': ['senf', 'sennep'], 'sennep': ['mustard', 'senf'],
   // Stocks & broth
   'brühe': ['broth', 'stock', 'bouillon'],
   'gemüsebrühe': ['vegetable broth', 'vegetable stock'],
   'hühnerbrühe': ['chicken broth', 'chicken stock'],
   'broth': ['brühe'],                       'stock': ['brühe'],
   // Baking
-  'backpulver': ['baking powder'],          'baking powder': ['backpulver'],
+  'backpulver': ['baking powder', 'bagepulver'], 'baking powder': ['backpulver', 'bagepulver'], 'bagepulver': ['baking powder', 'backpulver'],
   'natron': ['baking soda'],                'baking soda': ['natron'],
-  'hefe': ['yeast'],                        'yeast': ['hefe'],
-  'vanille': ['vanilla'],                   'vanilla': ['vanille'],
+  'hefe': ['yeast', 'gær'],                 'yeast': ['hefe', 'gær'], 'gær': ['yeast', 'hefe'],
+  'vanille': ['vanilla', 'vanilje'],        'vanilla': ['vanille', 'vanilje'], 'vanilje': ['vanilla', 'vanille'],
   // Grains & pasta
-  'reis': ['rice'],                         'rice': ['reis'],
-  'nudeln': ['pasta', 'noodles'],          'pasta': ['nudeln'], 'noodles': ['nudeln'],
+  'reis': ['rice', 'ris'],                  'rice': ['reis', 'ris'], 'ris': ['rice', 'reis'],
+  'nudeln': ['pasta', 'noodles', 'nudler'], 'pasta': ['nudeln', 'nudler'], 'noodles': ['nudeln', 'nudler'], 'nudler': ['noodles', 'nudeln'],
   // Spices
   'paprikapulver': ['paprika', 'paprika powder'],
   'kreuzkümmel': ['cumin'],                 'cumin': ['kreuzkümmel'],
-  'zimt': ['cinnamon'],                     'cinnamon': ['zimt'],
-  'kurkuma': ['turmeric'],                  'turmeric': ['kurkuma'],
+  'zimt': ['cinnamon', 'kanel'],            'cinnamon': ['zimt', 'kanel'], 'kanel': ['cinnamon', 'zimt'],
+  'kurkuma': ['turmeric', 'gurkemeje'],     'turmeric': ['kurkuma', 'gurkemeje'], 'gurkemeje': ['turmeric', 'kurkuma'],
   'oregano': ['oregano'],
   'muskat': ['nutmeg'],                     'nutmeg': ['muskat'],
   'chili': ['chili', 'chilli', 'chili flakes', 'chilli flakes'],
   // Citrus
-  'zitronensaft': ['lemon juice'],          'lemon juice': ['zitronensaft'],
+  'zitronensaft': ['lemon juice', 'citronsaft'], 'lemon juice': ['zitronensaft', 'citronsaft'], 'citronsaft': ['lemon juice', 'zitronensaft'],
   'zitronenabrieb': ['lemon zest'],         'lemon zest': ['zitronenabrieb'],
   // Nuts & seeds
-  'sesam': ['sesame', 'sesame seeds'],     'sesame': ['sesam'],
-  'mandeln': ['almonds'],                   'almonds': ['mandeln'],
+  'sesam': ['sesame', 'sesame seeds', 'sesamfrø'], 'sesame': ['sesam', 'sesamfrø'],
+  'mandeln': ['almonds', 'mandler'],        'almonds': ['mandeln', 'mandler'], 'mandler': ['almonds', 'mandeln'],
 }
 
 // Always skipped regardless of pantry settings — nobody shops for these
 const ALWAYS_SKIP = new Set([
   'water', 'wasser', 'sparkling water', 'mineralwasser', 'tap water', 'leitungswasser',
+  'vand', 'danskvand', 'postevand',
   'salt', 'salz', 'sea salt', 'meersalz', 'table salt', 'kosher salt',
-  'pepper', 'pfeffer', 'black pepper', 'schwarzer pfeffer', 'white pepper', 'weißer pfeffer',
+  'pepper', 'pfeffer', 'peber', 'black pepper', 'schwarzer pfeffer', 'sort peber', 'white pepper', 'weißer pfeffer', 'hvid peber',
 ])
 
 /** Expand a set of staple names to include all bilingual aliases */
@@ -183,11 +185,33 @@ export async function POST(req: NextRequest) {
   }
 
   if (body.action === 'clear_checked') {
+    const checked = getAllShoppingItems().filter(i => i.checked)
+    const config = getHomeAssistantConfig()
+    if (config && checked.length > 0) {
+      try {
+        await removeActiveHAItemsForLocalItems(config, checked)
+      } catch (error) {
+        return NextResponse.json({
+          error: error instanceof Error ? error.message : 'could not remove Home Assistant items',
+        }, { status: 502 })
+      }
+    }
     clearCheckedItems()
     return NextResponse.json({ ok: true })
   }
 
   if (body.action === 'clear_all') {
+    const activeHaItems = getAllShoppingItems().filter(i => !i.checked)
+    const config = getHomeAssistantConfig()
+    if (config && activeHaItems.length > 0) {
+      try {
+        await removeActiveHAItemsForLocalItems(config, activeHaItems)
+      } catch (error) {
+        return NextResponse.json({
+          error: error instanceof Error ? error.message : 'could not remove Home Assistant items',
+        }, { status: 502 })
+      }
+    }
     clearAllItems()
     return NextResponse.json({ ok: true })
   }
@@ -252,4 +276,3 @@ export async function POST(req: NextRequest) {
   await pushToHAAndTrack([{ localId: item.id, name: [item.amount, item.unit, item.name].filter(Boolean).join(' ') }])
   return NextResponse.json(item, { status: 201 })
 }
-

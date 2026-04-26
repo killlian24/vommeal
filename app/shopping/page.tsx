@@ -81,7 +81,6 @@ export default function ShoppingPage() {
     })
     load()
     loadStaples()
-    syncList(true)
   }, [])
 
   const toggle = async (id: string) => {
