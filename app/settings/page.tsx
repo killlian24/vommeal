@@ -2,12 +2,18 @@
 
 import { useState, useEffect } from 'react'
 import { Save, RefreshCw, Check, X, Info, ChevronDown, ChevronUp, Download } from 'lucide-react'
+import {
+  BUILT_IN_CATEGORY_KEYWORDS,
+  CATEGORY_IDS,
+  sanitizeCustomCategoryKeywords,
+} from '@/lib/categoryRules'
+import type { CategoryId, CategoryKeywordMap } from '@/lib/categoryRules'
 
 type Settings = {
   mealie_url: string; mealie_token: string; has_token: boolean
   user1_name: string; user2_name: string
   ha_url: string; ha_token: string; has_ha_token: boolean; ha_entity: string
-  dinner_category: string; category_order: string
+  dinner_category: string; category_order: string; custom_category_keywords: string
   env?: {
     mealie_url: boolean; mealie_token: boolean
     ha_url: boolean; ha_token: boolean; ha_entity: boolean
@@ -37,9 +43,12 @@ export default function SettingsPage() {
     mealie_url: '', mealie_token: '', has_token: false,
     user1_name: '', user2_name: '',
     ha_url: '', ha_token: '', has_ha_token: false, ha_entity: '',
-    dinner_category: '', category_order: '',
+    dinner_category: '', category_order: '', custom_category_keywords: '{}',
   })
   const [categoryOrder, setCategoryOrder] = useState<string[]>(DEFAULT_CATEGORY_ORDER)
+  const [customKeywords, setCustomKeywords] = useState<CategoryKeywordMap>({})
+  const [keywordDrafts, setKeywordDrafts] = useState<Record<string, string>>({})
+  const [keywordsSaved, setKeywordsSaved] = useState(false)
   const [catOrderSaved, setCatOrderSaved] = useState(false)
   const [categories, setCategories] = useState<MealieCategory[]>([])
   const [loadingCats, setLoadingCats] = useState(false)
@@ -63,6 +72,9 @@ export default function SettingsPage() {
       setSettings(s)
       if (s.category_order) {
         try { setCategoryOrder(JSON.parse(s.category_order)) } catch { /* use default */ }
+      }
+      if (s.custom_category_keywords) {
+        try { setCustomKeywords(sanitizeCustomCategoryKeywords(JSON.parse(s.custom_category_keywords))) } catch { /* use empty */ }
       }
     })
   }, [])
@@ -97,14 +109,49 @@ export default function SettingsPage() {
   }
 
   const saveCategoryOrder = async () => {
+    const serialized = JSON.stringify(categoryOrder)
     const res = await authedFetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ category_order: JSON.stringify(categoryOrder) }),
+      body: JSON.stringify({ category_order: serialized }),
     })
     if (!res.ok) return
+    setSettings(s => ({ ...s, category_order: serialized }))
     setCatOrderSaved(true)
     setTimeout(() => setCatOrderSaved(false), 2000)
+  }
+
+  const addCustomKeyword = (category: CategoryId) => {
+    const draft = (keywordDrafts[category] ?? '').trim()
+    if (!draft) return
+    setCustomKeywords(prev => ({
+      ...prev,
+      [category]: Array.from(new Set([...(prev[category] ?? []), draft])),
+    }))
+    setKeywordDrafts(prev => ({ ...prev, [category]: '' }))
+  }
+
+  const removeCustomKeyword = (category: CategoryId, keyword: string) => {
+    setCustomKeywords(prev => {
+      const next = { ...prev }
+      const values = (next[category] ?? []).filter(value => value !== keyword)
+      if (values.length) next[category] = values
+      else delete next[category]
+      return next
+    })
+  }
+
+  const saveCustomKeywords = async () => {
+    const serialized = JSON.stringify(customKeywords)
+    const res = await authedFetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ custom_category_keywords: serialized }),
+    })
+    if (!res.ok) return
+    setSettings(s => ({ ...s, custom_category_keywords: serialized }))
+    setKeywordsSaved(true)
+    setTimeout(() => setKeywordsSaved(false), 2000)
   }
 
   const loadCategories = async () => {
@@ -122,7 +169,13 @@ export default function SettingsPage() {
     const res = await authedFetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(settings),
+      body: JSON.stringify({
+        mealie_url: settings.mealie_url,
+        mealie_token: settings.mealie_token,
+        user1_name: settings.user1_name,
+        user2_name: settings.user2_name,
+        dinner_category: settings.dinner_category,
+      }),
     })
     if (!res.ok) { setSaving(false); return }
     setSaving(false); setSaved(true)
@@ -147,7 +200,11 @@ export default function SettingsPage() {
     const saveRes = await authedFetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(settings),
+      body: JSON.stringify({
+        mealie_url: settings.mealie_url,
+        mealie_token: settings.mealie_token,
+        dinner_category: settings.dinner_category,
+      }),
     })
     if (!saveRes.ok) return
     setTesting(true); setTestResult(null)
@@ -344,7 +401,9 @@ export default function SettingsPage() {
           <ChevronDown size={15} className={`text-[#555] transition-transform flex-shrink-0 ${open.has('shopping') ? 'rotate-180' : ''}`} />
         </button>
         {open.has('shopping') && (
-          <div className="px-5 py-4 space-y-2 border-t border-[#1e1e1e]">
+          <div className="px-5 py-4 space-y-5 border-t border-[#1e1e1e]">
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-[#888]">Aisle order</p>
             {categoryOrder.map((cat, i) => (
               <div key={cat} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-[#0f0f0f] border border-[#1e1e1e]">
                 <span className="text-xs text-[#444] w-4 text-center">{i + 1}</span>
@@ -365,6 +424,64 @@ export default function SettingsPage() {
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-all mt-2">
               {catOrderSaved ? <><Check size={13} /> Saved</> : <><Save size={13} /> Save order</>}
             </button>
+            </div>
+
+            <div className="border-t border-[#1e1e1e] pt-4 space-y-3">
+              <div>
+                <p className="text-xs font-medium text-[#888]">Custom category words</p>
+                <p className="text-xs text-[#444] mt-1">
+                  Built-in German, Danish, and English words stay in the app. Add household or supermarket words here.
+                </p>
+              </div>
+              {CATEGORY_IDS.filter(cat => cat !== 'other').map(cat => (
+                <div key={cat} className="rounded-lg bg-[#0f0f0f] border border-[#1e1e1e] p-3 space-y-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-white">{CATEGORY_LABELS[cat]}</p>
+                      <p className="text-[11px] text-[#444] mt-0.5">
+                        {BUILT_IN_CATEGORY_KEYWORDS[cat].length} built in, e.g. {BUILT_IN_CATEGORY_KEYWORDS[cat].slice(0, 7).join(', ')}
+                      </p>
+                    </div>
+                  </div>
+                  {(customKeywords[cat]?.length ?? 0) > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {customKeywords[cat]!.map(keyword => (
+                        <button
+                          key={keyword}
+                          type="button"
+                          onClick={() => removeCustomKeyword(cat, keyword)}
+                          className="inline-flex items-center gap-1 rounded bg-[#1c1c1c] border border-[#2a2a2a] px-2 py-1 text-xs text-[#bbb] hover:text-white"
+                          title="Remove word"
+                        >
+                          {keyword}
+                          <X size={10} />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <input
+                      value={keywordDrafts[cat] ?? ''}
+                      onChange={e => setKeywordDrafts(prev => ({ ...prev, [cat]: e.target.value }))}
+                      onKeyDown={e => e.key === 'Enter' && addCustomKeyword(cat)}
+                      placeholder={`Add word for ${CATEGORY_LABELS[cat].replace(/^.+? /, '').toLowerCase()}`}
+                      className="text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => addCustomKeyword(cat)}
+                      className="px-3 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-xs text-[#888] hover:text-white transition-all"
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+              ))}
+              <button onClick={saveCustomKeywords}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-all">
+                {keywordsSaved ? <><Check size={13} /> Saved</> : <><Save size={13} /> Save words</>}
+              </button>
+            </div>
           </div>
         )}
       </div>

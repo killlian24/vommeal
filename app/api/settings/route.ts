@@ -22,6 +22,7 @@ export async function GET() {
     ha_entity: process.env.HA_ENTITY || getSetting('ha_entity') || '',
     dinner_category: getSetting('dinner_category') || '',
     category_order: getSetting('category_order') || '',
+    custom_category_keywords: getSetting('custom_category_keywords') || '{}',
     env,
   })
 }
@@ -45,6 +46,7 @@ export async function POST(req: NextRequest) {
   const haEntity = stringValue(body, 'ha_entity')
   const dinnerCategory = stringValue(body, 'dinner_category')
   const categoryOrder = stringValue(body, 'category_order')
+  const customCategoryKeywords = stringValue(body, 'custom_category_keywords')
 
   if (mealieUrl !== undefined && !env.mealie_url) setSetting('mealie_url', mealieUrl)
   if (mealieToken !== undefined && mealieToken !== '••••••••' && !env.mealie_token) {
@@ -59,5 +61,6 @@ export async function POST(req: NextRequest) {
   if (haEntity !== undefined && !env.ha_entity) setSetting('ha_entity', haEntity)
   if (dinnerCategory !== undefined) setSetting('dinner_category', dinnerCategory)
   if (categoryOrder !== undefined) setSetting('category_order', categoryOrder)
+  if (customCategoryKeywords !== undefined) setSetting('custom_category_keywords', customCategoryKeywords)
   return NextResponse.json({ ok: true })
 }
