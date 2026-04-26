@@ -6,7 +6,7 @@ import {
 } from '@/lib/db'
 import { getHomeAssistantConfig } from '@/lib/config'
 import { categorize } from '@/lib/categorize'
-import { v4 as uuidv4 } from 'uuid'
+import { randomUUID } from 'crypto'
 
 type HATodoItem = { summary: string; uid: string; status: string }
 
@@ -164,7 +164,7 @@ export async function POST(req: NextRequest) {
           ? (parseFloat(ing.amount) * scale || ing.amount).toString()
           : ''
         items.push(addShoppingItem({
-          id: uuidv4(),
+          id: randomUUID(),
           name: ing.name,
           amount: scaledAmount,
           unit: ing.unit,
@@ -220,7 +220,7 @@ export async function POST(req: NextRequest) {
         ? (parseFloat(ing.amount) * scale || ing.amount).toString()
         : ''
       items.push(addShoppingItem({
-        id: uuidv4(),
+        id: randomUUID(),
         name: ing.name,
         amount: scaledAmount,
         unit: ing.unit,
@@ -238,7 +238,7 @@ export async function POST(req: NextRequest) {
   // Add single item
   if (!body.name?.trim()) return NextResponse.json({ error: 'name required' }, { status: 400 })
   const item = addShoppingItem({
-    id: uuidv4(),
+    id: randomUUID(),
     name: body.name.trim(),
     amount: body.amount || '',
     unit: body.unit || '',

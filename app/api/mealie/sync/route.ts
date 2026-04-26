@@ -1,6 +1,6 @@
 import { fetchMealieRecipeSlugs, fetchMealieRecipeDetail, fetchMealieSlugsForCategory } from '@/lib/mealie'
 import { upsertRecipe, getAllRecipes, getSetting } from '@/lib/db'
-import { v4 as uuidv4 } from 'uuid'
+import { randomUUID } from 'crypto'
 
 export async function POST() {
   const encoder = new TextEncoder()
@@ -37,7 +37,7 @@ export async function POST() {
           try {
             const mr = await fetchMealieRecipeDetail(slug)
             const existingRecipe = existingByMealieId.get(mr.mealie_id)
-            const id = existingRecipe?.id || uuidv4()
+            const id = existingRecipe?.id || randomUUID()
 
             upsertRecipe({
               id,

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSetting, addShoppingItem, haUidExists, getAllShoppingItems, checkShoppingItem, setShoppingItemHaUid, setShoppingItemCategory, findUntrackedItemByName } from '@/lib/db'
 import { getHomeAssistantConfig } from '@/lib/config'
 import { categorize } from '@/lib/categorize'
-import { v4 as uuidv4 } from 'uuid'
+import { randomUUID } from 'crypto'
 
 type HATodoItem = { summary: string; uid: string; status: string }
 
@@ -89,7 +89,7 @@ export async function POST() {
     }
 
     addShoppingItem({
-      id: uuidv4(),
+      id: randomUUID(),
       name: item.summary.trim(),
       amount: '',
       unit: '',

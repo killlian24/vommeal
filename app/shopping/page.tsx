@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Check, Plus, Copy, RefreshCw, ChevronDown, ChevronRight, X, Moon, Package } from 'lucide-react'
+import { Check, Plus, Copy, RefreshCw, ChevronDown, ChevronRight, X, Moon, Package, Tags } from 'lucide-react'
 import { format, startOfWeek, addDays } from 'date-fns'
 
 type ShoppingItem = {
@@ -39,14 +39,21 @@ export default function ShoppingPage() {
   const [staples, setStaples] = useState<PantryStaple[]>([])
   const [newStaple, setNewStaple] = useState('')
   const [toastMsg, setToastMsg] = useState('')
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null)
 
   const showToast = (msg: string) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 2500) }
 
   const load = async () => {
     setLoading(true)
-    const res = await fetch('/api/shopping')
-    setItems(await res.json())
-    setLoading(false)
+    try {
+      const res = await fetch('/api/shopping')
+      if (!res.ok) throw new Error('shopping load failed')
+      setItems(await res.json())
+    } catch {
+      showToast('Could not load shopping list')
+    } finally {
+      setLoading(false)
+    }
   }
 
   const loadStaples = async () => {
@@ -66,39 +73,71 @@ export default function ShoppingPage() {
   }, [])
 
   const toggle = async (id: string) => {
+    const previous = items
     setItems(prev => prev.map(i => i.id === id ? { ...i, checked: !i.checked } : i))
-    await fetch(`/api/shopping/${id}`, { method: 'PATCH' })
+    try {
+      const res = await fetch(`/api/shopping/${id}`, { method: 'PATCH' })
+      if (!res.ok) throw new Error('toggle failed')
+    } catch {
+      setItems(previous)
+      showToast('Could not update item')
+    }
   }
 
   const changeCategory = async (id: string, category: string) => {
+    const previous = items
     setItems(prev => prev.map(i => i.id === id ? { ...i, category } : i))
-    const res = await fetch(`/api/shopping/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ category }),
-    })
-    if (!res.ok) {
+    try {
+      const res = await fetch(`/api/shopping/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category }),
+      })
+      if (!res.ok) throw new Error('category update failed')
+      setEditingCategoryId(null)
+    } catch {
       showToast('Could not update category')
-      load()
+      setItems(previous)
     }
   }
 
   const remove = async (id: string) => {
+    const previous = items
     setItems(prev => prev.filter(i => i.id !== id))
-    await fetch(`/api/shopping/${id}`, { method: 'DELETE' })
+    try {
+      const res = await fetch(`/api/shopping/${id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('delete failed')
+    } catch {
+      setItems(previous)
+      showToast('Could not remove item')
+    }
   }
 
   const clearChecked = async () => {
+    const previous = items
     setItems(prev => prev.filter(i => !i.checked))
-    await fetch('/api/shopping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'clear_checked' }) })
-    showToast('Cleared checked items')
+    try {
+      const res = await fetch('/api/shopping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'clear_checked' }) })
+      if (!res.ok) throw new Error('clear checked failed')
+      showToast('Cleared checked items')
+    } catch {
+      setItems(previous)
+      showToast('Could not clear checked items')
+    }
   }
 
   const clearAll = async () => {
     if (!confirm('Clear all items?')) return
+    const previous = items
     setItems([])
-    await fetch('/api/shopping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'clear_all' }) })
-    showToast('Shopping list cleared')
+    try {
+      const res = await fetch('/api/shopping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'clear_all' }) })
+      if (!res.ok) throw new Error('clear all failed')
+      showToast('Shopping list cleared')
+    } catch {
+      setItems(previous)
+      showToast('Could not clear shopping list')
+    }
   }
 
   const addTonight = async () => {
@@ -177,19 +216,27 @@ export default function ShoppingPage() {
 
   const addItem = async () => {
     if (!newItem.trim()) return
-    const res = await fetch('/api/shopping', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: newItem.trim(), amount: newAmount.trim() }),
-    })
-    const item = await res.json()
-    setItems(prev => [...prev, item])
-    setNewItem(''); setNewAmount(''); setShowAdd(false)
+    try {
+      const res = await fetch('/api/shopping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newItem.trim(), amount: newAmount.trim() }),
+      })
+      const item = await res.json()
+      if (!res.ok) {
+        showToast(item.error || 'Could not add item')
+        return
+      }
+      setItems(prev => [...prev, item])
+      setNewItem(''); setNewAmount(''); setShowAdd(false)
+    } catch {
+      showToast('Could not add item')
+    }
   }
 
   const copyList = () => {
     const unchecked = items.filter(i => !i.checked)
-    const text = categoryOrder.flatMap(cat => {
+    const text = displayCategoryOrder.flatMap(cat => {
       const catItems = unchecked.filter(i => i.category === cat)
       if (!catItems.length) return []
       return [
@@ -202,7 +249,12 @@ export default function ShoppingPage() {
     showToast('Copied to clipboard!')
   }
 
-  const grouped = categoryOrder.reduce<Record<string, ShoppingItem[]>>((acc, cat) => {
+  const displayCategoryOrder = Array.from(new Set([
+    ...categoryOrder,
+    ...Array.from(new Set(items.map(i => i.category))).filter(cat => !categoryOrder.includes(cat)),
+  ]))
+
+  const grouped = displayCategoryOrder.reduce<Record<string, ShoppingItem[]>>((acc, cat) => {
     const catItems = items.filter(i => i.category === cat)
     if (catItems.length) acc[cat] = catItems
     return acc
@@ -401,7 +453,7 @@ export default function ShoppingPage() {
                     {[...catItems].sort((a, b) => (a.checked ? 1 : 0) - (b.checked ? 1 : 0)).map((item, idx, arr) => (
                       <div
                         key={item.id}
-                        className={`flex items-center gap-3 px-4 py-3 transition-colors ${
+                        className={`flex flex-wrap items-center gap-3 px-4 py-3 transition-colors ${
                           idx < arr.length - 1 ? 'border-b border-[#1a1a1a]' : ''
                         } ${item.checked ? 'opacity-40' : ''}`}
                       >
@@ -424,24 +476,37 @@ export default function ShoppingPage() {
                               {[item.amount, item.unit].filter(Boolean).join(' ')}
                             </span>
                           )}
+                          <p className="text-[10px] text-[#444] mt-0.5">{CATEGORY_LABELS[item.category] || item.category}</p>
                         </div>
-                        <select
-                          value={item.category}
-                          onChange={e => changeCategory(item.id, e.target.value)}
+                        <button
+                          onClick={() => setEditingCategoryId(editingCategoryId === item.id ? null : item.id)}
                           disabled={item.checked}
                           title="Change category"
-                          className="w-24 flex-shrink-0 text-xs py-1 px-2 bg-[#101010] border-[#242424] text-[#777] disabled:opacity-40"
+                          aria-label="Change category"
+                          className="p-2 rounded-lg text-[#444] hover:text-primary hover:bg-[#1c1c1c] disabled:opacity-30 transition-colors"
                         >
-                          {CATEGORIES.map(c => (
-                            <option key={c} value={c}>{CATEGORY_LABELS[c]?.replace(/^.+? /, '') || c}</option>
-                          ))}
-                        </select>
+                          <Tags size={13} />
+                        </button>
                         <button
                           onClick={() => remove(item.id)}
-                          className="text-[#333] hover:text-red-400 transition-colors p-1"
+                          aria-label="Remove item"
+                          className="text-[#333] hover:text-red-400 transition-colors p-2"
                         >
                           <X size={13} />
                         </button>
+                        {editingCategoryId === item.id && (
+                          <div className="basis-full pl-8 pt-2">
+                            <select
+                              value={item.category}
+                              onChange={e => changeCategory(item.id, e.target.value)}
+                              className="w-full text-sm py-2 bg-[#101010] border-[#242424] text-[#aaa]"
+                            >
+                              {CATEGORIES.map(c => (
+                                <option key={c} value={c}>{CATEGORY_LABELS[c] || c}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -472,7 +537,7 @@ export default function ShoppingPage() {
 
       {/* Toast */}
       {toastMsg && (
-        <div className="fixed bottom-24 md:bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 bg-[#1e1e1e] border border-[#333] rounded-full text-sm text-white shadow-xl animate-slide-up whitespace-nowrap">
+        <div className="fixed bottom-24 md:bottom-6 left-1/2 -translate-x-1/2 z-50 max-w-[calc(100vw-2rem)] px-4 py-2.5 bg-[#1e1e1e] border border-[#333] rounded-lg text-sm text-white text-center shadow-xl animate-slide-up whitespace-normal">
           {toastMsg}
         </div>
       )}

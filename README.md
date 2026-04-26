@@ -65,6 +65,7 @@ MEALIE_TOKEN=your-mealie-api-token
 HA_URL=http://your-home-assistant-address:8123
 HA_TOKEN=your-home-assistant-long-lived-token
 HA_ENTITY=todo.your_shopping_list_entity
+APP_PASSWORD=optional-admin-password
 ```
 
 Do not paste YAML list items into Portainer's environment-variable table. These are wrong there:
@@ -86,6 +87,7 @@ environment:
   - HA_URL=${HA_URL:-}
   - HA_TOKEN=${HA_TOKEN:-}
   - HA_ENTITY=${HA_ENTITY:-}
+  - APP_PASSWORD=${APP_PASSWORD:-}
 ```
 
 Use addresses that the NAS/container can reach, usually LAN addresses such as `http://192.168.x.x:8123`. Do not use `localhost` unless the service runs inside the same container.
@@ -93,6 +95,8 @@ Use addresses that the NAS/container can reach, usually LAN addresses such as `h
 When these values are set in Portainer, Vommeal treats them as Docker-controlled. The Settings page will show the active values, but those fields are disabled and must be changed in Portainer.
 
 If you leave these variables empty, Vommeal Settings stays editable. That is simpler, but stores the tokens in the SQLite database.
+
+Optional: set `APP_PASSWORD` to protect sensitive actions such as changing Settings and downloading a database backup. When it is set, Vommeal asks for the password the first time a protected action is used.
 
 ---
 
@@ -141,6 +145,8 @@ Do **not** port-forward Vommeal directly from your router, and do not use Tailsc
 
 ## Backup
 
-Everything lives in `/volume1/docker/vommeal/data/vommeal.db`. Back that file up and you can restore the full app state.
+Use **Settings** → **About & Docker** → **Download database backup** for a safe SQLite backup.
+
+The live database files live in `/volume1/docker/vommeal/data/`. Because SQLite uses WAL mode, manual file backups should include `vommeal.db`, `vommeal.db-wal`, and `vommeal.db-shm` when they exist.
 
 Treat the database backup as private: it may contain Mealie/Home Assistant tokens and meal-planning data.

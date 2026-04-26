@@ -4,7 +4,7 @@ import {
   deleteNominationsForDate, deleteNominationsOlderThan, deleteNominationsForRange,
   getMealPlanRange, getSetting, getAllRecipes
 } from '@/lib/db'
-import { v4 as uuidv4 } from 'uuid'
+import { randomUUID } from 'crypto'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'date, recipe_id, and user_name required' }, { status: 400 })
   }
 
-  const nom = addNomination({ id: uuidv4(), date, recipe_id, user_name })
+  const nom = addNomination({ id: randomUUID(), date, recipe_id, user_name })
 
   // Check if the other person already nominated the same recipe for this day → it's a match!
   const allNoms = getNominationsForRange(date, date)
@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
     if (existing.length === 0) {
       // Auto-confirm: create meal plan entry, delete nominations for this date
       addMealPlanEntry({
-        id: uuidv4(),
+        id: randomUUID(),
         date,
         meal_type: 'dinner',
         recipe_id,

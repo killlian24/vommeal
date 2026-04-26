@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getMealPlanRange, getAllRecipes, addMealPlanEntry, getSetting } from '@/lib/db'
-import { v4 as uuidv4 } from 'uuid'
+import { randomUUID } from 'crypto'
 import { addDays, format, eachDayOfInterval, parseISO } from 'date-fns'
 
 export async function POST(req: NextRequest) {
@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
   for (let i = 0; i < emptyDays.length; i++) {
     const recipe = pool[i % pool.length]
     const entry = addMealPlanEntry({
-      id: uuidv4(),
+      id: randomUUID(),
       date: format(emptyDays[i], 'yyyy-MM-dd'),
       meal_type: 'dinner',
       recipe_id: recipe.id,

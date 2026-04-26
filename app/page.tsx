@@ -42,6 +42,7 @@ export default function PlanPage() {
   const [entries, setEntries] = useState<MealEntry[]>([])
   const [recipes, setRecipes] = useState<Recipe[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
   const [adding, setAdding] = useState<{ date: string; replaceId?: string } | null>(null)
   const [search, setSearch] = useState('')
   const [customName, setCustomName] = useState('')
@@ -83,28 +84,41 @@ export default function PlanPage() {
 
   // Load users + resolve identity from #hash or localStorage
   useEffect(() => {
-    fetch('/api/settings').then(r => r.json()).then(s => {
-      const u = [s.user1_name, s.user2_name].filter(Boolean)
-      setUsers(u)
+    const loadInitial = async () => {
+      try {
+        const [settingsRes, recipesRes] = await Promise.all([
+          fetch('/api/settings'),
+          fetch('/api/recipes'),
+        ])
+        if (!settingsRes.ok || !recipesRes.ok) throw new Error('initial load failed')
 
-      // Hash takes priority: /#susi or /#kilian
-      const hash = window.location.hash.replace('#', '').trim().toLowerCase()
-      const fromHash = u.find(name => name.toLowerCase() === hash)
-      if (fromHash) {
-        setCurrentUser(fromHash)
-        localStorage.setItem('vommeal_user', fromHash)
-        return
-      }
+        const s = await settingsRes.json()
+        const u = [s.user1_name, s.user2_name].filter(Boolean)
+        setUsers(u)
 
-      // Fall back to localStorage
-      const stored = localStorage.getItem('vommeal_user')
-      if (stored && u.includes(stored)) {
-        setCurrentUser(stored)
-      } else if (u.length > 0) {
-        setShowUserPicker(true)
+        // Hash takes priority: /#susi or /#kilian
+        const hash = window.location.hash.replace('#', '').trim().toLowerCase()
+        const fromHash = u.find((name: string) => name.toLowerCase() === hash)
+        if (fromHash) {
+          setCurrentUser(fromHash)
+          localStorage.setItem('vommeal_user', fromHash)
+        } else {
+          // Fall back to localStorage
+          const stored = localStorage.getItem('vommeal_user')
+          if (stored && u.includes(stored)) {
+            setCurrentUser(stored)
+          } else if (u.length > 0) {
+            setShowUserPicker(true)
+          }
+        }
+
+        setRecipes(await recipesRes.json())
+      } catch {
+        setLoadError('Could not load Vommeal. Check your connection and try again.')
       }
-    })
-    fetch('/api/recipes').then(r => r.json()).then(setRecipes)
+    }
+
+    loadInitial()
   }, [])
 
   const selectUser = (name: string) => {
@@ -120,14 +134,25 @@ export default function PlanPage() {
 
   const loadEntries = useCallback(async () => {
     setLoading(true)
-    const res = await fetch(`/api/meal-plan?start=${startStr}&end=${endStr}`)
-    setEntries(await res.json())
-    setLoading(false)
+    setLoadError('')
+    try {
+      const res = await fetch(`/api/meal-plan?start=${startStr}&end=${endStr}`)
+      if (!res.ok) throw new Error('meal plan load failed')
+      setEntries(await res.json())
+    } catch {
+      setLoadError('Could not load this week.')
+    } finally {
+      setLoading(false)
+    }
   }, [startStr, endStr])
 
   const loadNominations = useCallback(async () => {
-    const res = await fetch(`/api/nominations?start=${startStr}&end=${endStr}`)
-    if (res.ok) setNominations(await res.json())
+    try {
+      const res = await fetch(`/api/nominations?start=${startStr}&end=${endStr}`)
+      if (res.ok) setNominations(await res.json())
+    } catch {
+      setLoadError('Could not load votes.')
+    }
   }, [startStr, endStr])
 
   useEffect(() => { loadEntries(); loadNominations() }, [loadEntries, loadNominations])
@@ -177,11 +202,7 @@ export default function PlanPage() {
 
   const addEntry = async (recipeId?: string, name?: string) => {
     if (!adding) return
-    // If replacing, delete old entry first
-    if (adding.replaceId) {
-      await fetch(`/api/meal-plan/${adding.replaceId}`, { method: 'DELETE' })
-    }
-    await fetch('/api/meal-plan', {
+    const res = await fetch('/api/meal-plan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -193,6 +214,10 @@ export default function PlanPage() {
         suggested_by: currentUser,
       }),
     })
+    if (!res.ok) {
+      showToast('Could not save dinner')
+      return
+    }
     setAdding(null); setCustomName(''); setSearch(''); setServings(2)
     loadEntries()
     showToast(adding.replaceId ? 'Counter-suggestion added!' : 'Dinner suggestion added!')
@@ -378,6 +403,11 @@ export default function PlanPage() {
 
       {/* Header */}
       <div className="space-y-3">
+        {loadError && (
+          <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+            {loadError}
+          </div>
+        )}
         {/* Row 1: title + week nav */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3 min-w-0">
@@ -601,7 +631,7 @@ export default function PlanPage() {
                     </div>
 
                     {/* Action buttons (visible on hover) */}
-                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 flex items-center gap-1 transition-all">
+                    <div className="absolute top-2 right-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 flex items-center gap-1 transition-all">
                       {entry.recipe_id && (
                         <button
                           onClick={() => addToList(dateStr)}

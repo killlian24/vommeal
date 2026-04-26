@@ -98,18 +98,10 @@ function migrate(db: Database.Database) {
   }
   try { db.exec('ALTER TABLE recipes ADD COLUMN rating INTEGER') } catch { /* already exists */ }
   try { db.exec('ALTER TABLE shopping_list ADD COLUMN ha_uid TEXT') } catch { /* already exists */ }
-  try { db.exec("ALTER TABLE shopping_list ADD COLUMN updated_at TEXT DEFAULT (datetime('now'))") } catch { /* already exists */ }
+  try { db.exec('ALTER TABLE shopping_list ADD COLUMN updated_at TEXT') } catch { /* already exists */ }
   try {
-    db.exec(`
-      DELETE FROM meal_plan
-      WHERE rowid NOT IN (
-        SELECT MAX(rowid)
-        FROM meal_plan
-        GROUP BY date, meal_type
-      );
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_meal_plan_unique_date_type ON meal_plan(date, meal_type);
-    `)
-  } catch { /* leave existing data untouched if migration cannot be applied */ }
+    db.exec("UPDATE shopping_list SET updated_at = COALESCE(updated_at, created_at, datetime('now'))")
+  } catch { /* best-effort backfill */ }
 }
 
 // --- Settings ---
@@ -264,23 +256,35 @@ export function getMealPlanRange(startDate: string, endDate: string): MealPlanEn
 export function addMealPlanEntry(entry: Omit<MealPlanEntry, 'created_at' | 'recipe'>): MealPlanEntry {
   const db = getDb()
   db.transaction(() => {
-    db.prepare(`
-      INSERT INTO meal_plan (id, date, meal_type, recipe_id, custom_meal_name, servings, notes, status, suggested_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(date, meal_type) DO UPDATE SET
-        id = excluded.id,
-        recipe_id = excluded.recipe_id,
-        custom_meal_name = excluded.custom_meal_name,
-        servings = excluded.servings,
-        notes = excluded.notes,
-        status = excluded.status,
-        suggested_by = excluded.suggested_by
-    `).run(
-      entry.id, entry.date, 'dinner',
-      entry.recipe_id ?? null, entry.custom_meal_name ?? null,
-      entry.servings, entry.notes ?? '',
-      entry.status ?? 'suggested', entry.suggested_by ?? ''
-    )
+    const existing = db.prepare(`
+      SELECT id FROM meal_plan
+      WHERE date = ? AND meal_type = ?
+      ORDER BY created_at DESC, rowid DESC
+      LIMIT 1
+    `).get(entry.date, 'dinner') as { id: string } | undefined
+
+    if (existing) {
+      db.prepare(`
+        UPDATE meal_plan SET
+          id = ?, recipe_id = ?, custom_meal_name = ?, servings = ?,
+          notes = ?, status = ?, suggested_by = ?
+        WHERE id = ?
+      `).run(
+        entry.id, entry.recipe_id ?? null, entry.custom_meal_name ?? null,
+        entry.servings, entry.notes ?? '', entry.status ?? 'suggested',
+        entry.suggested_by ?? '', existing.id
+      )
+    } else {
+      db.prepare(`
+        INSERT INTO meal_plan (id, date, meal_type, recipe_id, custom_meal_name, servings, notes, status, suggested_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        entry.id, entry.date, 'dinner',
+        entry.recipe_id ?? null, entry.custom_meal_name ?? null,
+        entry.servings, entry.notes ?? '',
+        entry.status ?? 'suggested', entry.suggested_by ?? ''
+      )
+    }
   })()
   return { ...entry, created_at: new Date().toISOString() }
 }

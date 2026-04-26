@@ -12,7 +12,9 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const body = await req.json()
-  const recipe = upsertRecipe({ ...body, id })
+  const existing = getRecipeById(id)
+  if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  const recipe = upsertRecipe({ ...existing, ...body, id })
   return NextResponse.json(recipe)
 }
 

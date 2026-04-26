@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSetting, setSetting } from '@/lib/db'
 import { getConfigSourceFlags, sanitizeUrl } from '@/lib/config'
+import { requireAdmin } from '@/lib/admin'
+
+function stringValue(body: Record<string, unknown>, key: string): string | undefined {
+  const value = body[key]
+  return typeof value === 'string' ? value : undefined
+}
 
 export async function GET() {
   const env = getConfigSourceFlags()
@@ -21,20 +27,37 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json()
+  const unauthorized = requireAdmin(req)
+  if (unauthorized) return unauthorized
+
+  const rawBody = await req.json().catch(() => null)
+  if (!rawBody || typeof rawBody !== 'object') {
+    return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 })
+  }
+  const body = rawBody as Record<string, unknown>
   const env = getConfigSourceFlags()
-  if (body.mealie_url !== undefined && !env.mealie_url) setSetting('mealie_url', body.mealie_url)
-  if (body.mealie_token !== undefined && body.mealie_token !== '••••••••' && !env.mealie_token) {
-    setSetting('mealie_token', body.mealie_token)
+  const mealieUrl = stringValue(body, 'mealie_url')
+  const mealieToken = stringValue(body, 'mealie_token')
+  const user1Name = stringValue(body, 'user1_name')
+  const user2Name = stringValue(body, 'user2_name')
+  const haUrl = stringValue(body, 'ha_url')
+  const haToken = stringValue(body, 'ha_token')
+  const haEntity = stringValue(body, 'ha_entity')
+  const dinnerCategory = stringValue(body, 'dinner_category')
+  const categoryOrder = stringValue(body, 'category_order')
+
+  if (mealieUrl !== undefined && !env.mealie_url) setSetting('mealie_url', mealieUrl)
+  if (mealieToken !== undefined && mealieToken !== '••••••••' && !env.mealie_token) {
+    setSetting('mealie_token', mealieToken)
   }
-  if (body.user1_name !== undefined) setSetting('user1_name', body.user1_name)
-  if (body.user2_name !== undefined) setSetting('user2_name', body.user2_name)
-  if (body.ha_url !== undefined && !env.ha_url) setSetting('ha_url', body.ha_url)
-  if (body.ha_token !== undefined && body.ha_token !== '••••••••' && !env.ha_token) {
-    setSetting('ha_token', body.ha_token)
+  if (user1Name !== undefined) setSetting('user1_name', user1Name)
+  if (user2Name !== undefined) setSetting('user2_name', user2Name)
+  if (haUrl !== undefined && !env.ha_url) setSetting('ha_url', haUrl)
+  if (haToken !== undefined && haToken !== '••••••••' && !env.ha_token) {
+    setSetting('ha_token', haToken)
   }
-  if (body.ha_entity !== undefined && !env.ha_entity) setSetting('ha_entity', body.ha_entity)
-  if (body.dinner_category !== undefined) setSetting('dinner_category', body.dinner_category)
-  if (body.category_order !== undefined) setSetting('category_order', body.category_order)
+  if (haEntity !== undefined && !env.ha_entity) setSetting('ha_entity', haEntity)
+  if (dinnerCategory !== undefined) setSetting('dinner_category', dinnerCategory)
+  if (categoryOrder !== undefined) setSetting('category_order', categoryOrder)
   return NextResponse.json({ ok: true })
 }

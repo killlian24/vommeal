@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getMealPlanRange, addMealPlanEntry, deleteMealPlanRange } from '@/lib/db'
-import { v4 as uuidv4 } from 'uuid'
+import { randomUUID } from 'crypto'
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'invalid meal plan entry' }, { status: 400 })
   }
   const entry = addMealPlanEntry({
-    id: body.id || uuidv4(),
+    id: body.id || randomUUID(),
     date: body.date,
     meal_type: body.meal_type,
     recipe_id: body.recipe_id || null,

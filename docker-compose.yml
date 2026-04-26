@@ -22,8 +22,14 @@ services:
       - HA_URL=${HA_URL:-}
       - HA_TOKEN=${HA_TOKEN:-}
       - HA_ENTITY=${HA_ENTITY:-}
+      - APP_PASSWORD=${APP_PASSWORD:-}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

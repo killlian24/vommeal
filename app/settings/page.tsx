@@ -49,6 +49,7 @@ export default function SettingsPage() {
   const [testResult, setTestResult] = useState<TestResult>(null)
   const [saved, setSaved] = useState(false)
   const [open, setOpen] = useState<Set<string>>(new Set(['profiles']))
+  const [adminToken, setAdminToken] = useState('')
 
   const toggle = (id: string) => setOpen(prev => {
     const next = new Set(prev)
@@ -57,6 +58,7 @@ export default function SettingsPage() {
   })
 
   useEffect(() => {
+    setAdminToken(localStorage.getItem('vommeal_admin_token') || '')
     fetch('/api/settings').then(r => r.json()).then(s => {
       setSettings(s)
       if (s.category_order) {
@@ -64,6 +66,27 @@ export default function SettingsPage() {
       }
     })
   }, [])
+
+  const authedFetch = async (url: string, init: RequestInit = {}) => {
+    const withToken = (token: string): RequestInit => ({
+      ...init,
+      headers: {
+        ...(init.headers as Record<string, string> | undefined),
+        ...(token ? { 'x-vommeal-admin-token': token } : {}),
+      },
+    })
+
+    let res = await fetch(url, withToken(adminToken))
+    if (res.status !== 401) return res
+
+    const token = window.prompt('Admin password')
+    if (!token) return res
+
+    localStorage.setItem('vommeal_admin_token', token)
+    setAdminToken(token)
+    res = await fetch(url, withToken(token))
+    return res
+  }
 
   const moveCat = (index: number, dir: -1 | 1) => {
     const next = [...categoryOrder]
@@ -74,11 +97,12 @@ export default function SettingsPage() {
   }
 
   const saveCategoryOrder = async () => {
-    await fetch('/api/settings', {
+    const res = await authedFetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ category_order: JSON.stringify(categoryOrder) }),
     })
+    if (!res.ok) return
     setCatOrderSaved(true)
     setTimeout(() => setCatOrderSaved(false), 2000)
   }
@@ -95,11 +119,12 @@ export default function SettingsPage() {
 
   const save = async () => {
     setSaving(true); setSaved(false)
-    await fetch('/api/settings', {
+    const res = await authedFetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
     })
+    if (!res.ok) { setSaving(false); return }
     setSaving(false); setSaved(true)
     setTimeout(() => setSaved(false), 2000)
     fetch('/api/settings').then(r => r.json()).then(setSettings)
@@ -107,27 +132,44 @@ export default function SettingsPage() {
 
   const saveHa = async () => {
     setSaving(true); setHaSaved(false)
-    await fetch('/api/settings', {
+    const res = await authedFetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ha_url: settings.ha_url, ha_token: settings.ha_token, ha_entity: settings.ha_entity }),
     })
+    if (!res.ok) { setSaving(false); return }
     setSaving(false); setHaSaved(true)
     setTimeout(() => setHaSaved(false), 2000)
     fetch('/api/settings').then(r => r.json()).then(setSettings)
   }
 
   const test = async () => {
-    await fetch('/api/settings', {
+    const saveRes = await authedFetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
     })
+    if (!saveRes.ok) return
     setTesting(true); setTestResult(null)
     const res = await fetch('/api/mealie/test')
     const data = await res.json()
     setTestResult(data)
     setTesting(false)
+  }
+
+  const downloadBackup = async () => {
+    const res = await authedFetch('/api/backup')
+    if (!res.ok) return
+
+    const blob = await res.blob()
+    const disposition = res.headers.get('content-disposition') || ''
+    const filename = disposition.match(/filename="([^"]+)"/)?.[1] || 'vommeal-backup.db'
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    link.click()
+    URL.revokeObjectURL(url)
   }
 
   return (
@@ -408,14 +450,13 @@ export default function SettingsPage() {
                 <p>• Use "Copy" on the shopping list to share with anyone</p>
               </div>
             </div>
-            <a
-              href="/api/backup"
-              download
+            <button
+              onClick={downloadBackup}
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm text-[#888] hover:text-white transition-all"
             >
               <Download size={13} />
               Download database backup
-            </a>
+            </button>
             <div className="bg-[#0f0f0f] border border-[#1e1e1e] rounded-lg px-4 py-3">
               <p className="text-xs font-semibold text-[#555] mb-2">Docker environment variables</p>
               <div className="font-mono text-xs text-[#555] space-y-1">
