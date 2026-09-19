@@ -15,7 +15,33 @@ const EARLY_PANTRY_KEYWORDS = [
   'passierte tomaten', 'dosentomaten', 'schältomaten', 'tomatensoße',
   'flåede tomater', 'hakkede tomater', 'tomatpure', 'tomatpuré',
   'getrocknet', 'getrocknete', 'tørret', 'tørrede',
+  // Nut butters / nut pastes must win over the dairy 'butter' match
+  'erdnussbutter', 'erdnussmus', 'mandelmus', 'cashewmus', 'haselnussmus', 'nussmus', 'nussbutter',
+  'peanut butter', 'almond butter', 'cashew butter', 'nut butter', 'tahini', 'tahin', 'sesammus',
+  // Chickpeas contain 'erbse' and would land in produce; they are pantry (dried or canned)
+  'kichererbse', 'chickpea',
 ]
+
+// Fresh beans / sprouts are produce even though the bare 'bohne' / 'bean'
+// keyword (dried or canned pulses) lives in pantry, which is matched first.
+const FRESH_PRODUCE_KEYWORDS = [
+  'grüne bohnen', 'grüne bohne', 'buschbohnen', 'stangenbohnen', 'brechbohnen', 'dicke bohnen',
+  'green bean', 'runner bean', 'bean sprout', 'bohnensprossen', 'bønnespire',
+  'grønne bønner', 'haricots verts',
+]
+
+// Keywords that are always matched as a whole word, regardless of length.
+// 'dose' / 'glas' would otherwise hit 'Glasnudeln'; 'nut' would hit 'minute',
+// 'coconut', 'donut'; 'wein' would hit 'Schweinefleisch'.
+const WHOLE_WORD_KEYWORDS = new Set([
+  'dose', 'glas', 'gläser', 'konserve', 'konserven', 'canned', 'tinned',
+  'nut', 'nuts', 'wein',
+].map(normalizeCategoryText))
+
+// Participle "gehackt/gehackte/gehackten/gehackter" ("gehackte Mandeln",
+// "Petersilie, gehackt") must not trigger meat via the bare 'hack' keyword.
+// 'gehacktes' (= minced meat) is deliberately kept.
+const PARTICIPLE_RE = /\bgehackt(e[nr]?)?\b/g
 
 export const BUILT_IN_CATEGORY_KEYWORDS: Record<CategoryId, string[]> = {
   produce: [
@@ -26,7 +52,7 @@ export const BUILT_IN_CATEGORY_KEYWORDS: Record<CategoryId, string[]> = {
     'ginger', 'lemongrass', 'herb', 'basil', 'parsley', 'cilantro', 'chive', 'thyme',
     'rosemary', 'mint', 'dill', 'sage', 'oregano', 'marjoram', 'tarragon', 'bay leaf',
     'broccoli', 'zucchini', 'mushroom', 'celery', 'cucumber', 'avocado', 'berry',
-    'leek', 'fennel', 'pea', 'bean sprout', 'artichoke', 'asparagus', 'beetroot',
+    'leek', 'fennel', 'pea', 'peas', 'bean sprout', 'artichoke', 'asparagus', 'beetroot',
     'cauliflower', 'kale', 'chard', 'radish', 'spring onion', 'scallion',
     'aubergine', 'eggplant', 'pumpkin', 'squash', 'corn', 'courgette',
     'pepper', 'bell pepper', 'chili pepper', 'jalapeño', 'pak choi', 'bok choy',
@@ -98,7 +124,9 @@ export const BUILT_IN_CATEGORY_KEYWORDS: Record<CategoryId, string[]> = {
     'sahne', 'schlagsahne', 'kaffeesahne', 'schmand', 'sauerrahm', 'käse',
     'frischkäse', 'magerquark', 'skyr', 'kefir', 'hüttenkäse', 'schmelzkäse',
     'hartkäse', 'weichkäse', 'butterschmalz', 'margarine', 'joghurt',
-    'naturjoghurt', 'eier',
+    'naturjoghurt', 'eier', 'ei',
+    // Tofu / tempeh are chilled goods sitting next to dairy in the supermarket
+    'tofu', 'räuchertofu', 'seidentofu', 'tempeh',
     'mælk', 'sødmælk', 'letmælk', 'skummetmælk', 'kærnemælk', 'fløde',
     'piskefløde', 'madlavningsfløde', 'creme fraiche', 'cremefraiche', 'ost',
     'friskost', 'hytteost', 'flødeost', 'smør', 'yoghurt', 'æg',
@@ -131,7 +159,8 @@ export const BUILT_IN_CATEGORY_KEYWORDS: Record<CategoryId, string[]> = {
     'sambal', 'miso', 'fish sauce', 'oyster sauce', 'hoisin', 'sugar', 'honey',
     'maple syrup', 'jam', 'marmalade', 'peanut butter', 'nutella', 'chocolate',
     'cocoa', 'vanilla', 'rice', 'couscous', 'quinoa', 'oat', 'cornflakes',
-    'muesli', 'bean', 'lentil', 'chickpea', 'can', 'tin', 'dried fruit',
+    'muesli', 'bean', 'lentil', 'chickpea', 'can', 'tin', 'jar', 'canned', 'tinned',
+    'dried fruit', 'basmati', 'jasmine rice', 'risotto', 'nut', 'nuts', 'pistachio', 'pecan',
     'raisin', 'cranberry', 'spice', 'salt', 'pepper', 'cinnamon', 'cumin',
     'turmeric', 'chili', 'chilli', 'paprika powder', 'nutmeg', 'cardamom',
     'clove', 'curry', 'coriander powder', 'baking powder', 'baking soda',
@@ -142,13 +171,20 @@ export const BUILT_IN_CATEGORY_KEYWORDS: Record<CategoryId, string[]> = {
     'senf', 'sojasoße', 'tomatenmark', 'worcestershiresauce', 'fischsauce',
     'salz', 'zucker', 'puderzucker', 'vanillezucker', 'rohrzucker', 'honig',
     'ahornsirup', 'marmelade', 'schokolade', 'kakaopulver', 'kakao',
-    'vanille', 'vanillepuddingpulver', 'puddingpulver', 'reis', 'haferflocken',
+    'vanille', 'vanillepuddingpulver', 'puddingpulver', 'reis', 'basmati',
+    'jasminreis', 'risotto', 'haferflocken',
     'müsli', 'linse', 'berglinsen', 'alblinsen', 'kichererbse', 'bohne',
-    'dose', 'rosinen', 'trockenfrüchte', 'pfeffer', 'schwarzer pfeffer',
+    // Canned / jarred goods are pantry regardless of content ("Tomaten (Dose)",
+    // "Gurken im Glas"). 'dose'/'glas'/'konserve' are whole-word (see
+    // WHOLE_WORD_KEYWORDS); 'dosen' covers compounds like Dosenmais.
+    'dose', 'dosen', 'glas', 'gläser', 'konserve', 'konserven',
+    'rosinen', 'trockenfrüchte', 'pfeffer', 'schwarzer pfeffer',
     'weißer pfeffer', 'zimt', 'kreuzkümmel', 'kurkuma', 'muskat', 'kardamom',
     'nelke', 'korianderpulver', 'currypulver', 'backpulver', 'natron',
-    'hefe', 'gelatine', 'agar', 'chilipaste', 'mandel', 'walnuss',
-    'haselnuss', 'erdnuss', 'pinienkerne', 'sesam', 'sonnenblumenkerne',
+    'hefe', 'gelatine', 'agar', 'chilipaste',
+    // 'nuss'/'nüsse' cover compounds and plurals (Walnüsse, Nussmischung)
+    'nuss', 'nüsse', 'mandel', 'walnuss', 'haselnuss', 'cashew', 'erdnuss',
+    'pekannuss', 'paranuss', 'pistazie', 'pinienkerne', 'sesam', 'sonnenblumenkerne',
     'kürbiskerne', 'leinsamen', 'chiasamen', 'fett', 'pflanzenfett',
     'kokosfett', 'schmalz',
     'olie', 'olivenolie', 'solsikkeolie', 'rapsolie', 'sesamolie',
@@ -165,7 +201,10 @@ export const BUILT_IN_CATEGORY_KEYWORDS: Record<CategoryId, string[]> = {
     'solsikkekerner', 'græskarkerne', 'græskarkerner', 'hørfrø', 'chiafrø',
   ],
   frozen: [
-    'frozen', 'gefroren', 'tiefkühl', 'tiefgefroren', 'ice cream', 'eiscreme',
+    // 'tk' is a whole-word match ("TK Erbsen", "Himbeeren (TK)"); 'eis' is
+    // omitted because it is a substring of 'fleisch'.
+    'frozen', 'gefroren', 'tiefkühl', 'tiefgefroren', 'tiefgekühlt', 'tk',
+    'ice cream', 'eiscreme',
     'eis am stiel', 'eiskuchen', 'eiswürfel',
     'frossen', 'frosne', 'dybfrost', 'flødeis', 'ispind', 'ispinde',
     'isterning', 'isterninger',
@@ -176,7 +215,8 @@ export const BUILT_IN_CATEGORY_KEYWORDS: Record<CategoryId, string[]> = {
     'apple juice', 'orange juice', 'grape juice', 'espresso', 'cappuccino',
     'latte', 'wasser', 'mineralwasser', 'sprudel', 'leitungswasser', 'saft',
     'apfelsaft', 'orangensaft', 'traubensaft', 'tomatensaft', 'wein',
-    'rotwein', 'weißwein', 'rosé', 'sekt', 'prosecco', 'champagner', 'bier',
+    'rotwein', 'weißwein', 'weisswein', 'roséwein', 'glühwein', 'portwein',
+    'schaumwein', 'dessertwein', 'rosé', 'sekt', 'prosecco', 'champagner', 'bier',
     'malzbier', 'radler', 'limonade', 'cola', 'kaffee', 'tee', 'kakao',
     'kräutertee', 'früchtetee', 'grüntee', 'schwarztee', 'pfefferminztee',
     'vand', 'danskvand', 'kildevand', 'æblejuice', 'appelsinjuice',
@@ -202,7 +242,9 @@ export function normalizeCategoryText(value: string): string {
 function matchesKeyword(normalizedName: string, rawKeyword: string): boolean {
   const keyword = normalizeCategoryText(rawKeyword)
   if (!keyword) return false
-  if (keyword.length <= WHOLE_WORD_MAX_LENGTH && !keyword.includes(' ')) {
+  const wholeWord = WHOLE_WORD_KEYWORDS.has(keyword)
+    || (keyword.length <= WHOLE_WORD_MAX_LENGTH && !keyword.includes(' '))
+  if (wholeWord) {
     return new RegExp(`(^|\\s)${escapeRegExp(keyword)}($|\\s)`).test(normalizedName)
   }
   return normalizedName.includes(keyword)
@@ -242,6 +284,10 @@ export function categorizeWithRules(name: string, customRules: CategoryKeywordMa
   const customMatch = findInRules(normalizedName, customRules, DEFAULT_CATEGORY_ORDER)
   if (customMatch) return customMatch
 
-  const builtInMatch = findInRules(normalizedName, BUILT_IN_CATEGORY_KEYWORDS, CATEGORY_PRIORITY)
+  const builtInName = normalizedName.replace(PARTICIPLE_RE, ' ').replace(/\s+/g, ' ').trim()
+  if (!builtInName) return 'other'
+  if (FRESH_PRODUCE_KEYWORDS.some(keyword => matchesKeyword(builtInName, keyword))) return 'produce'
+
+  const builtInMatch = findInRules(builtInName, BUILT_IN_CATEGORY_KEYWORDS, CATEGORY_PRIORITY)
   return builtInMatch ?? 'other'
 }
