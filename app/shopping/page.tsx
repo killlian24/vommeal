@@ -1,12 +1,14 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Check, Plus, Copy, RefreshCw, ChevronDown, ChevronRight, X, Moon, Package, Tags } from 'lucide-react'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { Check, Plus, Copy, RefreshCw, ChevronDown, ChevronRight, X, Moon, Package, Tags, Search } from 'lucide-react'
 import { format, startOfWeek, addDays } from 'date-fns'
 
 type ShoppingItem = {
   id: string; name: string; amount: string; unit: string
   category: string; checked: boolean; source: string
+  meal_plan_id?: string | null; ha_uid?: string | null; sort_order?: number
+  recipe_name?: string | null
 }
 type PantryStaple = { id: string; name: string }
 type SyncResult = {
@@ -19,6 +21,11 @@ type SyncResult = {
   needsCategory?: number
   restored?: number
   error?: string
+}
+
+type Toast = {
+  msg: string
+  action?: { label: string; onClick: () => void }
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -35,6 +42,10 @@ const CATEGORY_LABELS: Record<string, string> = {
 const DEFAULT_categoryOrder = ['produce', 'meat', 'dairy', 'bakery', 'pantry', 'frozen', 'beverages', 'other']
 const CATEGORIES = ['produce', 'meat', 'dairy', 'bakery', 'pantry', 'frozen', 'beverages', 'other']
 
+const UNDO_MS = 6000
+const ERROR_MS = 6000
+const SEARCH_THRESHOLD = 8
+
 export default function ShoppingPage() {
   const [items, setItems] = useState<ShoppingItem[]>([])
   const [categoryOrder, setCategoryOrder] = useState<string[]>(DEFAULT_categoryOrder)
@@ -49,20 +60,38 @@ export default function ShoppingPage() {
   const [showPantry, setShowPantry] = useState(false)
   const [staples, setStaples] = useState<PantryStaple[]>([])
   const [newStaple, setNewStaple] = useState('')
-  const [toastMsg, setToastMsg] = useState('')
+  const [search, setSearch] = useState('')
+  const [toast, setToast] = useState<Toast | null>(null)
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null)
   const [lastSync, setLastSync] = useState<SyncResult | null>(null)
 
-  const showToast = (msg: string) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 2500) }
+  const hideToast = () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    toastTimer.current = null
+    setToast(null)
+  }
 
-  const load = async () => {
-    setLoading(true)
+  const showToast = (msg: string, opts: { duration?: number; action?: Toast['action'] } = {}) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    setToast({ msg, action: opts.action })
+    toastTimer.current = setTimeout(() => {
+      toastTimer.current = null
+      setToast(null)
+    }, opts.duration ?? 2500)
+  }
+
+  // Clear any pending toast timer on unmount
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current) }, [])
+
+  const load = async (showSkeleton = true) => {
+    if (showSkeleton) setLoading(true)
     try {
       const res = await fetch('/api/shopping')
       if (!res.ok) throw new Error('shopping load failed')
       setItems(await res.json())
     } catch {
-      showToast('Could not load shopping list')
+      showToast('Could not load shopping list', { duration: ERROR_MS })
     } finally {
       setLoading(false)
     }
@@ -78,7 +107,7 @@ export default function ShoppingPage() {
       if (s.category_order) {
         try { setCategoryOrder(JSON.parse(s.category_order)) } catch { /* use default */ }
       }
-    })
+    }).catch(() => { /* keep default order */ })
     load()
     loadStaples()
   }, [])
@@ -112,28 +141,71 @@ export default function ShoppingPage() {
     }
   }
 
+  /** Re-create items as they were (used by the Undo toasts). */
+  const restoreItems = async (removed: ShoppingItem[], pending: Promise<unknown>) => {
+    // Make sure the delete has actually landed before we re-insert,
+    // otherwise a fast Undo could be wiped out by the still-running delete.
+    try { await pending } catch { /* handled by the caller */ }
+    try {
+      const res = await fetch('/api/shopping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'restore', items: removed }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !Array.isArray(data.items)) throw new Error('restore failed')
+      const restored: ShoppingItem[] = data.items
+      if (restored.length === 0) {
+        // Nothing was deleted after all (e.g. the delete failed) — just resync
+        load(false)
+        return
+      }
+      setItems(prev => {
+        const have = new Set(prev.map(i => i.id))
+        return [...prev, ...restored.filter(i => !have.has(i.id))]
+      })
+      showToast(restored.length === 1 ? `Restored ${restored[0].name}` : `Restored ${restored.length} items`)
+    } catch {
+      showToast('Could not restore items', { duration: ERROR_MS })
+      load(false)
+    }
+  }
+
   const remove = async (id: string) => {
+    const item = items.find(i => i.id === id)
+    if (!item) return
     const previous = items
     setItems(prev => prev.filter(i => i.id !== id))
+    const pending = fetch(`/api/shopping/${id}`, { method: 'DELETE' })
+    showToast(`Removed ${item.name}`, {
+      duration: UNDO_MS,
+      action: { label: 'Undo', onClick: () => { hideToast(); restoreItems([item], pending) } },
+    })
     try {
-      const res = await fetch(`/api/shopping/${id}`, { method: 'DELETE' })
+      const res = await pending
       if (!res.ok) throw new Error('delete failed')
     } catch {
       setItems(previous)
-      showToast('Could not remove item')
+      showToast('Could not remove item', { duration: ERROR_MS })
     }
   }
 
   const clearChecked = async () => {
+    const removed = items.filter(i => i.checked)
+    if (removed.length === 0) return
     const previous = items
     setItems(prev => prev.filter(i => !i.checked))
+    const pending = fetch('/api/shopping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'clear_checked' }) })
+    showToast(`Cleared ${removed.length} checked item${removed.length === 1 ? '' : 's'}`, {
+      duration: UNDO_MS,
+      action: { label: 'Undo', onClick: () => { hideToast(); restoreItems(removed, pending) } },
+    })
     try {
-      const res = await fetch('/api/shopping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'clear_checked' }) })
+      const res = await pending
       if (!res.ok) throw new Error('clear checked failed')
-      showToast('Cleared checked items')
     } catch {
       setItems(previous)
-      showToast('Could not clear checked items')
+      showToast('Could not clear checked items', { duration: ERROR_MS })
     }
   }
 
@@ -147,26 +219,30 @@ export default function ShoppingPage() {
       showToast('Shopping list cleared')
     } catch {
       setItems(previous)
-      showToast('Could not clear shopping list')
+      showToast('Could not clear shopping list', { duration: ERROR_MS })
     }
   }
 
   const addTonight = async () => {
     setAddingTonight(true)
     const today = format(new Date(), 'yyyy-MM-dd')
-    const res = await fetch('/api/shopping', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'add_date', date: today }),
-    })
-    const data = await res.json()
-    setAddingTonight(false)
-    if (data.added > 0) {
-      showToast(`Added ${data.added} ingredients for tonight`)
-      load()
-    } else {
-      showToast('Nothing to add — no dinner planned or already on list')
+    try {
+      const res = await fetch('/api/shopping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'add_date', date: today }),
+      })
+      const data = await res.json()
+      if (data.added > 0) {
+        showToast(`Added ${data.added} ingredients for tonight`)
+        load(false)
+      } else {
+        showToast('Nothing to add — no dinner planned or already on list')
+      }
+    } catch {
+      showToast('Could not add tonight\'s ingredients', { duration: ERROR_MS })
     }
+    setAddingTonight(false)
   }
 
   const addStaple = async () => {
@@ -188,67 +264,92 @@ export default function ShoppingPage() {
 
   const generate = async () => {
     setGenerating(true)
-    const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 })
-    const start = format(weekStart, 'yyyy-MM-dd')
-    const end = format(addDays(weekStart, 6), 'yyyy-MM-dd')
-    const res = await fetch('/api/shopping', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'generate', start, end }),
-    })
-    const data = await res.json()
+    // Start from today (never past days); end at the end of the current week
+    const now = new Date()
+    const weekStart = startOfWeek(now, { weekStartsOn: 1 })
+    const start = format(now, 'yyyy-MM-dd')
+    const weekEnd = format(addDays(weekStart, 6), 'yyyy-MM-dd')
+    const end = weekEnd < start ? start : weekEnd
+    try {
+      const res = await fetch('/api/shopping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'generate', start, end }),
+      })
+      const data = await res.json()
+      showToast(
+        data.ok ? `Added ${data.added} ingredients from the rest of this week` : `Error: ${data.error}`,
+        { duration: data.ok ? 2500 : ERROR_MS },
+      )
+      load(false)
+    } catch {
+      showToast('Could not generate from plan', { duration: ERROR_MS })
+    }
     setGenerating(false)
-    showToast(data.ok ? `Added ${data.added} ingredients from this week` : `Error: ${data.error}`)
-    load()
   }
 
   const syncList = async (silent = false) => {
     setSyncing(true)
     try {
       const res = await fetch('/api/ha/sync', { method: 'POST' })
-      const data = await res.json()
-      if (data.ok) {
+      let data: SyncResult & { added?: number } = { ok: false }
+      let bodyText = ''
+      try {
+        bodyText = await res.text()
+        data = JSON.parse(bodyText)
+      } catch { /* non-JSON error body (e.g. HTML from a proxy) */ }
+      if (res.ok && data.ok) {
         setLastSync(data)
         const changed = (data.imported ?? data.added ?? 0) + (data.linked ?? 0) + (data.pushed ?? 0) + (data.checked ?? 0) + (data.sorted ?? 0)
         if (changed > 0) {
-          await load()
+          await load(false)
           const parts = []
-          if ((data.imported ?? data.added) > 0) parts.push(`${data.imported ?? data.added} imported`)
-          if (data.pushed > 0) parts.push(`${data.pushed} sent to HA`)
-          if (data.linked > 0) parts.push(`${data.linked} linked`)
-          if (data.checked > 0) parts.push(`${data.checked} checked off`)
-          if (data.sorted > 0) parts.push('sorted')
-          if (data.needsCategory > 0) parts.push(`${data.needsCategory} need category`)
+          if ((data.imported ?? data.added ?? 0) > 0) parts.push(`${data.imported ?? data.added} imported`)
+          if ((data.pushed ?? 0) > 0) parts.push(`${data.pushed} sent to HA`)
+          if ((data.linked ?? 0) > 0) parts.push(`${data.linked} linked`)
+          if ((data.checked ?? 0) > 0) parts.push(`${data.checked} checked off`)
+          if ((data.sorted ?? 0) > 0) parts.push('sorted')
+          if ((data.needsCategory ?? 0) > 0) parts.push(`${data.needsCategory} need category`)
           if (!silent) showToast(`Synced: ${parts.join(', ')}`)
         } else if (!silent) showToast('Nothing new on your list')
-      } else if (!silent) {
-        setLastSync({ ok: false, error: data.error || 'Sync failed' })
-        showToast(`Sync failed: ${data.error}`)
+      } else {
+        const rawReason = data.error
+          ? String(data.error)
+          : bodyText.trim() && !/^\s*</.test(bodyText) ? bodyText.trim().slice(0, 160) : `HTTP ${res.status}`
+        const reason = rawReason
+          .replace(/^Cannot reach Home Assistant:\s*/i, '')
+          .replace(/^TypeError:\s*/i, '')
+        const headline = res.status === 503 || /fetch failed|ECONN|ENOTFOUND|timeout|unreachable/i.test(reason)
+          ? 'Sync failed — Home Assistant unreachable'
+          : 'Sync failed'
+        setLastSync({ ok: false, error: reason })
+        if (!silent) showToast(`${headline}: ${reason}`, { duration: ERROR_MS })
       }
     } catch {
       setLastSync({ ok: false, error: 'Sync failed — check Settings' })
-      if (!silent) showToast('Sync failed — check Settings')
+      if (!silent) showToast('Sync failed — check Settings', { duration: ERROR_MS })
     }
     setSyncing(false)
   }
 
   const addItem = async () => {
-    if (!newItem.trim()) return
+    const name = newItem.trim()
+    if (!name) return
     try {
       const res = await fetch('/api/shopping', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newItem.trim(), amount: newAmount.trim() }),
+        body: JSON.stringify({ name, amount: newAmount.trim() }),
       })
-      const item = await res.json()
+      const item = await res.json().catch(() => ({}))
       if (!res.ok) {
-        showToast(item.error || 'Could not add item')
+        showToast(item.error || 'Could not add item', { duration: ERROR_MS })
         return
       }
       setItems(prev => [...prev, item])
       setNewItem(''); setNewAmount(''); setShowAdd(false)
     } catch {
-      showToast('Could not add item')
+      showToast('Could not add item', { duration: ERROR_MS })
     }
   }
 
@@ -272,8 +373,18 @@ export default function ShoppingPage() {
     ...Array.from(new Set(items.map(i => i.category))).filter(cat => !categoryOrder.includes(cat)),
   ]))
 
+  const showSearch = items.length > SEARCH_THRESHOLD
+  const query = search.trim().toLowerCase()
+  const visibleItems = useMemo(() => {
+    if (!showSearch || !query) return items
+    return items.filter(i =>
+      i.name.toLowerCase().includes(query) ||
+      (i.recipe_name ?? '').toLowerCase().includes(query)
+    )
+  }, [items, query, showSearch])
+
   const grouped = displayCategoryOrder.reduce<Record<string, ShoppingItem[]>>((acc, cat) => {
-    const catItems = items.filter(i => i.category === cat)
+    const catItems = visibleItems.filter(i => i.category === cat)
     if (catItems.length) acc[cat] = catItems
     return acc
   }, {})
@@ -315,7 +426,7 @@ export default function ShoppingPage() {
           <button
             onClick={generate}
             disabled={generating}
-            title="Generate from this week's plan"
+            title="Generate from today to the end of this week"
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-xs text-[#888] hover:text-white transition-all"
           >
             <RefreshCw size={13} className={generating ? 'animate-spin' : ''} />
@@ -343,6 +454,7 @@ export default function ShoppingPage() {
           </button>
           <button
             onClick={() => { setShowPantry(false); setShowAdd(a => !a) }}
+            title={showAdd ? 'Close' : 'Add item'}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-xs font-medium transition-all ml-auto"
           >
             {showAdd ? <X size={14} /> : <Plus size={14} />}
@@ -370,16 +482,20 @@ export default function ShoppingPage() {
         )}
       </div>
 
-      {/* Add item */}
+      {/* Add item — a real form so Enter (and the mobile keyboard's Go/Done) submits */}
       {showAdd && (
-        <div className="bg-[#141414] border border-[#2a2a2a] rounded-xl p-4 space-y-3 animate-slide-up">
+        <form
+          onSubmit={e => { e.preventDefault(); addItem() }}
+          className="bg-[#141414] border border-[#2a2a2a] rounded-xl p-4 space-y-3 animate-slide-up"
+        >
           <div className="flex gap-2">
             <input
               value={newAmount}
               onChange={e => setNewAmount(e.target.value)}
               placeholder="500g"
               className="w-20"
-              onKeyDown={e => e.key === 'Enter' && addItem()}
+              enterKeyHint="done"
+              aria-label="Amount"
             />
             <input
               value={newItem}
@@ -387,16 +503,17 @@ export default function ShoppingPage() {
               placeholder="Item name"
               className="flex-1"
               autoFocus
-              onKeyDown={e => e.key === 'Enter' && addItem()}
+              enterKeyHint="done"
+              aria-label="Item name"
             />
           </div>
           <button
-            onClick={addItem}
+            type="submit"
             className="w-full py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-all"
           >
             Add to list
           </button>
-        </div>
+        </form>
       )}
 
       {/* Pantry staples panel */}
@@ -417,7 +534,7 @@ export default function ShoppingPage() {
               onChange={e => setNewStaple(e.target.value)}
               placeholder="e.g. olive oil, salt, garlic…"
               className="flex-1 text-sm"
-              onKeyDown={e => e.key === 'Enter' && addStaple()}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addStaple() } }}
               autoFocus
             />
             <button
@@ -454,6 +571,31 @@ export default function ShoppingPage() {
         </div>
       )}
 
+      {/* Search / filter — only worth showing on longer lists */}
+      {!loading && showSearch && (
+        <div className="relative">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#555] pointer-events-none" />
+          <input
+            type="search"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Filter by item or meal…"
+            aria-label="Filter shopping list"
+            className="w-full pl-9 pr-9"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              aria-label="Clear filter"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[#555] hover:text-white transition-colors"
+            >
+              <X size={13} />
+            </button>
+          )}
+        </div>
+      )}
+
       {/* List */}
       {loading ? (
         <div className="space-y-2">
@@ -467,6 +609,11 @@ export default function ShoppingPage() {
         </div>
       ) : (
         <div className="space-y-4">
+          {Object.keys(grouped).length === 0 && (
+            <div className="text-center py-10">
+              <p className="text-[#555] text-sm">Nothing matches “{search.trim()}”</p>
+            </div>
+          )}
           {Object.entries(grouped).map(([cat, catItems]) => {
             const isCollapsed = collapsed.has(cat)
             const doneCount = catItems.filter(i => i.checked).length
@@ -497,6 +644,7 @@ export default function ShoppingPage() {
                       >
                         <button
                           onClick={() => toggle(item.id)}
+                          aria-label={item.checked ? `Uncheck ${item.name}` : `Check ${item.name}`}
                           className={`w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-all ${
                             item.checked
                               ? 'bg-primary border-primary'
@@ -506,13 +654,18 @@ export default function ShoppingPage() {
                           {item.checked && <Check size={10} className="text-white" strokeWidth={3} />}
                         </button>
                         <div className="flex-1 min-w-0">
-                          <span className={`text-sm ${item.checked ? 'line-through text-[#555]' : 'text-white'}`}>
-                            {item.name}
-                          </span>
-                          {(item.amount || item.unit) && (
-                            <span className="text-xs text-primary ml-2">
-                              {[item.amount, item.unit].filter(Boolean).join(' ')}
+                          <div>
+                            <span className={`text-sm ${item.checked ? 'line-through text-[#555]' : 'text-white'}`}>
+                              {item.name}
                             </span>
+                            {(item.amount || item.unit) && (
+                              <span className="text-xs text-primary ml-2">
+                                {[item.amount, item.unit].filter(Boolean).join(' ')}
+                              </span>
+                            )}
+                          </div>
+                          {item.recipe_name && (
+                            <p className="text-[11px] text-[#555] truncate mt-0.5">{item.recipe_name}</p>
                           )}
                           <p className="text-[10px] text-[#444] mt-0.5">{CATEGORY_LABELS[item.category] || item.category}</p>
                         </div>
@@ -527,7 +680,7 @@ export default function ShoppingPage() {
                         </button>
                         <button
                           onClick={() => remove(item.id)}
-                          aria-label="Remove item"
+                          aria-label={`Remove ${item.name}`}
                           className="text-[#333] hover:text-red-400 transition-colors p-2"
                         >
                           <X size={13} />
@@ -574,9 +727,22 @@ export default function ShoppingPage() {
       )}
 
       {/* Toast */}
-      {toastMsg && (
-        <div className="fixed bottom-24 md:bottom-6 left-1/2 -translate-x-1/2 z-50 max-w-[calc(100vw-2rem)] px-4 py-2.5 bg-[#1e1e1e] border border-[#333] rounded-lg text-sm text-white text-center shadow-xl animate-slide-up whitespace-normal">
-          {toastMsg}
+      {toast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-24 md:bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 w-max max-w-[calc(100vw-2rem)] px-4 py-2.5 bg-[#1e1e1e] border border-[#333] rounded-lg text-sm text-white shadow-xl animate-slide-up whitespace-normal"
+        >
+          <span className="min-w-0 break-words">{toast.msg}</span>
+          {toast.action && (
+            <button
+              type="button"
+              onClick={toast.action.onClick}
+              className="flex-shrink-0 text-primary font-semibold hover:underline"
+            >
+              {toast.action.label}
+            </button>
+          )}
         </div>
       )}
     </div>

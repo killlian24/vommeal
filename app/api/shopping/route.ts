@@ -1,15 +1,68 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
-  getAllShoppingItems, addShoppingItem, clearCheckedItems, clearAllItems,
-  getAllRecipes, getMealPlanRange, setShoppingItemHaUid,
-  getAllPantryStaples, PantryStaple,
+  getDb, getAllShoppingItems, addShoppingItem, clearCheckedItems, clearAllItems,
+  getAllRecipes, getMealPlanRange, setShoppingItemHaUid, getShoppingItemById,
+  getAllPantryStaples, PantryStaple, ShoppingItem,
 } from '@/lib/db'
 import { getHomeAssistantConfig } from '@/lib/config'
 import { categorize } from '@/lib/categorize'
+import { scaleAmount } from '@/lib/quantities'
 import { removeActiveHAItemsForLocalItems } from '@/lib/ha'
 import { randomUUID } from 'crypto'
+import { format } from 'date-fns'
 
 type HATodoItem = { summary: string; uid: string; status: string }
+
+type ShoppingItemWithRecipe = ShoppingItem & { recipe_name: string | null }
+type NewShoppingItem = Parameters<typeof addShoppingItem>[0]
+const VALID_SOURCES = new Set<ShoppingItem['source']>(['manual', 'meal_plan', 'ha'])
+
+/** Map meal_plan_id → recipe name for every shopping item that came from the plan. */
+function getRecipeNamesByPlanId(): Map<string, string> {
+  const rows = getDb().prepare(`
+    SELECT DISTINCT mp.id AS plan_id, r.name AS recipe_name
+    FROM shopping_list s
+    JOIN meal_plan mp ON mp.id = s.meal_plan_id
+    JOIN recipes r ON r.id = mp.recipe_id
+  `).all() as { plan_id: string; recipe_name: string }[]
+  return new Map(rows.map(r => [r.plan_id, r.recipe_name]))
+}
+
+function withRecipeNames(items: ShoppingItem[], names?: Map<string, string>): ShoppingItemWithRecipe[] {
+  const map = names ?? getRecipeNamesByPlanId()
+  return items.map(i => ({ ...i, recipe_name: i.meal_plan_id ? (map.get(i.meal_plan_id) ?? null) : null }))
+}
+
+function todayStr(): string {
+  return format(new Date(), 'yyyy-MM-dd')
+}
+
+/**
+ * Validate a request body / restore payload into a full shopping item, or null if it has no name.
+ * ha_uid is deliberately never taken from the body: DELETE / clear_checked already removed the
+ * item from Home Assistant, so a restored item must come back untracked and be re-pushed by the
+ * next Sync.
+ */
+function buildItemFromBody(raw: unknown): NewShoppingItem | null {
+  if (!raw || typeof raw !== 'object') return null
+  const b = raw as Record<string, unknown>
+  const name = typeof b.name === 'string' ? b.name.trim() : ''
+  if (!name) return null
+  const source = VALID_SOURCES.has(b.source as ShoppingItem['source']) ? b.source as ShoppingItem['source'] : 'manual'
+  const str = (v: unknown) => (typeof v === 'string' ? v : v == null ? '' : String(v)).trim()
+  return {
+    id: typeof b.id === 'string' && b.id.trim() ? b.id.trim() : randomUUID(),
+    name,
+    amount: str(b.amount),
+    unit: str(b.unit),
+    category: str(b.category) || categorize(name),
+    checked: b.checked === true || b.checked === 1 || b.checked === 'true',
+    source,
+    meal_plan_id: typeof b.meal_plan_id === 'string' && b.meal_plan_id ? b.meal_plan_id : null,
+    ha_uid: null,
+    sort_order: typeof b.sort_order === 'number' && Number.isFinite(b.sort_order) ? b.sort_order : 999,
+  }
+}
 
 // Bilingual alias pairs — each entry maps a name to its counterpart(s)
 // Used only for staple matching, does not affect categorisation
@@ -128,18 +181,24 @@ async function pushToHAAndTrack(items: { localId: string; name: string }[]) {
 }
 
 export async function GET() {
-  return NextResponse.json(getAllShoppingItems())
+  return NextResponse.json(withRecipeNames(getAllShoppingItems()))
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json()
+  const body = await req.json().catch(() => null)
+  if (!body || typeof body !== 'object') return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 })
 
   // Bulk generate from meal plan date range
   if (body.action === 'generate') {
     const { start, end } = body
     if (!start || !end) return NextResponse.json({ error: 'start and end required' }, { status: 400 })
 
-    const entries = getMealPlanRange(start, end)
+    // Never add ingredients for days that are already over
+    const today = todayStr()
+    const effectiveStart = start < today ? today : start
+    if (effectiveStart > end) return NextResponse.json({ ok: true, added: 0, items: [], start: effectiveStart, end })
+
+    const entries = getMealPlanRange(effectiveStart, end)
     const recipes = getAllRecipes()
     const recipeMap = new Map(recipes.map(r => [r.id, r]))
 
@@ -150,7 +209,7 @@ export async function POST(req: NextRequest) {
     // Skip pantry staples (bilingual-aware)
     const stapleNames = buildStapleSet(getAllPantryStaples())
 
-    const items: ReturnType<typeof addShoppingItem>[] = []
+    const items: ShoppingItemWithRecipe[] = []
     for (const entry of entries) {
       if (!entry.recipe_id) continue
       if (alreadyAddedPlanIds.has(entry.id)) continue  // already generated for this day
@@ -162,13 +221,10 @@ export async function POST(req: NextRequest) {
         if (!ing.name) continue
         if (ALWAYS_SKIP.has(ing.name.toLowerCase().trim())) continue
         if (stapleNames.has(ing.name.toLowerCase().trim())) continue
-        const scaledAmount = ing.amount
-          ? (parseFloat(ing.amount) * scale || ing.amount).toString()
-          : ''
-        items.push(addShoppingItem({
+        const added = addShoppingItem({
           id: randomUUID(),
           name: ing.name,
-          amount: scaledAmount,
+          amount: scaleAmount(ing.amount, ing.unit, scale),
           unit: ing.unit,
           category: categorize(ing.name),
           checked: false,
@@ -176,12 +232,13 @@ export async function POST(req: NextRequest) {
           meal_plan_id: entry.id,
           ha_uid: null,
           sort_order: items.length,
-        }))
+        })
+        items.push({ ...added, recipe_name: recipe.name })
       }
     }
     // Don't push to HA here — let the user review and check off what they have,
     // then the Sync button will push remaining unchecked items to HA.
-    return NextResponse.json({ ok: true, added: items.length })
+    return NextResponse.json({ ok: true, added: items.length, items, start: effectiveStart, end })
   }
 
   if (body.action === 'clear_checked') {
@@ -234,19 +291,16 @@ export async function POST(req: NextRequest) {
 
     const stapleNames = buildStapleSet(getAllPantryStaples())
     const scale = entry.servings / (recipe.servings || 1)
-    const items: ReturnType<typeof addShoppingItem>[] = []
+    const items: ShoppingItemWithRecipe[] = []
 
     for (const ing of recipe.ingredients) {
       if (!ing.name) continue
       if (ALWAYS_SKIP.has(ing.name.toLowerCase().trim())) continue
       if (stapleNames.has(ing.name.toLowerCase().trim())) continue
-      const scaledAmount = ing.amount
-        ? (parseFloat(ing.amount) * scale || ing.amount).toString()
-        : ''
-      items.push(addShoppingItem({
+      const added = addShoppingItem({
         id: randomUUID(),
         name: ing.name,
-        amount: scaledAmount,
+        amount: scaleAmount(ing.amount, ing.unit, scale),
         unit: ing.unit,
         category: categorize(ing.name),
         checked: false,
@@ -254,25 +308,45 @@ export async function POST(req: NextRequest) {
         meal_plan_id: entry.id,
         ha_uid: null,
         sort_order: 999,
-      }))
+      })
+      items.push({ ...added, recipe_name: recipe.name })
     }
-    return NextResponse.json({ ok: true, added: items.length, recipe_name: recipe.name })
+    return NextResponse.json({ ok: true, added: items.length, items, recipe_name: recipe.name })
   }
 
-  // Add single item
-  if (!body.name?.trim()) return NextResponse.json({ error: 'name required' }, { status: 400 })
-  const item = addShoppingItem({
-    id: randomUUID(),
-    name: body.name.trim(),
-    amount: body.amount || '',
-    unit: body.unit || '',
-    category: body.category || categorize(body.name),
-    checked: false,
-    source: 'manual',
-    meal_plan_id: null,
-    ha_uid: null,
-    sort_order: 999,
-  })
-  await pushToHAAndTrack([{ localId: item.id, name: [item.amount, item.unit, item.name].filter(Boolean).join(' ') }])
-  return NextResponse.json(item, { status: 201 })
+  // Restore previously deleted items as they were (undo for delete / clear checked).
+  // Items whose id still exists are skipped so a double Undo is harmless.
+  if (body.action === 'restore') {
+    const incoming: unknown[] = Array.isArray(body.items) ? body.items : []
+    const restored: ShoppingItem[] = []
+    for (const raw of incoming) {
+      const item = buildItemFromBody(raw)
+      if (!item) continue
+      if (getShoppingItemById(item.id)) continue
+      try {
+        restored.push(addShoppingItem(item))
+      } catch { /* id already exists (race) — skip */ }
+    }
+    return NextResponse.json({ ok: true, restored: restored.length, items: withRecipeNames(restored) })
+  }
+
+  // Add single item (optional id/category/source/meal_plan_id/checked let a
+  // deleted item be re-created as it was)
+  const single = buildItemFromBody(body)
+  if (!single) return NextResponse.json({ error: 'name required' }, { status: 400 })
+  if (getShoppingItemById(single.id)) {
+    return NextResponse.json({ error: 'item with this id already exists' }, { status: 409 })
+  }
+  let item: ShoppingItem
+  try {
+    item = addShoppingItem(single)
+  } catch {
+    return NextResponse.json({ error: 'item with this id already exists' }, { status: 409 })
+  }
+  // Only unchecked manual items get pushed to HA right away; everything else is
+  // picked up by the next Sync.
+  if (item.source === 'manual' && !item.checked) {
+    await pushToHAAndTrack([{ localId: item.id, name: [item.amount, item.unit, item.name].filter(Boolean).join(' ') }])
+  }
+  return NextResponse.json(withRecipeNames([item])[0], { status: 201 })
 }
