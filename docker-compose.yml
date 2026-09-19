@@ -35,3 +35,13 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+networks:
+  default:
+    # Pinned to a 172.x subnet on purpose: when Docker's 172.17–172.31 pool is
+    # exhausted it falls back to 192.168.x.0/20, which the Synology firewall
+    # and routing did not let out of the container (Mealie/HA became
+    # unreachable). Pick another free /24 if this one collides on your host.
+    ipam:
+      config:
+        - subnet: 172.26.0.0/24
