@@ -27,6 +27,27 @@ export type MealieRecipe = {
   [key: string]: unknown  // allow any other fields Mealie returns
 }
 
+// undici only says "fetch failed"; the useful part (ECONNREFUSED, EHOSTUNREACH,
+// ETIMEDOUT, certificate errors) sits in error.cause.
+export function describeFetchError(e: unknown): string {
+  if (!(e instanceof Error)) return String(e)
+  if (e.name === 'AbortError') return 'timed out'
+  const cause = (e as Error & { cause?: { code?: string; message?: string } }).cause
+  const code = cause?.code
+  const hints: Record<string, string> = {
+    ECONNREFUSED: 'connection refused (wrong port, or Mealie not running)',
+    EHOSTUNREACH: 'host unreachable (container cannot route to that address; check the NAS firewall for the Docker subnet)',
+    ENETUNREACH: 'network unreachable from the container',
+    ETIMEDOUT: 'connection timed out (firewall dropping packets?)',
+    ENOTFOUND: 'hostname not found from inside the container',
+    CERT_HAS_EXPIRED: 'TLS certificate expired',
+    DEPTH_ZERO_SELF_SIGNED_CERT: 'self-signed certificate rejected; use the plain http LAN address',
+    ERR_TLS_CERT_ALTNAME_INVALID: 'TLS certificate does not match the hostname',
+  }
+  if (code) return `${code}: ${hints[code] ?? cause?.message ?? ''}`.replace(/: $/, '')
+  return cause?.message ? `${e.message} (${cause.message})` : e.message
+}
+
 async function mealieRequest<T>(method: string, path: string, body?: unknown, timeoutMs = 15000): Promise<T> {
   const config = getMealieConfig()
   if (!config) throw new Error('Mealie not configured')
@@ -49,8 +70,7 @@ async function mealieRequest<T>(method: string, path: string, body?: unknown, ti
       signal: controller.signal,
     })
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e)
-    throw new Error(`Cannot reach Mealie at ${url}: ${msg}`)
+    throw new Error(`Cannot reach Mealie at ${url}: ${describeFetchError(e)}`)
   } finally {
     clearTimeout(timer)
   }
