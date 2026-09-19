@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3'
 import path from 'path'
 import fs from 'fs'
+import { normalizeIngredient, normalizeInstructions } from './ingredients'
 
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data')
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true })
@@ -129,6 +130,67 @@ function migrate(db: Database.Database) {
   try {
     db.exec("UPDATE shopping_list SET sync_status = COALESCE(sync_status, 'ok')")
   } catch { /* best-effort backfill */ }
+
+  // One-time data migration: recipes synced before ingredient parsing existed
+  // may hold unparsed lines (amount "0", note == name) and merged instruction
+  // lists. Guarded by a settings flag so it only ever runs once.
+  const flag = db.prepare('SELECT value FROM settings WHERE key = ?').get('migration_ingredients_v1') as { value: string } | undefined
+  if (flag?.value !== '1') {
+    normalizeStoredRecipes(db)
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('migration_ingredients_v1', '1')
+  }
+}
+
+function needsIngredientNormalization(ings: Ingredient[]): boolean {
+  return ings.some(i => {
+    const amount = i.amount == null ? '' : String(i.amount).trim()
+    if (amount === '0' || (amount !== '' && Number(amount) === 0)) return true
+    if (i.note && i.name && i.note.trim().toLowerCase() === i.name.trim().toLowerCase()) return true
+    return false
+  })
+}
+
+/**
+ * Normalize ingredients/instructions of already-stored recipes in place.
+ * Only rows that show the unparsed pattern are rewritten. Returns the number
+ * of updated recipes. Exported for tests; migrate() calls it once.
+ */
+export function normalizeStoredRecipes(db: Database.Database): number {
+  const rows = db.prepare('SELECT id, ingredients, instructions FROM recipes').all() as
+    { id: string; ingredients: string; instructions: string }[]
+  const update = db.prepare("UPDATE recipes SET ingredients = ?, instructions = ?, updated_at = datetime('now') WHERE id = ?")
+  let updated = 0
+
+  db.transaction(() => {
+    for (const row of rows) {
+      let ingredients: Ingredient[]
+      let instructions: Instruction[]
+      try {
+        ingredients = JSON.parse(row.ingredients || '[]')
+        instructions = JSON.parse(row.instructions || '[]')
+      } catch {
+        continue
+      }
+      if (!Array.isArray(ingredients) || !Array.isArray(instructions)) continue
+
+      let changed = false
+      if (needsIngredientNormalization(ingredients)) {
+        ingredients = ingredients.map(i => normalizeIngredient(i))
+        changed = true
+      }
+      const splitInstructions = normalizeInstructions(instructions)
+      if (splitInstructions !== instructions) {
+        instructions = splitInstructions
+        changed = true
+      }
+      if (changed) {
+        update.run(JSON.stringify(ingredients), JSON.stringify(instructions), row.id)
+        updated++
+      }
+    }
+  })()
+
+  return updated
 }
 
 // --- Settings ---

@@ -1,5 +1,6 @@
 import type { Ingredient, Instruction } from './db'
 import { getMealieConfig } from './config'
+import { normalizeIngredient, normalizeInstructions } from './ingredients'
 
 export type MealieRecipe = {
   id: string
@@ -154,13 +155,17 @@ export async function fetchMealieRecipeDetail(slug: string): Promise<{
     servings: parseInt(r.recipeYield || '4') || 4,
     prep_time: parseTime(r.prepTime),
     cook_time: parseTime(r.cookTime),
-    ingredients: r.recipeIngredient?.map(ing => ({
-      amount: ing.quantity?.toString() || '',
+    // Mealie may deliver unparsed ingredients (quantity 0, food/unit null, the
+    // whole line in display + note). normalizeIngredient parses those lines
+    // and drops redundant notes.
+    ingredients: r.recipeIngredient?.map(ing => normalizeIngredient({
+      amount: ing.quantity,
       unit: ing.unit?.abbreviation || ing.unit?.name || '',
-      name: ing.food?.name || ing.display || '',
-      note: ing.note || undefined,
-    })) || [],
-    instructions: r.recipeInstructions?.map(i => ({ text: i.text })) || [],
+      name: ing.food?.name || '',
+      note: ing.note,
+    }, ing.display)) || [],
+    // A single instruction containing ",1. … ,2. …" is a merged step list.
+    instructions: normalizeInstructions(r.recipeInstructions?.map(i => ({ text: i.text })) || []),
     image_url: r.image
       ? `${getMealieConfig()?.baseUrl}/api/media/recipes/${r.id}/images/original.webp`
       : '',
