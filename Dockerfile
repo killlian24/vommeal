@@ -1,4 +1,4 @@
-FROM node:20-alpine AS base
+FROM node:22-alpine AS base
 
 # Install build dependencies for better-sqlite3
 RUN apk add --no-cache libc6-compat python3 make g++
@@ -20,7 +20,7 @@ ENV NEXT_TELEMETRY_DISABLED 1
 RUN npm run build
 
 # ---- Runner ----
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 RUN apk add --no-cache libc6-compat su-exec
 
 WORKDIR /app
@@ -42,7 +42,9 @@ COPY --from=builder /app/node_modules/bindings ./node_modules/bindings
 COPY --from=builder /app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
 COPY docker-entrypoint.sh ./docker-entrypoint.sh
 
-RUN mkdir -p /app/data && chown -R nextjs:nodejs /app/data
+# Data dir (SQLite DB + daily backups in /app/data/backups). The entrypoint
+# re-runs chown at startup so a bind-mounted volume is writable by nextjs too.
+RUN mkdir -p /app/data/backups && chown -R nextjs:nodejs /app/data
 
 EXPOSE 3000
 ENV PORT=3000

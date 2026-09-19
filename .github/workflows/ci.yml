@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build:
-    name: Typecheck and build
+    name: Typecheck, lint, test and build
     runs-on: ubuntu-latest
 
     steps:
@@ -24,7 +24,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -32,6 +32,12 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
 
       - name: Build
         run: npm run build

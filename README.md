@@ -159,4 +159,51 @@ Use **Settings** → **About & Docker** → **Download database backup** for a s
 
 The live database files live in `/volume1/docker/vommeal/data/`. Because SQLite uses WAL mode, manual file backups should include `vommeal.db`, `vommeal.db-wal`, and `vommeal.db-shm` when they exist.
 
-Treat the database backup as private: it may contain Mealie/Home Assistant tokens and meal-planning data.
+### Automatic daily backups
+
+Vommeal also backs itself up automatically:
+
+- **Where:** `/volume1/docker/vommeal/data/backups/vommeal-YYYY-MM-DD.db` (`${DATA_DIR}/backups/` in general).
+- **When:** about 30 seconds after the container starts and then every 24 hours. Only one file per calendar day is written; if today's file already exists the run is skipped.
+- **Retention:** files older than 14 days are deleted on each run. Copy a file elsewhere (Hyper Backup, another share, ...) if you want to keep it longer.
+- **How:** the copy is made with SQLite's online backup API, so it is consistent even while the app is running and does not need the `-wal`/`-shm` files. Check the container log for `[backup] created: ...` lines.
+
+### Restore
+
+1. Stop the container in Portainer.
+2. In File Station (or over SSH) rename the current `vommeal.db` to keep it, delete any `vommeal.db-wal` / `vommeal.db-shm` files next to it, and copy the backup into place:
+
+   ```bash
+   cd /volume1/docker/vommeal/data
+   mv vommeal.db vommeal.db.broken
+   rm -f vommeal.db-wal vommeal.db-shm
+   cp backups/vommeal-2026-01-31.db vommeal.db
+   ```
+
+   A file downloaded from **Settings** works the same way.
+
+3. Start the container again. The entrypoint fixes file ownership, so a copy made by your own user works.
+
+Treat the database and its backups as private: they may contain Mealie/Home Assistant tokens and meal-planning data.
+
+---
+
+## Local development
+
+```bash
+cp .env.example .env.local   # then edit it
+npm install
+npm run dev                  # http://localhost:3000
+```
+
+Useful scripts: `npm run typecheck`, `npm run lint`, `npm test`.
+
+**Do not point a local dev server at your real Home Assistant.** The shopping-list sync rewrites the real Google Keep list (it removes and re-adds every item to sort it), so a local run with real credentials modifies the list your household is using. `.env.example` therefore ships with
+
+```text
+HA_URL=http://127.0.0.1:9
+```
+
+a deliberately dead address: every HA call fails fast and nothing is touched. Only replace it with the real URL when you actually want local runs to sync. The same applies to values entered on the local Settings page: those are stored in your local `data/vommeal.db`, so keep the HA fields empty there too.
+
+`MEALIE_*` can be left empty; recipe sync is then simply unavailable and you can create recipes by hand. The local database (`./data`, ignored by git) also receives the daily backups described above.
