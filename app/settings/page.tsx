@@ -301,11 +301,11 @@ export default function SettingsPage() {
             <input
               value={settings.mealie_url}
               onChange={e => setSettings(s => ({ ...s, mealie_url: e.target.value }))}
-              placeholder="https://mealie.your-domain.com"
+              placeholder="http://192.168.0.124:9925"
               disabled={settings.env?.mealie_url}
             />
             <p className="text-xs text-[#444] mt-1">
-              {settings.env?.mealie_url ? 'Controlled by MEALIE_URL in Docker.' : 'Your Mealie instance URL (no trailing slash)'}
+              {settings.env?.mealie_url ? 'Controlled by MEALIE_URL in Docker.' : 'Use the LAN address the NAS can reach, e.g. http://192.168.0.124:9925 (plain http for LAN IPs is fine)'}
             </p>
           </div>
           <div>

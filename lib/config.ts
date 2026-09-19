@@ -11,11 +11,18 @@ export type HomeAssistantConfig = {
   entity: string
 }
 
+// Hosts that are almost always served over plain http on a home network.
+// Everything else (public domains) defaults to https.
+const PRIVATE_HOST_RE = /^(localhost|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+|[^./]+\.(local|lan|home|internal))(:\d+)?$/i
+
 export function sanitizeUrl(raw: string): string {
   raw = raw.trim()
   raw = raw.replace(/^https?:https?:\/\//, 'https://')
-  if (raw && !raw.startsWith('http')) raw = 'https://' + raw
-  return raw.replace(/\/$/, '')
+  if (raw && !/^https?:\/\//i.test(raw)) {
+    const host = raw.split('/')[0]
+    raw = (PRIVATE_HOST_RE.test(host) ? 'http://' : 'https://') + raw
+  }
+  return raw.replace(/\/+$/, '')
 }
 
 function env(name: string): string {
