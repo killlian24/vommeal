@@ -1,46 +1,52 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getMealPlanRange, addMealPlanEntry, deleteMealPlanRange } from '@/lib/db'
+import { getMealPlanRange, addMealPlanEntry, deleteMealPlanRange, getRecipeById } from '@/lib/db'
+import {
+  errorResponse, readJsonObject, requireDateRange, requireIsoDate, optionalServings,
+  optionalString, optionalNullableString, optionalStatus, ValidationError, LIMITS,
+} from '@/lib/validate'
 import { randomUUID } from 'crypto'
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
-
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url)
-  const start = searchParams.get('start') || ''
-  const end = searchParams.get('end') || ''
-  if (!start || !end) return NextResponse.json({ error: 'start and end required' }, { status: 400 })
-  if (!DATE_RE.test(start) || !DATE_RE.test(end)) return NextResponse.json({ error: 'invalid date range' }, { status: 400 })
-  return NextResponse.json(getMealPlanRange(start, end))
+  try {
+    const { start, end } = requireDateRange(new URL(req.url).searchParams)
+    return NextResponse.json(getMealPlanRange(start, end))
+  } catch (e) { return errorResponse(e) }
 }
 
 export async function DELETE(req: NextRequest) {
-  const { searchParams } = new URL(req.url)
-  const start = searchParams.get('start') || ''
-  const end = searchParams.get('end') || ''
-  if (!start || !end) return NextResponse.json({ error: 'start and end required' }, { status: 400 })
-  if (!DATE_RE.test(start) || !DATE_RE.test(end)) return NextResponse.json({ error: 'invalid date range' }, { status: 400 })
-  deleteMealPlanRange(start, end)
-  return NextResponse.json({ ok: true })
+  try {
+    const { start, end } = requireDateRange(new URL(req.url).searchParams)
+    deleteMealPlanRange(start, end)
+    return NextResponse.json({ ok: true })
+  } catch (e) { return errorResponse(e) }
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json()
-  if (!body.date || !body.meal_type) {
-    return NextResponse.json({ error: 'date and meal_type required' }, { status: 400 })
-  }
-  if (!DATE_RE.test(body.date) || body.meal_type !== 'dinner') {
-    return NextResponse.json({ error: 'invalid meal plan entry' }, { status: 400 })
-  }
-  const entry = addMealPlanEntry({
-    id: body.id || randomUUID(),
-    date: body.date,
-    meal_type: body.meal_type,
-    recipe_id: body.recipe_id || null,
-    custom_meal_name: body.custom_meal_name || null,
-    servings: body.servings || 2,
-    notes: body.notes || '',
-    status: body.status || 'suggested',
-    suggested_by: body.suggested_by || '',
-  })
-  return NextResponse.json(entry, { status: 201 })
+  try {
+    const body = await readJsonObject(req)
+
+    // Only 'dinner' exists today; accept it explicitly or by default, reject anything else.
+    const mealType = optionalString(body.meal_type, 'meal_type', 20, 'dinner')
+    if (mealType !== 'dinner') throw new ValidationError("meal_type must be 'dinner'")
+
+    const date = requireIsoDate(body.date)
+    const recipeId = optionalNullableString(body.recipe_id, 'recipe_id', LIMITS.id)
+    const customMealName = optionalNullableString(body.custom_meal_name, 'custom_meal_name', LIMITS.name)
+    if (!recipeId && !customMealName) throw new ValidationError('recipe_id or custom_meal_name required')
+    if (recipeId && !getRecipeById(recipeId)) throw new ValidationError('recipe_id does not match a known recipe')
+
+    const entry = addMealPlanEntry({
+      // Clients may pass an id (e.g. to restore an entry after undo); otherwise generate one.
+      id: optionalString(body.id, 'id', LIMITS.id) || randomUUID(),
+      date,
+      meal_type: 'dinner',
+      recipe_id: recipeId,
+      custom_meal_name: customMealName,
+      servings: optionalServings(body.servings, 2),
+      notes: optionalString(body.notes, 'notes', LIMITS.notes),
+      status: optionalStatus(body.status, 'suggested'),
+      suggested_by: optionalString(body.suggested_by, 'suggested_by', LIMITS.userName),
+    })
+    return NextResponse.json(entry, { status: 201 })
+  } catch (e) { return errorResponse(e) }
 }

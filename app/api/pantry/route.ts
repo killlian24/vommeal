@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAllPantryStaples, addPantryStaple } from '@/lib/db'
+import { errorResponse, readJsonObject, requireString, LIMITS } from '@/lib/validate'
 import { randomUUID } from 'crypto'
 
 export async function GET() {
@@ -7,8 +8,10 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json()
-  if (!body.name?.trim()) return NextResponse.json({ error: 'name required' }, { status: 400 })
-  const staple = addPantryStaple(randomUUID(), body.name.trim())
-  return NextResponse.json(staple, { status: 201 })
+  try {
+    const body = await readJsonObject(req)
+    const name = requireString(body.name, 'name', LIMITS.name)
+    const staple = addPantryStaple(randomUUID(), name)
+    return NextResponse.json(staple, { status: 201 })
+  } catch (e) { return errorResponse(e) }
 }
