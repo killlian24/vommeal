@@ -2,9 +2,10 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { CalendarDays, BookOpen, ShoppingCart, Settings, Utensils } from 'lucide-react'
+import { CalendarDays, BookOpen, ShoppingCart, Settings, Utensils, Moon } from 'lucide-react'
 
 const links = [
+  { href: '/tonight',  label: 'Tonight',  icon: Moon },
   { href: '/',         label: 'Plan',     icon: CalendarDays },
   { href: '/recipes',  label: 'Recipes',  icon: BookOpen },
   { href: '/shopping', label: 'Shopping', icon: ShoppingCart },

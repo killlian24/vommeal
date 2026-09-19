@@ -8,6 +8,7 @@ import {
   sanitizeCustomCategoryKeywords,
 } from '@/lib/categoryRules'
 import type { CategoryId, CategoryKeywordMap } from '@/lib/categoryRules'
+import { Avatar } from '@/components/Avatar'
 
 type Settings = {
   mealie_url: string; mealie_token: string; has_token: boolean
@@ -34,10 +35,6 @@ const CATEGORY_LABELS: Record<string, string> = {
 }
 type TestResult = { ok: boolean; user?: string; error?: string } | null
 
-function getInitials(name: string) {
-  return name.trim().split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2)
-}
-
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings>({
     mealie_url: '', mealie_token: '', has_token: false,
@@ -45,6 +42,8 @@ export default function SettingsPage() {
     ha_url: '', ha_token: '', has_ha_token: false, ha_entity: '',
     dinner_category: '', category_order: '', custom_category_keywords: '{}',
   })
+  // Ordered profile list, identical to what the plan page derives from /api/settings
+  const profileNames = [settings.user1_name, settings.user2_name].filter(Boolean)
   const [categoryOrder, setCategoryOrder] = useState<string[]>(DEFAULT_CATEGORY_ORDER)
   const [customKeywords, setCustomKeywords] = useState<CategoryKeywordMap>({})
   const [keywordDrafts, setKeywordDrafts] = useState<Record<string, string>>({})
@@ -255,16 +254,14 @@ export default function SettingsPage() {
         </button>
         {open.has('profiles') && (
           <div className="px-5 py-4 space-y-3 border-t border-[#1e1e1e]">
+            {/* Same ordered list the plan page uses, so colours match there */}
             {[
               { key: 'user1_name' as const, label: 'Person 1' },
               { key: 'user2_name' as const, label: 'Person 2' },
             ].map(({ key, label }) => (
               <div key={key} className="flex items-center gap-3">
                 {settings[key] ? (
-                  <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
-                    style={{ background: key === 'user1_name' ? '#f97316' : '#3b82f6' }}>
-                    {getInitials(settings[key])}
-                  </div>
+                  <Avatar name={settings[key]} users={profileNames} size="lg" />
                 ) : (
                   <div className="w-8 h-8 rounded-full bg-[#222] border border-[#333] flex-shrink-0" />
                 )}

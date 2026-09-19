@@ -1,11 +1,12 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { format, startOfWeek, addDays, isToday, parseISO } from 'date-fns'
-import { ChevronLeft, ChevronRight, Plus, X, Search, ShoppingCart, ThumbsUp, RefreshCw, Zap, Dices, Heart, XCircle } from 'lucide-react'
+import { ChevronLeft, ChevronRight, ChevronDown, Plus, X, Search, ShoppingCart, ThumbsUp, RefreshCw, Zap, Dices, Heart, XCircle } from 'lucide-react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { StarRating } from '@/components/StarRating'
+import { Avatar, avatarColor } from '@/components/Avatar'
 
 type Recipe = { id: string; name: string; image_url: string; prep_time: number; cook_time: number; source: string; rating: number | null }
 type Nomination = { id: string; date: string; recipe_id: string; user_name: string; recipe?: Recipe }
@@ -14,27 +15,18 @@ type MealEntry = {
   recipe_id: string | null; custom_meal_name: string | null
   servings: number; notes: string
   status: 'suggested' | 'approved'; suggested_by: string
+  created_at?: string
   recipe?: Recipe
 }
+type Toast = { msg: string; action?: { label: string; onClick: () => void } }
 
-function getInitials(name: string) {
-  return name.trim().split(' ')
-    .filter(p => /[a-zA-ZäöüÄÖÜ]/.test(p[0] ?? ''))
-    .map(p => p[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2)
-}
-
-function Avatar({ name, size = 'sm' }: { name: string; size?: 'sm' | 'md' }) {
-  const colors = ['#f97316', '#3b82f6', '#10b981', '#8b5cf6', '#f43f5e', '#f59e0b']
-  const color = colors[name.charCodeAt(0) % colors.length]
-  const sz = size === 'sm' ? 'w-5 h-5 text-[10px]' : 'w-7 h-7 text-xs'
-  return (
-    <span className={`${sz} rounded-full flex items-center justify-center font-bold flex-shrink-0`} style={{ background: color }}>
-      {getInitials(name)}
-    </span>
-  )
+// SQLite stores created_at as "YYYY-MM-DD HH:MM:SS" in UTC; the API may also
+// return a full ISO string for freshly created rows. Normalise to a timestamp.
+function parseCreatedAt(value: string | undefined): number {
+  if (!value) return 0
+  const iso = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value) ? value.replace(' ', 'T') + 'Z' : value
+  const t = Date.parse(iso)
+  return Number.isNaN(t) ? 0 : t
 }
 
 export default function PlanPage() {
@@ -47,7 +39,9 @@ export default function PlanPage() {
   const [search, setSearch] = useState('')
   const [customName, setCustomName] = useState('')
   const [servings, setServings] = useState(2)
-  const [toast, setToast] = useState('')
+  const [toast, setToast] = useState<Toast | null>(null)
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [earlierOpen, setEarlierOpen] = useState(false)
   const [autofilling, setAutofilling] = useState(false)
   const [currentUser, setCurrentUser] = useState('')
   const [users, setUsers] = useState<string[]>([])
@@ -61,14 +55,27 @@ export default function PlanPage() {
   const [funCardIndex, setFunCardIndex] = useState(0)
   const [funDone, setFunDone] = useState(false)
   const [funVotes, setFunVotes] = useState<Record<string, Record<string, boolean>>>({})
+  const pendingVotes = useRef<Promise<unknown>[]>([])
   const [settleDate, setSettleDate] = useState<string | null>(null)
   const [addingToList, setAddingToList] = useState<string | null>(null)
 
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
   const startStr = format(weekStart, 'yyyy-MM-dd')
   const endStr = format(addDays(weekStart, 6), 'yyyy-MM-dd')
+  const todayStr = format(new Date(), 'yyyy-MM-dd')
+  const isCurrentWeek = startStr <= todayStr && todayStr <= endStr
+  // Actions like "Send" and "Fast" should never touch days that are already over
+  const upcomingStartStr = startStr < todayStr ? todayStr : startStr
 
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 2500) }
+  const showToast = (msg: string, opts?: { action?: Toast['action']; duration?: number }) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    setToast({ msg, action: opts?.action })
+    toastTimer.current = setTimeout(() => setToast(null), opts?.duration ?? 2500)
+  }
+  const hideToast = () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    setToast(null)
+  }
 
   const addToList = async (date: string) => {
     setAddingToList(date)
@@ -157,9 +164,26 @@ export default function PlanPage() {
 
   useEffect(() => { loadEntries(); loadNominations() }, [loadEntries, loadNominations])
 
-  const CARDS_PER_DAY = 5
+  // "New since last visit": once entries are in, count partner suggestions created
+  // after the last time this user looked at the plan, then bump the timestamp.
+  useEffect(() => {
+    if (loading || !currentUser) return
+    const key = `vommeal_lastseen_${currentUser}`
+    let lastSeen = 0
+    try { lastSeen = Date.parse(localStorage.getItem(key) || '') || 0 } catch { /* storage unavailable */ }
+    const fresh = entries.filter(e =>
+      e.status === 'suggested' && e.suggested_by !== currentUser && parseCreatedAt(e.created_at) > lastSeen
+    )
+    if (fresh.length > 0) {
+      const who = fresh[0].suggested_by || 'your partner'
+      showToast(`${fresh.length} new suggestion${fresh.length === 1 ? '' : 's'} from ${who}`, { duration: 4000 })
+    }
+    try { localStorage.setItem(key, new Date().toISOString()) } catch { /* storage unavailable */ }
+  }, [entries, loading, currentUser])
 
-  // Deterministic shuffle seeded by a string — both partners get same 5 cards per day
+  const CARDS_PER_DAY = 3
+
+  // Deterministic shuffle seeded by a string — both partners get the same cards per day
   function seededShuffle<T>(arr: T[], seed: string): T[] {
     const copy = [...arr]
     let h = 0
@@ -178,11 +202,11 @@ export default function PlanPage() {
 
   const openFunMode = () => {
     if (!currentUser) { showToast('Pick a profile first'); return }
-    // Pre-select empty days
+    // Pre-select empty days that are still ahead of us
     const emptyDates = new Set(
       days
-        .filter(d => !entries.find(e => e.date === format(d, 'yyyy-MM-dd')))
         .map(d => format(d, 'yyyy-MM-dd'))
+        .filter(ds => ds >= todayStr && !entries.find(e => e.date === ds))
     )
     setFunSelectedDates(emptyDates)
     setFunDayPicker(true)
@@ -199,6 +223,11 @@ export default function PlanPage() {
 
   const getEntry = (date: Date) =>
     entries.find(e => e.date === format(date, 'yyyy-MM-dd'))
+
+  // In the current week, days before today collapse into a compact list;
+  // other weeks show all seven full cards.
+  const pastDays = isCurrentWeek ? days.filter(d => format(d, 'yyyy-MM-dd') < todayStr) : []
+  const cardDays = isCurrentWeek ? days.filter(d => format(d, 'yyyy-MM-dd') >= todayStr) : days
 
   const addEntry = async (recipeId?: string, name?: string) => {
     if (!adding) return
@@ -233,10 +262,35 @@ export default function PlanPage() {
     showToast('Dinner approved! 🎉')
   }
 
+  // Optimistic removal with a 6 s undo window instead of a confirm dialog
   const removeEntry = async (id: string) => {
-    if (!confirm('Remove this meal?')) return
-    await fetch(`/api/meal-plan/${id}`, { method: 'DELETE' })
+    const removed = entries.find(e => e.id === id)
+    if (!removed) return
     setEntries(prev => prev.filter(e => e.id !== id))
+    const res = await fetch(`/api/meal-plan/${id}`, { method: 'DELETE' })
+    if (!res.ok) { loadEntries(); showToast('Could not remove meal'); return }
+    const label = removed.recipe?.name || removed.custom_meal_name || 'Meal'
+    showToast(`Removed ${label}`, {
+      duration: 6000,
+      action: {
+        label: 'Undo',
+        onClick: async () => {
+          hideToast()
+          const r = await fetch('/api/meal-plan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: removed.id, date: removed.date, meal_type: removed.meal_type,
+              recipe_id: removed.recipe_id, custom_meal_name: removed.custom_meal_name,
+              servings: removed.servings, notes: removed.notes,
+              status: removed.status, suggested_by: removed.suggested_by,
+            }),
+          })
+          if (r.ok) { setEntries(prev => [...prev.filter(e => e.id !== removed.id), removed]); showToast('Restored') }
+          else { showToast('Could not restore meal') }
+        },
+      },
+    })
   }
 
   // Fun mode: days without a confirmed meal, filtered to user-selected dates
@@ -246,14 +300,14 @@ export default function PlanPage() {
     return !entries.find(e => e.date === ds)
   })
 
-  const advanceFunCard = (newVotes: typeof funVotes) => {
+  const advanceFunCard = () => {
     const nextCard = funCardIndex + 1
     if (nextCard >= CARDS_PER_DAY) {
       // Done with this day — move to next
       const nextDay = funDayIndex + 1
       if (nextDay >= funDays.length) {
-        // All days voted — submit and show results
-        submitFunVotes(newVotes)
+        // All days voted — every "Yes" is already saved; refresh and show results
+        finishFunMode()
       } else {
         setFunDayIndex(nextDay)
         setFunCardIndex(0)
@@ -263,31 +317,39 @@ export default function PlanPage() {
     }
   }
 
+  // Each "Yes" is saved immediately so closing fun mode mid-way loses nothing
   const funVote = (recipe: Recipe, yes: boolean) => {
     const dateStr = format(funDays[funDayIndex], 'yyyy-MM-dd')
-    const newVotes = {
-      ...funVotes,
-      [dateStr]: { ...(funVotes[dateStr] || {}), [recipe.id]: yes },
-    }
-    setFunVotes(newVotes)
-    advanceFunCard(newVotes)
+    setFunVotes(prev => ({ ...prev, [dateStr]: { ...(prev[dateStr] || {}), [recipe.id]: yes } }))
+    advanceFunCard()
+    if (!yes) return
+    const post = fetch('/api/nominations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: dateStr, recipe_id: recipe.id, user_name: currentUser }),
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.match) {
+          showToast(`❤️ It's a match — ${recipe.name} on ${format(parseISO(dateStr), 'EEEE')}!`, { duration: 4000 })
+          loadEntries()
+          loadNominations()
+        }
+      })
+      .catch(() => showToast('Could not save your vote'))
+    pendingVotes.current.push(post)
   }
 
-  const submitFunVotes = async (votes: typeof funVotes) => {
-    // Submit all yes-votes as nominations
-    const posts = []
-    for (const [date, dayVotes] of Object.entries(votes)) {
-      for (const [recipeId, yes] of Object.entries(dayVotes)) {
-        if (yes) {
-          posts.push(fetch('/api/nominations', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ date, recipe_id: recipeId, user_name: currentUser }),
-          }))
-        }
-      }
-    }
-    await Promise.allSettled(posts)
+  const closeFunMode = () => {
+    setFunMode(false)
+    loadEntries()
+    loadNominations()
+  }
+
+  const finishFunMode = async () => {
+    // Wait for any in-flight nominations so the results screen is complete
+    await Promise.allSettled(pendingVotes.current)
+    pendingVotes.current = []
     await loadEntries()
     await loadNominations()
     setFunDone(true)
@@ -299,11 +361,11 @@ export default function PlanPage() {
     const res = await fetch('/api/meal-plan/autofill', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ start: startStr, end: endStr, suggested_by: currentUser }),
+      body: JSON.stringify({ start: upcomingStartStr, end: endStr, suggested_by: currentUser }),
     })
     const data = await res.json()
     if (data.ok) {
-      if (data.filled === 0) showToast('All days already planned!')
+      if (data.filled === 0) showToast(data.message || 'All days already planned!')
       else { showToast(`Filled ${data.filled} day${data.filled === 1 ? '' : 's'} — your partner can now approve`); loadEntries(); loadNominations() }
     } else {
       showToast(data.error || 'Could not fill week')
@@ -333,10 +395,11 @@ export default function PlanPage() {
   }
 
   const generateShopping = async () => {
+    if (upcomingStartStr > endStr) { showToast('This week is already over'); return }
     const res = await fetch('/api/shopping', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'generate', start: startStr, end: endStr }),
+      body: JSON.stringify({ action: 'generate', start: upcomingStartStr, end: endStr }),
     })
     const data = await res.json()
     showToast(`Added ${data.added} ingredients to shopping list`)
@@ -373,21 +436,13 @@ export default function PlanPage() {
 
             {/* Profile cards */}
             <div className="w-full space-y-3">
-              {users.map((u, i) => {
-                const colors = [
-                  { bg: 'rgba(249,115,22,0.12)', border: 'rgba(249,115,22,0.25)', avatar: '#f97316', glow: 'rgba(249,115,22,0.15)' },
-                  { bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.25)', avatar: '#3b82f6', glow: 'rgba(59,130,246,0.15)' },
-                ]
-                const c = colors[i % colors.length]
+              {users.map(u => {
+                const color = avatarColor(u, users)
                 return (
                   <button key={u} onClick={() => selectUser(u)}
                     className="w-full group relative flex items-center gap-4 px-5 py-4 rounded-2xl transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
-                    style={{ background: c.bg, border: `1px solid ${c.border}`, boxShadow: `0 0 24px ${c.glow}` }}>
-                    {/* Avatar */}
-                    <div className="w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold text-white flex-shrink-0 shadow-md"
-                      style={{ background: c.avatar }}>
-                      {getInitials(u)}
-                    </div>
+                    style={{ background: `${color}1f`, border: `1px solid ${color}40`, boxShadow: `0 0 24px ${color}26` }}>
+                    <Avatar name={u} users={users} size="xl" />
                     <div className="flex-1 text-left">
                       <p className="text-base font-semibold text-white">{u}</p>
                       <p className="text-xs text-[#555] mt-0.5">Continue as {u}</p>
@@ -443,7 +498,7 @@ export default function PlanPage() {
           {currentUser && (
             <button onClick={switchUser} title={`Switch to ${partner}`}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] transition-all">
-              <Avatar name={currentUser} />
+              <Avatar name={currentUser} users={users} />
               <span className="text-xs text-[#888]">{currentUser}</span>
               <RefreshCw size={11} className="text-[#555]" />
             </button>
@@ -471,8 +526,6 @@ export default function PlanPage() {
 
       {/* Today banner — only visible when today is in current week */}
       {(() => {
-        const todayStr = format(new Date(), 'yyyy-MM-dd')
-        const isCurrentWeek = days.some(d => format(d, 'yyyy-MM-dd') === todayStr)
         if (!isCurrentWeek) return null
         const todayEntry = entries.find(e => e.date === todayStr)
         return (
@@ -529,9 +582,60 @@ export default function PlanPage() {
         )
       })()}
 
+      {/* Earlier this week — compact, collapsed rows for days already over */}
+      {pastDays.length > 0 && (
+        <div className="rounded-xl border border-[#1a1a1a] bg-[#0f0f0f] overflow-hidden">
+          <button
+            onClick={() => setEarlierOpen(o => !o)}
+            aria-expanded={earlierOpen}
+            className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-[#141414] transition-colors"
+          >
+            <span className="text-xs font-medium text-[#555]">
+              Earlier this week
+              <span className="ml-1.5 text-[#3a3a3a]">
+                · {pastDays.length} day{pastDays.length === 1 ? '' : 's'}
+              </span>
+            </span>
+            <ChevronDown size={14} className={`text-[#444] transition-transform ${earlierOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {earlierOpen && (
+            <div className="border-t border-[#1a1a1a] divide-y divide-[#161616]">
+              {pastDays.map(day => {
+                const entry = getEntry(day)
+                const dateStr = format(day, 'yyyy-MM-dd')
+                const name = entry ? (entry.recipe?.name || entry.custom_meal_name || '—') : null
+                return (
+                  <div key={dateStr} className="flex items-center gap-3 px-3 py-1.5 text-xs opacity-60">
+                    <span className="w-14 flex-shrink-0 text-[#666] font-medium">
+                      {format(day, 'EEE d')}
+                    </span>
+                    {entry ? (
+                      entry.recipe_id ? (
+                        <Link href={`/recipes/${entry.recipe_id}`} className="flex-1 min-w-0 truncate text-[#999] hover:text-white transition-colors">
+                          {name}
+                        </Link>
+                      ) : (
+                        <span className="flex-1 min-w-0 truncate text-[#999]">{name}</span>
+                      )
+                    ) : (
+                      <span className="flex-1 min-w-0 truncate text-[#444] italic">nothing planned</span>
+                    )}
+                    {entry && (
+                      <span className={`flex-shrink-0 text-[10px] ${entry.status === 'approved' ? 'text-green-500/70' : 'text-amber-500/70'}`}>
+                        {entry.status === 'approved' ? '✓ set' : 'suggested'}
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Day cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-        {days.map(day => {
+        {cardDays.map(day => {
           const entry = getEntry(day)
           const dateStr = format(day, 'yyyy-MM-dd')
           const today = isToday(day)
@@ -608,7 +712,7 @@ export default function PlanPage() {
                       {/* Suggested by — only show when we know who suggested it */}
                       {entry.suggested_by && (
                         <div className="flex items-center gap-1.5 mb-2">
-                          <Avatar name={entry.suggested_by} />
+                          <Avatar name={entry.suggested_by} users={users} />
                           <span className="text-[11px] text-[#555]">{entry.suggested_by}</span>
                         </div>
                       )}
@@ -803,7 +907,7 @@ export default function PlanPage() {
               <div className="text-4xl mb-4">🎉</div>
               <p className="text-white font-semibold text-lg">All days planned!</p>
               <p className="text-[#555] text-sm mt-1 mb-6">Nothing left to vote on this week.</p>
-              <button onClick={() => setFunMode(false)} className="px-6 py-2 rounded-lg bg-primary text-white text-sm font-medium">Done</button>
+              <button onClick={closeFunMode} className="px-6 py-2 rounded-lg bg-primary text-white text-sm font-medium">Done</button>
             </div>
           </div>
         )
@@ -828,7 +932,7 @@ export default function PlanPage() {
               <div className="w-full max-w-sm bg-[#141414] border border-[#2a2a2a] rounded-2xl overflow-hidden shadow-2xl animate-slide-up max-h-[90vh] flex flex-col">
                 <div className="flex items-center justify-between px-4 py-3 border-b border-[#222] flex-shrink-0">
                   <p className="font-semibold text-white">Your votes</p>
-                  <button onClick={() => setFunMode(false)} className="p-1.5 rounded-lg hover:bg-[#222] text-[#555] hover:text-white transition-all"><X size={15} /></button>
+                  <button onClick={closeFunMode} className="p-1.5 rounded-lg hover:bg-[#222] text-[#555] hover:text-white transition-all"><X size={15} /></button>
                 </div>
                 <div className="overflow-y-auto flex-1 divide-y divide-[#1a1a1a]">
                   {byDate.map(({ dateStr, day, myNoms, partnerNoms, matchId, confirmed }) => {
@@ -875,7 +979,7 @@ export default function PlanPage() {
                   })}
                 </div>
                 <div className="px-4 py-3 border-t border-[#1a1a1a] flex-shrink-0">
-                  <button onClick={() => setFunMode(false)} className="w-full py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-all">Done</button>
+                  <button onClick={closeFunMode} className="w-full py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-all">Done</button>
                 </div>
               </div>
             </div>
@@ -902,7 +1006,7 @@ export default function PlanPage() {
                   </p>
                   <p className="text-sm font-semibold text-white">{format(currentDay, 'EEEE, MMM d')}</p>
                 </div>
-                <button onClick={() => setFunMode(false)} className="p-1.5 rounded-lg hover:bg-[#222] text-[#555] hover:text-white transition-all">
+                <button onClick={closeFunMode} className="p-1.5 rounded-lg hover:bg-[#222] text-[#555] hover:text-white transition-all">
                   <X size={15} />
                 </button>
               </div>
@@ -937,7 +1041,7 @@ export default function PlanPage() {
                     <div className="px-4 py-3">
                       <p className="text-base font-semibold text-white leading-tight">{recipe.name}</p>
                       <div className="flex items-center gap-3 mt-1 text-xs text-[#555]">
-                        {(recipe.prep_time || recipe.cook_time) && <span>⏱ {(recipe.prep_time || 0) + (recipe.cook_time || 0)} min</span>}
+                        {(recipe.prep_time || recipe.cook_time) ? <span>⏱ {(recipe.prep_time || 0) + (recipe.cook_time || 0)} min</span> : null}
                         {recipe.rating ? <span>⭐ {recipe.rating}</span> : null}
                       </div>
                     </div>
@@ -1044,21 +1148,23 @@ export default function PlanPage() {
               {days.map(day => {
                 const ds = format(day, 'yyyy-MM-dd')
                 const hasEntry = !!entries.find(e => e.date === ds)
+                const isPast = ds < todayStr
+                const disabled = hasEntry || isPast
                 const selected = funSelectedDates.has(ds)
                 return (
                   <button
                     key={ds}
                     onClick={() => {
-                      if (hasEntry) return
+                      if (disabled) return
                       setFunSelectedDates(prev => {
                         const next = new Set(prev)
                         next.has(ds) ? next.delete(ds) : next.add(ds)
                         return next
                       })
                     }}
-                    disabled={hasEntry}
+                    disabled={disabled}
                     className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border transition-all ${
-                      hasEntry
+                      disabled
                         ? 'border-[#1e1e1e] bg-[#0f0f0f] opacity-40 cursor-not-allowed'
                         : selected
                           ? 'border-primary/40 bg-primary/10 text-white'
@@ -1067,7 +1173,7 @@ export default function PlanPage() {
                   >
                     <span className="text-sm font-medium">{format(day, 'EEEE')}</span>
                     <span className="text-xs text-[#555]">
-                      {hasEntry ? 'already planned' : format(day, 'MMM d')}
+                      {hasEntry ? 'already planned' : isPast ? 'already over' : format(day, 'MMM d')}
                     </span>
                   </button>
                 )
@@ -1088,8 +1194,14 @@ export default function PlanPage() {
 
       {/* Toast */}
       {toast && (
-        <div className="fixed bottom-24 md:bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 bg-[#1e1e1e] border border-[#333] rounded-full text-sm text-white shadow-xl animate-slide-up whitespace-nowrap">
-          {toast}
+        <div className="fixed bottom-24 md:bottom-6 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-3 px-4 py-2.5 bg-[#1e1e1e] border border-[#333] rounded-full text-sm text-white shadow-xl animate-slide-up whitespace-nowrap max-w-[calc(100vw-2rem)]">
+          <span className="truncate">{toast.msg}</span>
+          {toast.action && (
+            <button onClick={toast.action.onClick}
+              className="text-primary font-semibold hover:text-primary-hover transition-colors flex-shrink-0">
+              {toast.action.label}
+            </button>
+          )}
         </div>
       )}
     </div>
