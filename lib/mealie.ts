@@ -1,6 +1,7 @@
 import type { Ingredient, Instruction } from './db'
 import { getMealieConfig } from './config'
 import { normalizeIngredient, normalizeInstructions } from './ingredients'
+import { randomUUID } from 'crypto'
 
 export type MealieRecipe = {
   id: string
@@ -261,6 +262,62 @@ export async function importMealieRecipeFromUrl(url: string): Promise<string> {
     throw new Error('Mealie returned no recipe slug')
   }
   return slug.trim()
+}
+
+export type NewMealieRecipe = {
+  name: string
+  description?: string
+  ingredients?: string[]
+  instructions?: string[]
+  categoryName?: string
+}
+
+/**
+ * Create a recipe in Mealie from Vommeal. Mealie creates it with just a name
+ * (POST /recipes → slug); category, ingredient lines and steps are then set
+ * on the full recipe object and written back with PUT. Ingredient lines are
+ * stored as free-text notes, which is what Mealie does for unparsed lines.
+ * Returns the slug. If the second step fails the recipe still exists in
+ * Mealie with its name, so the error is logged and the slug returned.
+ */
+export async function createMealieRecipe(input: NewMealieRecipe): Promise<string> {
+  const slug = await mealieRequest<unknown>('POST', '/recipes', { name: input.name })
+  if (typeof slug !== 'string' || !slug.trim()) throw new Error('Mealie returned no recipe slug')
+  const cleanSlug = slug.trim()
+
+  const ingredients = (input.ingredients ?? []).map(l => l.trim()).filter(Boolean)
+  const steps = (input.instructions ?? []).map(l => l.trim()).filter(Boolean)
+  const categoryName = input.categoryName?.trim()
+  const description = input.description?.trim()
+  if (ingredients.length === 0 && steps.length === 0 && !categoryName && !description) return cleanSlug
+
+  try {
+    const recipe = await mealieRequest<Record<string, unknown>>('GET', `/recipes/${cleanSlug}`)
+    if (categoryName) {
+      const cats = await mealieGet<{ items?: { id: string; name: string; slug: string }[] }>(
+        '/organizers/categories?page=1&perPage=200'
+      )
+      const cat = cats.items?.find(c => c.name.toLowerCase() === categoryName.toLowerCase())
+      if (cat) recipe.recipeCategory = [{ id: cat.id, name: cat.name, slug: cat.slug }]
+    }
+    if (description) recipe.description = description
+    if (ingredients.length > 0) {
+      recipe.recipeIngredient = ingredients.map(line => ({
+        quantity: null, unit: null, food: null,
+        note: line, display: line, originalText: line,
+        referenceId: randomUUID(),
+      }))
+    }
+    if (steps.length > 0) {
+      recipe.recipeInstructions = steps.map(text => ({
+        id: randomUUID(), title: '', text, ingredientReferences: [],
+      }))
+    }
+    await mealieRequest('PUT', `/recipes/${cleanSlug}`, recipe)
+  } catch (e) {
+    console.error('[mealie create] details not saved for', cleanSlug, String(e))
+  }
+  return cleanSlug
 }
 
 export function getMealieRecipeUrl(slug: string): string {

@@ -32,6 +32,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
   const { id } = use(params)
   const router = useRouter()
   const isNew = id === 'new'
+  const [saveError, setSaveError] = useState('')
   const [mealieError, setMealieError] = useState<string | null>(null)
   const [recipe, setRecipe] = useState<Recipe>({
     id: '', name: '', description: '', tags: [], servings: 4,
@@ -60,17 +61,42 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
   const save = async () => {
     if (!recipe.name.trim()) return
     setSaving(true)
-    const method = isNew ? 'POST' : 'PUT'
-    const url = isNew ? '/api/recipes' : `/api/recipes/${id}`
-    const res = await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(recipe),
-    })
-    const saved = await res.json()
-    setSaving(false)
-    if (isNew) router.replace(`/recipes/${saved.id}`)
-    else { setRecipe(saved); setEditing(false) }
+    setSaveError('')
+    try {
+      // New recipes go to Mealie (with ingredient lines and steps); edits of
+      // existing recipes stay a local update as before.
+      const res = isNew
+        ? await fetch('/api/recipes/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: recipe.name,
+              description: recipe.description,
+              ingredients: recipe.ingredients
+                .map(i => [i.amount, i.unit, i.name].filter(Boolean).join(' ').trim())
+                .filter(Boolean),
+              instructions: recipe.instructions.map(i => i.text),
+            }),
+          })
+        : await fetch(`/api/recipes/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(recipe),
+          })
+      const saved = await res.json().catch(() => ({}))
+      if (!res.ok || !saved?.id) {
+        setSaveError(saved?.error || 'Speichern fehlgeschlagen')
+        return
+      }
+      if (isNew) {
+        track('recipe_create', { from: 'recipes', source: saved.source })
+        router.replace(`/recipes/${saved.id}`)
+      } else { setRecipe(saved); setEditing(false) }
+    } catch {
+      setSaveError('Speichern fehlgeschlagen')
+    } finally {
+      setSaving(false)
+    }
   }
 
   const del = async () => {
@@ -197,6 +223,13 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
       )}
 
       {/* Name */}
+      {saveError && (
+        <p role="alert" className="text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">{saveError}</p>
+      )}
+      {isNew && (
+        <p className="text-xs text-[#8f8f8f]">Neue Rezepte werden direkt in Mealie angelegt.</p>
+      )}
+
       {editing ? (
         <input
           value={recipe.name}

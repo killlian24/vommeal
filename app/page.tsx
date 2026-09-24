@@ -115,6 +115,7 @@ export default function PlanPage() {
   const [picker, setPicker] = useState<Picker | null>(null)
   const [search, setSearch] = useState('')
   const [customName, setCustomName] = useState('')
+  const [creatingRecipe, setCreatingRecipe] = useState(false)
   const [nextDayFree, setNextDayFree] = useState(false)
   const [addLeftovers, setAddLeftovers] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -333,7 +334,7 @@ export default function PlanPage() {
       body: JSON.stringify({ meal_type: 'dinner', servings: SERVINGS, status: 'approved', suggested_by: currentUser, ...body }),
     })
 
-  const planMeal = async (opts: { recipeId?: string; name?: string; quick?: boolean }) => {
+  const planMeal = async (opts: { recipeId?: string; name?: string; quick?: boolean; label?: string }) => {
     if (!picker || saving) return
     const { date, replaceId } = picker
     const name = opts.name ?? customName.trim()
@@ -356,8 +357,34 @@ export default function PlanPage() {
     setSaving(false)
     closePicker()
     refresh()
-    const label = opts.recipeId ? recipes.find(r => r.id === opts.recipeId)?.name || 'Rezept' : name
+    const label = opts.label || (opts.recipeId ? recipes.find(r => r.id === opts.recipeId)?.name || 'Rezept' : name)
     showToast(leftovers ? `${label} + Reste morgen` : `${fmt(parseISO(date), 'EEEE')}: ${label}`)
+  }
+
+  // Free text → new recipe in Mealie (dinner category), then planned like any recipe.
+  const createRecipeAndPlan = async () => {
+    const name = customName.trim()
+    if (!name || saving || creatingRecipe) return
+    setCreatingRecipe(true)
+    try {
+      const res = await fetch('/api/recipes/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data?.id) {
+        showToast(data?.error || 'Rezept konnte nicht angelegt werden')
+        return
+      }
+      setRecipes(prev => [...prev, data].sort((a, b) => a.name.localeCompare(b.name, 'de')))
+      track('recipe_create', { from: 'picker', source: data.source })
+      await planMeal({ recipeId: data.id, label: data.name })
+    } catch {
+      showToast('Rezept konnte nicht angelegt werden')
+    } finally {
+      setCreatingRecipe(false)
+    }
   }
 
   // ---- Plan actions ------------------------------------------------------
@@ -899,18 +926,27 @@ export default function PlanPage() {
                 ))}
               </div>
 
-              {/* Free text */}
-              <div className="flex gap-2">
-                <input placeholder="Eigenes Gericht…" value={customName}
+              {/* Free text: new recipe in Mealie (default) or just a note for the evening */}
+              <div className="space-y-2">
+                <input placeholder="Neues Gericht, z. B. Schnitzel…" value={customName}
                   onChange={e => setCustomName(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && customName.trim() && planMeal({})}
+                  onKeyDown={e => e.key === 'Enter' && customName.trim() && createRecipeAndPlan()}
                   enterKeyHint="done"
                   className="text-base min-h-[44px]" />
                 {customName.trim() && (
-                  <button onClick={() => planMeal({})} disabled={saving}
-                    className="min-h-[44px] px-4 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-semibold flex-shrink-0 transition-all disabled:opacity-50">
-                    Planen
-                  </button>
+                  <div className="flex gap-2">
+                    <button onClick={createRecipeAndPlan} disabled={saving || creatingRecipe}
+                      className="flex-1 min-h-[44px] px-3 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-50">
+                      {creatingRecipe ? 'Lege an…' : 'Als Rezept anlegen & planen'}
+                    </button>
+                    <button onClick={() => planMeal({})} disabled={saving || creatingRecipe}
+                      className="min-h-[44px] px-3 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm text-ink-soft flex-shrink-0 transition-all disabled:opacity-50">
+                      Nur Notiz
+                    </button>
+                  </div>
+                )}
+                {customName.trim() && (
+                  <p className="text-xs text-ink-hint">Das Rezept landet in Mealie. Zutaten und Schritte könnt ihr später dort ergänzen.</p>
                 )}
               </div>
 
