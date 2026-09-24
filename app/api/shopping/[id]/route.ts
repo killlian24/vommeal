@@ -9,14 +9,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   if (typeof body.category === 'string') {
     if (!CATEGORIES.includes(body.category)) {
-      return NextResponse.json({ error: 'invalid category' }, { status: 400 })
+      return NextResponse.json({ error: 'Unbekannte Kategorie' }, { status: 400 })
     }
     setShoppingItemCategory(id, body.category)
     return NextResponse.json({ ok: true, item: getShoppingItemById(id) })
   }
 
   const item = getShoppingItemById(id)
-  if (!item) return NextResponse.json({ error: 'not found' }, { status: 404 })
+  if (!item) return NextResponse.json({ error: 'Eintrag nicht gefunden' }, { status: 404 })
 
   // If this is an HA item being checked off, mark it done in HA/Keep too
   if (!item.checked && item.ha_uid) {
@@ -26,7 +26,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         await completeHAItem(config, item)
       } catch (error) {
         return NextResponse.json({
-          error: error instanceof Error ? error.message : 'could not complete Home Assistant item',
+          error: `Konnte in Home Assistant nicht abhaken${error instanceof Error ? `: ${error.message}` : ''}`,
         }, { status: 502 })
       }
     }
@@ -46,7 +46,7 @@ export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id:
         await removeActiveHAItemsForLocalItems(config, [item])
       } catch (error) {
         return NextResponse.json({
-          error: error instanceof Error ? error.message : 'could not remove Home Assistant item',
+          error: `Konnte in Home Assistant nicht entfernen${error instanceof Error ? `: ${error.message}` : ''}`,
         }, { status: 502 })
       }
     }

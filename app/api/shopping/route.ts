@@ -2,39 +2,116 @@ import { NextRequest, NextResponse } from 'next/server'
 import {
   getDb, getAllShoppingItems, addShoppingItem, clearCheckedItems, clearAllItems,
   getAllRecipes, getMealPlanRange, setShoppingItemHaUid, getShoppingItemById,
-  getAllPantryStaples, PantryStaple, ShoppingItem,
+  getAllPantryStaples, PantryStaple, ShoppingItem, Recipe, MealPlanEntry,
 } from '@/lib/db'
 import { getHomeAssistantConfig } from '@/lib/config'
 import { categorize } from '@/lib/categorize'
-import { scaleAmount } from '@/lib/quantities'
-import { removeActiveHAItemsForLocalItems } from '@/lib/ha'
+import { normalizeShoppingText, removeActiveHAItemsForLocalItems } from '@/lib/ha'
 import { randomUUID } from 'crypto'
-import { format } from 'date-fns'
+import { format, startOfWeek, addDays } from 'date-fns'
 
 type HATodoItem = { summary: string; uid: string; status: string }
 
-type ShoppingItemWithRecipe = ShoppingItem & { recipe_name: string | null }
+/** Where a shopping row came from: every recipe name and meal-plan entry it serves. */
+type Sources = { recipe_names: string[]; meal_plan_ids: string[] }
+
+/** What the API returns for a shopping row (sources always parsed to arrays). */
+type ShoppingItemOut = Omit<ShoppingItem, keyof Sources> & Sources
+
 type NewShoppingItem = Parameters<typeof addShoppingItem>[0]
+
+/** One ingredient to put on the list (from the plan or the review sheet). */
+type IngredientLine = { name: string; category: string } & Sources
+
+/** One ingredient in the review sheet ("Zutaten der Woche"). */
+type PreviewItem = IngredientLine & {
+  key: string
+  meals: { date: string; recipe_name: string }[]
+  /** new → pre-selected; staple → in Vorrat, deselected; on_list → already an unchecked row */
+  status: 'new' | 'staple' | 'on_list'
+}
+
 const VALID_SOURCES = new Set<ShoppingItem['source']>(['manual', 'meal_plan', 'ha'])
 
-/** Map meal_plan_id → recipe name for every shopping item that came from the plan. */
-function getRecipeNamesByPlanId(): Map<string, string> {
-  const rows = getDb().prepare(`
-    SELECT DISTINCT mp.id AS plan_id, r.name AS recipe_name
-    FROM shopping_list s
-    JOIN meal_plan mp ON mp.id = s.meal_plan_id
-    JOIN recipes r ON r.id = mp.recipe_id
-  `).all() as { plan_id: string; recipe_name: string }[]
-  return new Map(rows.map(r => [r.plan_id, r.recipe_name]))
+/** Recipes with fewer ingredients than this get a "kaum Zutaten" hint in the review. */
+const FEW_INGREDIENTS = 3
+
+// ---------------------------------------------------------------------------
+// Sources (recipe_names / meal_plan_ids JSON columns)
+// ---------------------------------------------------------------------------
+
+function parseStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((v): v is string => typeof v === 'string' && v.trim() !== '')
+  if (typeof value !== 'string' || !value.trim()) return []
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string' && v.trim() !== '') : []
+  } catch {
+    return []
+  }
 }
 
-function withRecipeNames(items: ShoppingItem[], names?: Map<string, string>): ShoppingItemWithRecipe[] {
-  const map = names ?? getRecipeNamesByPlanId()
-  return items.map(i => ({ ...i, recipe_name: i.meal_plan_id ? (map.get(i.meal_plan_id) ?? null) : null }))
+function union(a: string[], b: string[]): string[] {
+  return Array.from(new Set([...a, ...b]))
 }
+
+/** id → sources for every shopping row, with a fallback to the legacy meal_plan_id column. */
+function getSourcesById(): Map<string, Sources> {
+  const rows = getDb().prepare(`
+    SELECT s.id, s.recipe_names, s.meal_plan_ids, s.meal_plan_id, r.name AS legacy_recipe
+    FROM shopping_list s
+    LEFT JOIN meal_plan mp ON mp.id = s.meal_plan_id
+    LEFT JOIN recipes r ON r.id = mp.recipe_id
+  `).all() as { id: string; recipe_names: unknown; meal_plan_ids: unknown; meal_plan_id: string | null; legacy_recipe: string | null }[]
+  const map = new Map<string, Sources>()
+  for (const row of rows) {
+    let meal_plan_ids = parseStringArray(row.meal_plan_ids)
+    let recipe_names = parseStringArray(row.recipe_names)
+    if (meal_plan_ids.length === 0 && row.meal_plan_id) meal_plan_ids = [row.meal_plan_id]
+    if (recipe_names.length === 0 && row.legacy_recipe) recipe_names = [row.legacy_recipe]
+    map.set(row.id, { recipe_names, meal_plan_ids })
+  }
+  return map
+}
+
+function setSources(id: string, sources: Sources) {
+  getDb().prepare(`
+    UPDATE shopping_list SET recipe_names = ?, meal_plan_ids = ?, updated_at = datetime('now') WHERE id = ?
+  `).run(JSON.stringify(sources.recipe_names), JSON.stringify(sources.meal_plan_ids), id)
+}
+
+function withSources(items: ShoppingItem[], sources = getSourcesById()): ShoppingItemOut[] {
+  return items.map(item => ({
+    ...item,
+    ...(sources.get(item.id) ?? { recipe_names: [], meal_plan_ids: [] }),
+  }))
+}
+
+/** Every meal-plan entry that already contributed to any row (checked or not). */
+function planIdsOnList(sources = getSourcesById()): Set<string> {
+  const ids = new Set<string>()
+  sources.forEach(s => s.meal_plan_ids.forEach(id => ids.add(id)))
+  return ids
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 function todayStr(): string {
   return format(new Date(), 'yyyy-MM-dd')
+}
+
+/** Sunday of next week (weeks start on Monday). */
+function endOfNextWeekStr(): string {
+  return format(addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), 13), 'yyyy-MM-dd')
+}
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
+/** Merge key for an ingredient / shopping row name. */
+function mergeKey(name: string): string {
+  return normalizeShoppingText(name)
 }
 
 /**
@@ -43,24 +120,29 @@ function todayStr(): string {
  * item from Home Assistant, so a restored item must come back untracked and be re-pushed by the
  * next Sync.
  */
-function buildItemFromBody(raw: unknown): NewShoppingItem | null {
+function buildItemFromBody(raw: unknown): { item: NewShoppingItem; sources: Sources } | null {
   if (!raw || typeof raw !== 'object') return null
   const b = raw as Record<string, unknown>
   const name = typeof b.name === 'string' ? b.name.trim() : ''
   if (!name) return null
   const source = VALID_SOURCES.has(b.source as ShoppingItem['source']) ? b.source as ShoppingItem['source'] : 'manual'
   const str = (v: unknown) => (typeof v === 'string' ? v : v == null ? '' : String(v)).trim()
+  const meal_plan_id = typeof b.meal_plan_id === 'string' && b.meal_plan_id ? b.meal_plan_id : null
+  const meal_plan_ids = union(parseStringArray(b.meal_plan_ids), meal_plan_id ? [meal_plan_id] : [])
   return {
-    id: typeof b.id === 'string' && b.id.trim() ? b.id.trim() : randomUUID(),
-    name,
-    amount: str(b.amount),
-    unit: str(b.unit),
-    category: str(b.category) || categorize(name),
-    checked: b.checked === true || b.checked === 1 || b.checked === 'true',
-    source,
-    meal_plan_id: typeof b.meal_plan_id === 'string' && b.meal_plan_id ? b.meal_plan_id : null,
-    ha_uid: null,
-    sort_order: typeof b.sort_order === 'number' && Number.isFinite(b.sort_order) ? b.sort_order : 999,
+    item: {
+      id: typeof b.id === 'string' && b.id.trim() ? b.id.trim() : randomUUID(),
+      name,
+      amount: str(b.amount),
+      unit: str(b.unit),
+      category: str(b.category) || categorize(name),
+      checked: b.checked === true || b.checked === 1 || b.checked === 'true',
+      source,
+      meal_plan_id: meal_plan_id ?? meal_plan_ids[0] ?? null,
+      ha_uid: null,
+      sort_order: typeof b.sort_order === 'number' && Number.isFinite(b.sort_order) ? b.sort_order : 999,
+    },
+    sources: { recipe_names: parseStringArray(b.recipe_names), meal_plan_ids },
   }
 }
 
@@ -139,12 +221,156 @@ function buildStapleSet(staples: PantryStaple[]): Set<string> {
   const result = new Set<string>()
   for (const s of staples) {
     const key = s.name.toLowerCase().trim()
-    result.add(key)
-    for (const alias of (STAPLE_ALIASES[key] ?? [])) {
-      result.add(alias.toLowerCase().trim())
+    const names = [key, ...(STAPLE_ALIASES[key] ?? [])]
+    for (const name of names) {
+      result.add(name.toLowerCase().trim())
+      result.add(mergeKey(name))
     }
   }
   return result
+}
+
+function isStaple(name: string, staples: Set<string>): boolean {
+  return staples.has(name.toLowerCase().trim()) || staples.has(mergeKey(name))
+}
+
+function isAlwaysSkipped(name: string): boolean {
+  return ALWAYS_SKIP.has(name.toLowerCase().trim())
+}
+
+// ---------------------------------------------------------------------------
+// Collecting ingredients from the plan and merging them into the list
+// ---------------------------------------------------------------------------
+
+type Collected = {
+  lines: Map<string, IngredientLine & { meals: { date: string; recipe_name: string }[] }>
+  hints: { recipe_name: string; count: number }[]
+  meals: number
+  skipped_meals: number
+}
+
+/**
+ * Walk planned recipe meals (entries with a custom_meal_name or no recipe add nothing) and merge
+ * their ingredients by normalized name — no amounts. Meal-plan entries already recorded on any
+ * shopping row are skipped entirely so a meal never lands on the list twice.
+ */
+function collectFromPlan(entries: MealPlanEntry[], recipes: Map<string, Recipe>, onList: Set<string>): Collected {
+  const lines: Collected['lines'] = new Map()
+  const hints = new Map<string, { recipe_name: string; count: number }>()
+  let meals = 0
+  let skipped_meals = 0
+
+  for (const entry of entries) {
+    if (!entry.recipe_id || entry.custom_meal_name) continue
+    const recipe = recipes.get(entry.recipe_id)
+    if (!recipe) continue
+    if (onList.has(entry.id)) { skipped_meals++; continue }
+    meals++
+
+    const named = recipe.ingredients.filter(ing => ing.name?.trim())
+    if (named.length < FEW_INGREDIENTS && !hints.has(recipe.id)) {
+      hints.set(recipe.id, { recipe_name: recipe.name, count: named.length })
+    }
+
+    for (const ing of named) {
+      const name = ing.name.trim()
+      if (isAlwaysSkipped(name)) continue
+      const key = mergeKey(name)
+      if (!key) continue
+      const line = lines.get(key) ?? {
+        name, category: categorize(name), recipe_names: [], meal_plan_ids: [], meals: [],
+      }
+      line.recipe_names = union(line.recipe_names, [recipe.name])
+      line.meal_plan_ids = union(line.meal_plan_ids, [entry.id])
+      if (!line.meals.some(m => m.date === entry.date && m.recipe_name === recipe.name)) {
+        line.meals.push({ date: entry.date, recipe_name: recipe.name })
+      }
+      lines.set(key, line)
+    }
+  }
+  return { lines, hints: Array.from(hints.values()), meals, skipped_meals }
+}
+
+/** Unchecked rows keyed by normalized name (first row wins). */
+function uncheckedByKey(items: ShoppingItem[]): Map<string, ShoppingItem> {
+  const map = new Map<string, ShoppingItem>()
+  for (const item of items) {
+    if (item.checked) continue
+    const key = mergeKey(item.name)
+    if (key && !map.has(key)) map.set(key, item)
+  }
+  return map
+}
+
+/**
+ * Put ingredient lines on the list: one row per ingredient. A line whose name matches an unchecked
+ * row is merged into it (sources appended, amount untouched); anything else becomes a new row
+ * without amount or unit.
+ */
+function mergeIntoList(lines: IngredientLine[]): { added: ShoppingItemOut[]; merged: ShoppingItemOut[] } {
+  const db = getDb()
+  return db.transaction(() => {
+    const sources = getSourcesById()
+    const existing = uncheckedByKey(getAllShoppingItems())
+    const touched = new Map<string, { item: ShoppingItem; sources: Sources; isNew: boolean }>()
+    let order = 0
+
+    for (const line of lines) {
+      const name = line.name.trim()
+      const key = mergeKey(name)
+      if (!key) continue
+      const lineSources: Sources = {
+        recipe_names: union([], line.recipe_names),
+        meal_plan_ids: union([], line.meal_plan_ids),
+      }
+      const hit = existing.get(key)
+      if (hit) {
+        const prev = touched.get(hit.id)?.sources ?? sources.get(hit.id) ?? { recipe_names: [], meal_plan_ids: [] }
+        const next: Sources = {
+          recipe_names: union(prev.recipe_names, lineSources.recipe_names),
+          meal_plan_ids: union(prev.meal_plan_ids, lineSources.meal_plan_ids),
+        }
+        setSources(hit.id, next)
+        touched.set(hit.id, { item: hit, sources: next, isNew: touched.get(hit.id)?.isNew ?? false })
+        continue
+      }
+      const item = addShoppingItem({
+        id: randomUUID(),
+        name,
+        amount: '',
+        unit: '',
+        category: line.category && line.category.trim() ? line.category.trim() : categorize(name),
+        checked: false,
+        source: 'meal_plan',
+        meal_plan_id: lineSources.meal_plan_ids[0] ?? null,
+        ha_uid: null,
+        sort_order: order++,
+      })
+      setSources(item.id, lineSources)
+      existing.set(key, item)
+      touched.set(item.id, { item, sources: lineSources, isNew: true })
+    }
+
+    const added: ShoppingItemOut[] = []
+    const merged: ShoppingItemOut[] = []
+    touched.forEach(({ item, sources: s, isNew }) => {
+      const out = { ...item, ...s } as ShoppingItemOut
+      ;(isNew ? added : merged).push(out)
+    })
+    return { added, merged }
+  })()
+}
+
+/** Plan lines minus pantry staples — what generate / add_date put on the list directly. */
+function linesWithoutStaples(collected: Collected): IngredientLine[] {
+  const staples = buildStapleSet(getAllPantryStaples())
+  return Array.from(collected.lines.values())
+    .filter(line => !isStaple(line.name, staples))
+    .map(({ name, category, recipe_names, meal_plan_ids }) => ({ name, category, recipe_names, meal_plan_ids }))
+}
+
+function recipeMap(): Map<string, Recipe> {
+  return new Map(getAllRecipes().map(r => [r.id, r]))
 }
 
 async function pushToHAAndTrack(items: { localId: string; name: string }[]) {
@@ -180,65 +406,106 @@ async function pushToHAAndTrack(items: { localId: string; name: string }[]) {
   } catch { /* best-effort uid tracking */ }
 }
 
+function haErrorMessage(error: unknown, fallback: string): string {
+  const detail = error instanceof Error ? error.message : ''
+  return detail ? `${fallback}: ${detail}` : fallback
+}
+
+// ---------------------------------------------------------------------------
+// Routes
+// ---------------------------------------------------------------------------
+
 export async function GET() {
-  return NextResponse.json(withRecipeNames(getAllShoppingItems()))
+  return NextResponse.json(withSources(getAllShoppingItems()))
 }
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null)
-  if (!body || typeof body !== 'object') return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 })
+  if (!body || typeof body !== 'object') return NextResponse.json({ error: 'Ungültige Anfrage (kein JSON)' }, { status: 400 })
 
-  // Bulk generate from meal plan date range
+  // Review data for "Zutaten der Woche" — reads only, never writes.
+  if (body.action === 'preview') {
+    const today = todayStr()
+    const rawStart = typeof body.start === 'string' && DATE_RE.test(body.start) ? body.start : today
+    const end = typeof body.end === 'string' && DATE_RE.test(body.end) ? body.end : endOfNextWeekStr()
+    const start = rawStart < today ? today : rawStart
+    const ha_configured = !!getHomeAssistantConfig()
+    if (start > end) {
+      return NextResponse.json({ ok: true, start, end, ha_configured, items: [], hints: [], meals: 0, skipped_meals: 0 })
+    }
+
+    const sources = getSourcesById()
+    const collected = collectFromPlan(getMealPlanRange(start, end), recipeMap(), planIdsOnList(sources))
+    const staples = buildStapleSet(getAllPantryStaples())
+    const onList = uncheckedByKey(getAllShoppingItems())
+
+    const items: PreviewItem[] = Array.from(collected.lines.entries()).map(([key, line]) => ({
+      key,
+      ...line,
+      status: onList.has(key) ? 'on_list' : isStaple(line.name, staples) ? 'staple' : 'new',
+    }))
+    items.sort((a, b) => a.name.localeCompare(b.name, 'de'))
+
+    return NextResponse.json({
+      ok: true, start, end, ha_configured, items,
+      hints: collected.hints, meals: collected.meals, skipped_meals: collected.skipped_meals,
+    })
+  }
+
+  // Commit the reviewed selection. Lines matching an unchecked row are merged into it.
+  if (body.action === 'add_selected') {
+    const incoming: unknown[] = Array.isArray(body.items) ? body.items : []
+    const lines: IngredientLine[] = []
+    for (const raw of incoming) {
+      if (!raw || typeof raw !== 'object') continue
+      const r = raw as Record<string, unknown>
+      const name = typeof r.name === 'string' ? r.name.trim().slice(0, 200) : ''
+      if (!name) continue
+      lines.push({
+        name,
+        category: typeof r.category === 'string' ? r.category : '',
+        recipe_names: parseStringArray(r.recipe_names),
+        meal_plan_ids: parseStringArray(r.meal_plan_ids),
+      })
+    }
+    const { added, merged } = mergeIntoList(lines)
+    return NextResponse.json({
+      ok: true, added: added.length, merged: merged.length, items: [...added, ...merged],
+      ha_configured: !!getHomeAssistantConfig(),
+    })
+  }
+
+  // Bulk generate from a meal plan date range (the plan page) — same no-amount merge.
   if (body.action === 'generate') {
     const { start, end } = body
-    if (!start || !end) return NextResponse.json({ error: 'start and end required' }, { status: 400 })
+    if (!start || !end) return NextResponse.json({ error: 'Start- und Enddatum fehlen' }, { status: 400 })
 
     // Never add ingredients for days that are already over
     const today = todayStr()
     const effectiveStart = start < today ? today : start
     if (effectiveStart > end) return NextResponse.json({ ok: true, added: 0, items: [], start: effectiveStart, end })
 
-    const entries = getMealPlanRange(effectiveStart, end)
-    const recipes = getAllRecipes()
-    const recipeMap = new Map(recipes.map(r => [r.id, r]))
+    const collected = collectFromPlan(getMealPlanRange(effectiveStart, end), recipeMap(), planIdsOnList())
+    const { added, merged } = mergeIntoList(linesWithoutStaples(collected))
+    // Don't push to HA here — the Sync button pushes remaining unchecked items.
+    return NextResponse.json({ ok: true, added: added.length, merged: merged.length, items: added, start: effectiveStart, end })
+  }
 
-    // Skip meal plan entries whose ingredients are already in the list
-    const existing = getAllShoppingItems()
-    const alreadyAddedPlanIds = new Set(existing.map(i => i.meal_plan_id).filter(Boolean))
+  // Add ingredients for a single date (Heute / Tonight)
+  if (body.action === 'add_date') {
+    const { date } = body
+    if (!date) return NextResponse.json({ error: 'Datum fehlt' }, { status: 400 })
 
-    // Skip pantry staples (bilingual-aware)
-    const stapleNames = buildStapleSet(getAllPantryStaples())
-
-    const items: ShoppingItemWithRecipe[] = []
-    for (const entry of entries) {
-      if (!entry.recipe_id) continue
-      if (alreadyAddedPlanIds.has(entry.id)) continue  // already generated for this day
-      const recipe = recipeMap.get(entry.recipe_id)
-      if (!recipe) continue
-
-      const scale = entry.servings / (recipe.servings || 1)
-      for (const ing of recipe.ingredients) {
-        if (!ing.name) continue
-        if (ALWAYS_SKIP.has(ing.name.toLowerCase().trim())) continue
-        if (stapleNames.has(ing.name.toLowerCase().trim())) continue
-        const added = addShoppingItem({
-          id: randomUUID(),
-          name: ing.name,
-          amount: scaleAmount(ing.amount, ing.unit, scale),
-          unit: ing.unit,
-          category: categorize(ing.name),
-          checked: false,
-          source: 'meal_plan',
-          meal_plan_id: entry.id,
-          ha_uid: null,
-          sort_order: items.length,
-        })
-        items.push({ ...added, recipe_name: recipe.name })
-      }
-    }
-    // Don't push to HA here — let the user review and check off what they have,
-    // then the Sync button will push remaining unchecked items to HA.
-    return NextResponse.json({ ok: true, added: items.length, items, start: effectiveStart, end })
+    const recipes = recipeMap()
+    const entries = getMealPlanRange(date, date)
+    const entry = entries.find(e => e.recipe_id && !e.custom_meal_name)
+    if (!entry) return NextResponse.json({ ok: true, added: 0 })
+    const recipe = recipes.get(entry.recipe_id as string)
+    const collected = collectFromPlan([entry], recipes, planIdsOnList())
+    const { added, merged } = mergeIntoList(linesWithoutStaples(collected))
+    return NextResponse.json({
+      ok: true, added: added.length, merged: merged.length, items: added, recipe_name: recipe?.name ?? null,
+    })
   }
 
   if (body.action === 'clear_checked') {
@@ -249,7 +516,7 @@ export async function POST(req: NextRequest) {
         await removeActiveHAItemsForLocalItems(config, checked)
       } catch (error) {
         return NextResponse.json({
-          error: error instanceof Error ? error.message : 'could not remove Home Assistant items',
+          error: haErrorMessage(error, 'Home Assistant nicht erreichbar'),
         }, { status: 502 })
       }
     }
@@ -265,53 +532,12 @@ export async function POST(req: NextRequest) {
         await removeActiveHAItemsForLocalItems(config, activeHaItems)
       } catch (error) {
         return NextResponse.json({
-          error: error instanceof Error ? error.message : 'could not remove Home Assistant items',
+          error: haErrorMessage(error, 'Home Assistant nicht erreichbar'),
         }, { status: 502 })
       }
     }
     clearAllItems()
     return NextResponse.json({ ok: true })
-  }
-
-  // Add ingredients for a single date (Tonight only)
-  if (body.action === 'add_date') {
-    const { date } = body
-    if (!date) return NextResponse.json({ error: 'date required' }, { status: 400 })
-
-    const entries = getMealPlanRange(date, date)
-    const entry = entries[0]
-    if (!entry?.recipe_id) return NextResponse.json({ ok: true, added: 0 })
-    const existing = getAllShoppingItems()
-    const alreadyAddedPlanIds = new Set(existing.map(i => i.meal_plan_id).filter(Boolean))
-    if (alreadyAddedPlanIds.has(entry.id)) return NextResponse.json({ ok: true, added: 0 })
-
-    const recipes = getAllRecipes()
-    const recipe = recipes.find(r => r.id === entry.recipe_id)
-    if (!recipe) return NextResponse.json({ ok: true, added: 0 })
-
-    const stapleNames = buildStapleSet(getAllPantryStaples())
-    const scale = entry.servings / (recipe.servings || 1)
-    const items: ShoppingItemWithRecipe[] = []
-
-    for (const ing of recipe.ingredients) {
-      if (!ing.name) continue
-      if (ALWAYS_SKIP.has(ing.name.toLowerCase().trim())) continue
-      if (stapleNames.has(ing.name.toLowerCase().trim())) continue
-      const added = addShoppingItem({
-        id: randomUUID(),
-        name: ing.name,
-        amount: scaleAmount(ing.amount, ing.unit, scale),
-        unit: ing.unit,
-        category: categorize(ing.name),
-        checked: false,
-        source: 'meal_plan',
-        meal_plan_id: entry.id,
-        ha_uid: null,
-        sort_order: 999,
-      })
-      items.push({ ...added, recipe_name: recipe.name })
-    }
-    return NextResponse.json({ ok: true, added: items.length, items, recipe_name: recipe.name })
   }
 
   // Restore previously deleted items as they were (undo for delete / clear checked).
@@ -320,33 +546,35 @@ export async function POST(req: NextRequest) {
     const incoming: unknown[] = Array.isArray(body.items) ? body.items : []
     const restored: ShoppingItem[] = []
     for (const raw of incoming) {
-      const item = buildItemFromBody(raw)
-      if (!item) continue
-      if (getShoppingItemById(item.id)) continue
+      const built = buildItemFromBody(raw)
+      if (!built) continue
+      if (getShoppingItemById(built.item.id)) continue
       try {
-        restored.push(addShoppingItem(item))
+        restored.push(addShoppingItem(built.item))
+        setSources(built.item.id, built.sources)
       } catch { /* id already exists (race) — skip */ }
     }
-    return NextResponse.json({ ok: true, restored: restored.length, items: withRecipeNames(restored) })
+    return NextResponse.json({ ok: true, restored: restored.length, items: withSources(restored) })
   }
 
   // Add single item (optional id/category/source/meal_plan_id/checked let a
   // deleted item be re-created as it was)
   const single = buildItemFromBody(body)
-  if (!single) return NextResponse.json({ error: 'name required' }, { status: 400 })
-  if (getShoppingItemById(single.id)) {
-    return NextResponse.json({ error: 'item with this id already exists' }, { status: 409 })
+  if (!single) return NextResponse.json({ error: 'Name fehlt' }, { status: 400 })
+  if (getShoppingItemById(single.item.id)) {
+    return NextResponse.json({ error: 'Eintrag existiert bereits' }, { status: 409 })
   }
   let item: ShoppingItem
   try {
-    item = addShoppingItem(single)
+    item = addShoppingItem(single.item)
+    setSources(item.id, single.sources)
   } catch {
-    return NextResponse.json({ error: 'item with this id already exists' }, { status: 409 })
+    return NextResponse.json({ error: 'Eintrag existiert bereits' }, { status: 409 })
   }
   // Only unchecked manual items get pushed to HA right away; everything else is
   // picked up by the next Sync.
   if (item.source === 'manual' && !item.checked) {
     await pushToHAAndTrack([{ localId: item.id, name: [item.amount, item.unit, item.name].filter(Boolean).join(' ') }])
   }
-  return NextResponse.json(withRecipeNames([item])[0], { status: 201 })
+  return NextResponse.json(withSources([item])[0], { status: 201 })
 }
