@@ -45,6 +45,7 @@ const PARTICIPLE_RE = /\bgehackt(e[nr]?)?\b/g
 
 export const BUILT_IN_CATEGORY_KEYWORDS: Record<CategoryId, string[]> = {
   produce: [
+    'banane', 'bananen', 'clementine', 'traube', 'blaubeere', 'beere', 'wassermelone', 'honigmelone', 'limone', 'cherrytomate', 'datteltomate', 'babyspinat', 'lollo', 'romanasalat', 'pak choi', 'süßkartoffel',
     'tomato', 'onion', 'garlic', 'lettuce', 'spinach', 'carrot', 'potato', 'sweet potato',
     'apple', 'banana', 'lemon', 'lime', 'orange', 'pear', 'peach', 'plum', 'cherry',
     'mango', 'pineapple', 'melon', 'watermelon', 'kiwi', 'fig', 'apricot', 'nectarine',
@@ -88,6 +89,7 @@ export const BUILT_IN_CATEGORY_KEYWORDS: Record<CategoryId, string[]> = {
     'timian', 'mynte', 'dild', 'salvie', 'merian', 'laurbær',
   ],
   meat: [
+    'leberkäse', 'fleischkäse', 'gulasch', 'kassler', 'kasseler', 'frikadelle', 'hackbällchen', 'geschnetzeltes', 'gyros', 'döner', 'roastbeef', 'cevapcici', 'hähnchenkeule', 'chicken nuggets', 'nuggets',
     'chicken', 'beef', 'pork', 'lamb', 'turkey', 'duck', 'veal', 'venison',
     'rabbit', 'fish', 'salmon', 'tuna', 'cod', 'trout', 'herring', 'mackerel',
     'sea bass', 'shrimp', 'prawn', 'crab', 'lobster', 'mussel', 'squid',
@@ -116,6 +118,7 @@ export const BUILT_IN_CATEGORY_KEYWORDS: Record<CategoryId, string[]> = {
     'blæksprutte', 'ansjos', 'skaldyr', 'pølse', 'skinke',
   ],
   dairy: [
+    'burrata', 'pecorino', 'gorgonzola', 'manchego', 'provolone', 'stracciatella', 'hafermilch', 'sojamilch', 'mandelmilch', 'reismilch', 'haferdrink', 'sojadrink', 'pudding', 'grießbrei', 'milchreis',
     'milk', 'cream', 'cheese', 'butter', 'yogurt', 'yoghurt', 'eggs', 'egg',
     'mozzarella', 'parmesan', 'cheddar', 'brie', 'camembert', 'feta', 'gouda',
     'emmental', 'ricotta', 'mascarpone', 'halloumi', 'sour cream',
@@ -132,6 +135,7 @@ export const BUILT_IN_CATEGORY_KEYWORDS: Record<CategoryId, string[]> = {
     'friskost', 'hytteost', 'flødeost', 'smør', 'yoghurt', 'æg',
   ],
   bakery: [
+    'toast', 'lasagneplatten', 'cannelloni', 'ravioli', 'tagliatelle',
     'bread', 'bun', 'roll', 'pasta', 'noodle', 'rice noodle', 'lasagne',
     'spaghetti', 'penne', 'fusilli', 'tagliatelle', 'tortilla', 'wrap', 'pita',
     'bagel', 'croissant', 'cake', 'pastry', 'dough', 'tart', 'waffle',
@@ -151,6 +155,7 @@ export const BUILT_IN_CATEGORY_KEYWORDS: Record<CategoryId, string[]> = {
     'stivelse', 'kartoffelmel', 'gryn', 'surdej',
   ],
   pantry: [
+    'passata', 'pizzatomaten', 'stückige tomaten', 'zitronensaft', 'chips', 'gummibärchen', 'süßigkeiten', 'snacks', 'cracker', 'salzstangen', 'popcorn', 'erdnussflips', 'müsliriegel', 'studentenfutter', 'brühwürfel',
     ...EARLY_PANTRY_KEYWORDS,
     'oil', 'olive oil', 'sunflower oil', 'rapeseed oil', 'sesame oil',
     'coconut oil', 'vinegar', 'balsamic vinegar', 'apple cider vinegar',
@@ -201,6 +206,7 @@ export const BUILT_IN_CATEGORY_KEYWORDS: Record<CategoryId, string[]> = {
     'solsikkekerner', 'græskarkerne', 'græskarkerner', 'hørfrø', 'chiafrø',
   ],
   frozen: [
+    'pizza', 'tiefkühlpizza', 'pommes', 'fischstäbchen', 'rahmspinat', 'kroketten', 'eis', 'speiseeis', 'gemüsepfanne',
     // 'tk' is a whole-word match ("TK Erbsen", "Himbeeren (TK)"); 'eis' is
     // omitted because it is a substring of 'fleisch'.
     'frozen', 'gefroren', 'tiefkühl', 'tiefgefroren', 'tiefgekühlt', 'tk',
@@ -210,6 +216,7 @@ export const BUILT_IN_CATEGORY_KEYWORDS: Record<CategoryId, string[]> = {
     'isterning', 'isterninger',
   ],
   beverages: [
+    'limo', 'spezi', 'eistee', 'schorle', 'apfelschorle', 'sprite', 'fanta', 'energy', 'kokoswasser',
     'water', 'sparkling water', 'juice', 'wine', 'beer', 'soda', 'lemonade',
     'coffee', 'tea', 'smoothie', 'energy drink', 'coconut water',
     'apple juice', 'orange juice', 'grape juice', 'espresso', 'cappuccino',
@@ -223,10 +230,32 @@ export const BUILT_IN_CATEGORY_KEYWORDS: Record<CategoryId, string[]> = {
     'druesaft', 'vin', 'rødvin', 'hvidvin', 'øl', 'sodavand', 'kaffe', 'te',
     'energidrik',
   ],
-  other: [],
+  // Household and drugstore items. They stay in 'other' (Sonstiges) but must
+  // not fall into a food category via substrings (Zahnpasta → pasta,
+  // Küchenrolle → roll, Alufolie → Danish 'olie', Spülmaschinensalz → salz).
+  other: [
+    'klopapier', 'toilettenpapier', 'küchenrolle', 'küchenpapier', 'taschentücher',
+    'servietten', 'spülmittel', 'geschirrspülmittel', 'spülmaschinentabs', 'klarspüler',
+    'spülmaschinensalz', 'waschmittel', 'weichspüler', 'müllbeutel', 'müllsäcke',
+    'zahnpasta', 'zahncreme', 'zahnbürste', 'zahnseide', 'zahnstocher', 'shampoo',
+    'duschgel', 'seife', 'handseife', 'deo', 'deodorant', 'rasierer', 'backpapier',
+    'alufolie', 'frischhaltefolie', 'gefrierbeutel', 'schwamm', 'schwämme', 'putzmittel',
+    'reiniger', 'allzweckreiniger', 'windeln', 'feuchttücher', 'katzenfutter',
+    'hundefutter', 'katzenstreu', 'batterien', 'kerzen', 'glühbirne',
+    'toilet paper', 'paper towel', 'dish soap', 'detergent', 'toothpaste',
+  ],
 }
 
-const CATEGORY_PRIORITY: CategoryId[] = ['pantry', 'frozen', 'beverages', 'produce', 'bakery', 'meat', 'dairy']
+// Tie-breaker only: the longest (most specific) matching keyword wins first,
+// so 'erdbeere' beats beverages' 'beer' and 'rucola' beats 'cola'.
+const CATEGORY_PRIORITY: CategoryId[] = ['pantry', 'frozen', 'beverages', 'produce', 'bakery', 'meat', 'dairy', 'other']
+
+// Markers that decide the category regardless of the food named, checked in
+// this order before the longest-match pass: "Himbeeren (TK)" is frozen,
+// "Tomaten (Dose)" is pantry, "Karottensaft" is a drink.
+const FROZEN_MARKERS = ['tk', 'tiefkühl', 'tiefgefroren', 'tiefgekühlt', 'gefroren', 'frozen', 'frossen', 'frosne', 'dybfrost']
+const CANNED_MARKERS = ['dose', 'dosen', 'glas', 'gläser', 'konserve', 'konserven', 'canned', 'tinned', 'can', 'tin', 'jar', 'dåse']
+const DRINK_MARKERS = ['saft', 'juice', 'smoothie', 'schorle']
 const WHOLE_WORD_MAX_LENGTH = 3
 
 export function normalizeCategoryText(value: string): string {
@@ -262,6 +291,21 @@ function findInRules(normalizedName: string, rules: CategoryKeywordMap, priority
   return null
 }
 
+/** Longest matching keyword across all categories wins; priority breaks ties. */
+function findLongestInRules(normalizedName: string, rules: CategoryKeywordMap, priority: CategoryId[]): CategoryId | null {
+  let best: { category: CategoryId; length: number; rank: number } | null = null
+  priority.forEach((category, rank) => {
+    for (const keyword of rules[category] ?? []) {
+      if (!matchesKeyword(normalizedName, keyword)) continue
+      const length = normalizeCategoryText(keyword).length
+      if (!best || length > best.length || (length === best.length && rank < best.rank)) {
+        best = { category, length, rank }
+      }
+    }
+  })
+  return best ? (best as { category: CategoryId }).category : null
+}
+
 export function sanitizeCustomCategoryKeywords(raw: unknown): CategoryKeywordMap {
   if (!raw || typeof raw !== 'object') return {}
   const out: CategoryKeywordMap = {}
@@ -286,8 +330,13 @@ export function categorizeWithRules(name: string, customRules: CategoryKeywordMa
 
   const builtInName = normalizedName.replace(PARTICIPLE_RE, ' ').replace(/\s+/g, ' ').trim()
   if (!builtInName) return 'other'
-  if (FRESH_PRODUCE_KEYWORDS.some(keyword => matchesKeyword(builtInName, keyword))) return 'produce'
+  const has = (keywords: string[]) => keywords.some(keyword => matchesKeyword(builtInName, keyword))
+  if (has(FROZEN_MARKERS)) return 'frozen'
+  if (has(CANNED_MARKERS)) return 'pantry'
+  if (has(DRINK_MARKERS)) return 'beverages'
+  if (has(EARLY_PANTRY_KEYWORDS)) return 'pantry'
+  if (has(FRESH_PRODUCE_KEYWORDS)) return 'produce'
 
-  const builtInMatch = findInRules(builtInName, BUILT_IN_CATEGORY_KEYWORDS, CATEGORY_PRIORITY)
+  const builtInMatch = findLongestInRules(builtInName, BUILT_IN_CATEGORY_KEYWORDS, CATEGORY_PRIORITY)
   return builtInMatch ?? 'other'
 }

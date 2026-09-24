@@ -26,7 +26,7 @@ const cases: Array<[string, string]> = [
   ['æblejuice', 'beverages'],
   ['ras el hanout', 'pantry'],
   ['random mystery item', 'other'],
-  ['chips and dip', 'other'],
+  ['chips and dip', 'pantry'],
 ]
 
 for (const [name, expected] of cases) {

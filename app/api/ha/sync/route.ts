@@ -203,7 +203,8 @@ export async function POST() {
     }
 
     for (const local of getAllShoppingItems()) {
-      if (local.category === 'other' && (local.source === 'ha' || local.ha_uid)) {
+      // Re-check everything still in 'other' so improved rules (e.g. Banane) apply to existing items too
+      if (local.category === 'other' && !local.checked) {
         const category = categorize(local.name)
         if (category !== 'other') {
           setShoppingItemCategory(local.id, category)

@@ -20,7 +20,7 @@ describe('categorizeWithRules – cases from scripts/check-category-rules.ts', (
       'frozen peas': 'frozen', tiefkühlgemüse: 'frozen', 'frosne ærter': 'frozen',
       'apple juice': 'beverages', Apfelsaft: 'beverages', æblejuice: 'beverages',
       'ras el hanout': 'pantry',
-      'random mystery item': 'other', 'chips and dip': 'other',
+      'random mystery item': 'other', 'chips and dip': 'pantry',
     })
   })
 
@@ -176,5 +176,37 @@ describe('categorizeWithRules – existing behaviour is preserved', () => {
   })
   it('other', () => {
     expectAll({ Backpapier: 'other', Zahnstocher: 'other', '': 'other', '   ': 'other' })
+  })
+})
+
+describe('categorizeWithRules – longest match beats category order (2026-09 review)', () => {
+  it('keeps fruit and salad out of beverages', () => {
+    expectAll({
+      Banane: 'produce', Bananen: 'produce', Clementinen: 'produce', Trauben: 'produce',
+      Erdbeeren: 'produce', Blaubeeren: 'produce', Beeren: 'produce', Preiselbeeren: 'produce',
+      Wassermelone: 'produce', Rucola: 'produce',
+    })
+  })
+  it('lets markers decide before the food name', () => {
+    expectAll({
+      'Himbeeren (TK)': 'frozen', 'Tomaten (Dose)': 'pantry', 'Mais (Dose)': 'pantry',
+      Karottensaft: 'beverages', Orangensaft: 'beverages', Gemüsebrühe: 'pantry',
+      'getrocknete Tomaten': 'pantry', 'grüne Bohnen': 'produce', Glasnudeln: 'bakery',
+    })
+  })
+  it('recognises common German groceries that used to land in other', () => {
+    expectAll({
+      Burrata: 'dairy', Leberkäse: 'meat', Gulasch: 'meat', Kassler: 'meat', Toast: 'bakery',
+      Lasagneplatten: 'bakery', Passata: 'pantry', Chips: 'pantry', Gummibärchen: 'pantry',
+      Pizza: 'frozen', Pizzateig: 'bakery', Pommes: 'frozen', Eis: 'frozen', Reis: 'pantry',
+      Limo: 'beverages', Eistee: 'beverages', Hafermilch: 'dairy', Mandelmilch: 'dairy',
+    })
+  })
+  it('keeps household items out of food categories', () => {
+    expectAll({
+      Zahnpasta: 'other', Küchenrolle: 'other', Alufolie: 'other', Spülmaschinensalz: 'other',
+      Klopapier: 'other', Waschmittel: 'other', Katzenfutter: 'other',
+      Schweinefleisch: 'meat', Rotweinessig: 'pantry', Pfefferminztee: 'beverages',
+    })
   })
 })
