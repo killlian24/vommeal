@@ -17,6 +17,9 @@ services:
     environment:
       - NODE_ENV=production
       - DATA_DIR=/app/data
+      # Container time zone (daily backup file names, logs). Reminder times use
+      # the time zone from Vommeal Settings, which defaults to the same value.
+      - TZ=${TZ:-Europe/Copenhagen}
       # Optional: set these in Portainer's stack environment variables.
       # If left empty, configure them later in Vommeal Settings.
       - MEALIE_URL=${MEALIE_URL:-}

@@ -21,7 +21,9 @@ RUN npm run build
 
 # ---- Runner ----
 FROM node:22-alpine AS runner
-RUN apk add --no-cache libc6-compat su-exec
+# tzdata: lets TZ (docker-compose) and Intl resolve real time zones, so
+# backups, reminders and the nightly sync follow local time.
+RUN apk add --no-cache libc6-compat su-exec tzdata
 
 WORKDIR /app
 
@@ -42,7 +44,8 @@ COPY --from=builder /app/node_modules/bindings ./node_modules/bindings
 COPY --from=builder /app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
 COPY docker-entrypoint.sh ./docker-entrypoint.sh
 
-# Data dir (SQLite DB + daily backups in /app/data/backups). The entrypoint
+# Data dir (SQLite DB, daily backups in /app/data/backups, recipe image cache in
+# /app/data/cache/images). The entrypoint
 # re-runs chown at startup so a bind-mounted volume is writable by nextjs too.
 RUN mkdir -p /app/data/backups && chown -R nextjs:nodejs /app/data
 

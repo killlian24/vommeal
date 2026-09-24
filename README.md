@@ -1,6 +1,6 @@
 # Vommeal
 
-Meal planning PWA for two. Weekly planner, Mealie recipe sync, HA shopping list integration, fun voting mode.
+Meal planning PWA for two. Weekly planner, Mealie recipe sync, HA shopping list integration, push reminders via Home Assistant, recipe import by link, fun voting mode.
 
 ---
 
@@ -40,6 +40,7 @@ services:
     environment:
       - NODE_ENV=production
       - DATA_DIR=/app/data
+      - TZ=${TZ:-Europe/Copenhagen}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
       interval: 30s
@@ -108,6 +109,42 @@ The sync stores HA UIDs and a small sync log in SQLite so repeated syncs should 
 
 Items that Vommeal cannot confidently categorize stay in **Other** and are marked internally as needing a category. Change the category in Vommeal and sync again.
 
+### Recipe images
+
+Recipe images are loaded through Vommeal (`/api/images/<id>`), not directly from Mealie. The server fetches each image once, caches it for 7 days in `/volume1/docker/vommeal/data/cache/images/`, and serves it from there. That is why pictures also show up when you open Vommeal over Tailscale away from home, where Mealie itself is not reachable. The cache folder can be deleted at any time.
+
+### Nightly Mealie sync
+
+Every night at 03:30 (time zone from Settings) Vommeal pulls all recipes from Mealie, the same as pressing **Sync** in Settings. Turn it off in Settings if you prefer syncing by hand. Your own marks in Vommeal (e.g. "schnell" / "aufwendig") are kept; Mealie does not overwrite them.
+
+---
+
+## Benachrichtigungen
+
+Vommeal schickt Erinnerungen als Push-Nachricht über Home Assistant, genauer über die **Home Assistant Companion App** auf den Handys:
+
+1. **HA-App installieren:** Auf beiden Handys die Home Assistant App installieren (iPhone: App Store, Android: Play Store), mit eurem Home Assistant verbinden und Benachrichtigungen erlauben. Jedes Handy erscheint danach in HA als Dienst `notify.mobile_app_<gerätename>`.
+2. **Geräte auswählen:** In Vommeal unter **Einstellungen → Benachrichtigungen** die Geräte ankreuzen, die Nachrichten bekommen sollen, und mit **Testnachricht senden** prüfen.
+3. **App-Adresse eintragen:** Unter **App-Adresse** genau die Adresse eintragen, mit der ihr Vommeal öffnet, also die Tailscale- oder LAN-Adresse (z. B. `http://nas.tailXXXX.ts.net:3333` oder `http://192.168.0.10:3333`). Ein Tipp auf die Nachricht öffnet dann direkt die passende Seite. Ohne Adresse kommen die Nachrichten trotzdem, nur ohne Link.
+
+Erinnerungen:
+
+- **Wochenplanung** (Standard: sonntags 18:00): „Nächste Woche sind noch N Abende frei – kurz planen?“ – nur wenn in der nächsten Woche (Mo–So) noch Abende leer sind. Öffnet die nächste Woche im Planer.
+- **Heute** (Standard: aus, 16:00): „Heute: <Gericht>“ bzw. „Heute ist noch nichts geplant“. Öffnet `/tonight`.
+
+Tag, Uhrzeit und Zeitzone (Standard `Europe/Copenhagen`) lassen sich in den Einstellungen ändern. Jede Erinnerung wird höchstens einmal pro Tag verschickt. Der Planer läuft nur im Docker-Container (Produktion), nicht im lokalen Dev-Server (siehe `VOMMEAL_SCHEDULER` in `.env.example`).
+
+---
+
+## Rezept per Link importieren
+
+Vommeal lässt Mealie die Rezeptseite auslesen, legt das Rezept in Mealie an und übernimmt es sofort in Vommeal (Mealie muss dafür eingerichtet sein).
+
+- **Android:** Vommeal als App installieren („Zum Startbildschirm hinzufügen“ in Chrome). Danach im Browser oder in einer anderen App auf **Teilen** tippen und **Vommeal** wählen.
+- **iPhone:** iOS bietet Web-Apps nicht im Teilen-Menü an. Link kopieren, in Vommeal die Seite **Rezepte** öffnen und den Link dort in das Import-Feld einfügen.
+
+Klappt der Import nicht, erkennt Mealie auf der Seite kein Rezept; dann das Rezept in Mealie von Hand anlegen und synchronisieren.
+
 ---
 
 ## Troubleshooting
@@ -134,6 +171,7 @@ Open `http://<nas-ip>:3333` → **Settings**:
 - **Mealie URL + API token** — for recipe sync, unless set in Portainer
 - **Home Assistant URL + token + todo entity** — for shopping list sync with Google Keep, unless set in Portainer
 - **Dinner category** — Mealie category to filter recipes (e.g. `Abendessen`)
+- **Benachrichtigungen** — devices, reminder times, app address and time zone (see above)
 
 ---
 
@@ -164,7 +202,7 @@ The live database files live in `/volume1/docker/vommeal/data/`. Because SQLite 
 Vommeal also backs itself up automatically:
 
 - **Where:** `/volume1/docker/vommeal/data/backups/vommeal-YYYY-MM-DD.db` (`${DATA_DIR}/backups/` in general).
-- **When:** about 30 seconds after the container starts and then every 24 hours. Only one file per calendar day is written; if today's file already exists the run is skipped.
+- **When:** about 30 seconds after the container starts and then every 24 hours (own timer, independent of the reminder scheduler). Only one file per calendar day is written; if today's file already exists the run is skipped.
 - **Retention:** files older than 14 days are deleted on each run. Copy a file elsewhere (Hyper Backup, another share, ...) if you want to keep it longer.
 - **How:** the copy is made with SQLite's online backup API, so it is consistent even while the app is running and does not need the `-wal`/`-shm` files. Check the container log for `[backup] created: ...` lines.
 

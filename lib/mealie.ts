@@ -31,21 +31,39 @@ export type MealieRecipe = {
 // ETIMEDOUT, certificate errors) sits in error.cause.
 export function describeFetchError(e: unknown): string {
   if (!(e instanceof Error)) return String(e)
-  if (e.name === 'AbortError') return 'timed out'
+  if (e.name === 'AbortError' || e.name === 'TimeoutError') return 'Zeitüberschreitung'
   const cause = (e as Error & { cause?: { code?: string; message?: string } }).cause
   const code = cause?.code
   const hints: Record<string, string> = {
-    ECONNREFUSED: 'connection refused (wrong port, or Mealie not running)',
-    EHOSTUNREACH: 'host unreachable (container cannot route to that address; check the NAS firewall for the Docker subnet)',
-    ENETUNREACH: 'network unreachable from the container',
-    ETIMEDOUT: 'connection timed out (firewall dropping packets?)',
-    ENOTFOUND: 'hostname not found from inside the container',
-    CERT_HAS_EXPIRED: 'TLS certificate expired',
-    DEPTH_ZERO_SELF_SIGNED_CERT: 'self-signed certificate rejected; use the plain http LAN address',
-    ERR_TLS_CERT_ALTNAME_INVALID: 'TLS certificate does not match the hostname',
+    ECONNREFUSED: 'Verbindung abgelehnt (falscher Port oder Dienst läuft nicht)',
+    EHOSTUNREACH: 'Adresse nicht erreichbar (Container kommt nicht dorthin; NAS-Firewall und Docker-Subnetz prüfen)',
+    ENETUNREACH: 'Netzwerk vom Container aus nicht erreichbar',
+    ETIMEDOUT: 'Zeitüberschreitung (blockiert eine Firewall?)',
+    ENOTFOUND: 'Hostname im Container nicht auflösbar',
+    CERT_HAS_EXPIRED: 'TLS-Zertifikat abgelaufen',
+    DEPTH_ZERO_SELF_SIGNED_CERT: 'selbstsigniertes Zertifikat abgelehnt; die http-LAN-Adresse verwenden',
+    ERR_TLS_CERT_ALTNAME_INVALID: 'TLS-Zertifikat passt nicht zum Hostnamen',
   }
   if (code) return `${code}: ${hints[code] ?? cause?.message ?? ''}`.replace(/: $/, '')
   return cause?.message ? `${e.message} (${cause.message})` : e.message
+}
+
+/** Mealie answered with a non-2xx status. */
+export class MealieHttpError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'MealieHttpError'
+    this.status = status
+  }
+}
+
+/** Mealie could not be reached at all (network error or timeout). */
+export class MealieUnreachableError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'MealieUnreachableError'
+  }
 }
 
 async function mealieRequest<T>(method: string, path: string, body?: unknown, timeoutMs = 15000): Promise<T> {
@@ -70,14 +88,14 @@ async function mealieRequest<T>(method: string, path: string, body?: unknown, ti
       signal: controller.signal,
     })
   } catch (e: unknown) {
-    throw new Error(`Cannot reach Mealie at ${url}: ${describeFetchError(e)}`)
+    throw new MealieUnreachableError(`Mealie nicht erreichbar unter ${url}: ${describeFetchError(e)}`)
   } finally {
     clearTimeout(timer)
   }
 
   if (!res.ok) {
     const text = await res.text().catch(() => '')
-    throw new Error(`Mealie ${res.status} on ${method} ${path}${text ? ': ' + text.slice(0, 200) : ''}`)
+    throw new MealieHttpError(`Mealie ${res.status} on ${method} ${path}${text ? ': ' + text.slice(0, 200) : ''}`, res.status)
   }
   return res.json()
 }
@@ -225,6 +243,24 @@ export async function updateMealieRating(slug: string, rating: number | null, me
   // (works on older Mealie versions that do store rating in the recipe body)
   const recipe = await mealieRequest<MealieRecipe>('GET', `/recipes/${slug}`)
   await mealieRequest('PUT', `/recipes/${slug}`, { ...recipe, rating: ratingValue })
+}
+
+/**
+ * Let Mealie scrape a recipe web page and create the recipe.
+ * Mealie v3: POST /api/recipes/create/url {url, includeTags, includeCategories}
+ * answers 201 with the new recipe's slug as a JSON string.
+ */
+export async function importMealieRecipeFromUrl(url: string): Promise<string> {
+  const slug = await mealieRequest<unknown>(
+    'POST',
+    '/recipes/create/url',
+    { url, includeTags: true, includeCategories: true },
+    90000,  // scraping a slow site can take a while
+  )
+  if (typeof slug !== 'string' || !slug.trim()) {
+    throw new Error('Mealie returned no recipe slug')
+  }
+  return slug.trim()
 }
 
 export function getMealieRecipeUrl(slug: string): string {
