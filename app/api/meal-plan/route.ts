@@ -35,6 +35,10 @@ export async function POST(req: NextRequest) {
     if (!recipeId && !customMealName) throw new ValidationError('recipe_id or custom_meal_name required')
     if (recipeId && !getRecipeById(recipeId)) throw new ValidationError('recipe_id does not match a known recipe')
 
+    // Approval is abolished; the status field is still accepted (and
+    // validated) for older clients, but every entry is stored as approved.
+    optionalStatus(body.status, 'approved')
+
     const entry = addMealPlanEntry({
       // Clients may pass an id (e.g. to restore an entry after undo); otherwise generate one.
       id: optionalString(body.id, 'id', LIMITS.id) || randomUUID(),
@@ -44,7 +48,7 @@ export async function POST(req: NextRequest) {
       custom_meal_name: customMealName,
       servings: optionalServings(body.servings, 2),
       notes: optionalString(body.notes, 'notes', LIMITS.notes),
-      status: optionalStatus(body.status, 'suggested'),
+      status: 'approved',
       suggested_by: optionalString(body.suggested_by, 'suggested_by', LIMITS.userName),
     })
     return NextResponse.json(entry, { status: 201 })

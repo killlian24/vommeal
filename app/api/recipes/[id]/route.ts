@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getRecipeById, upsertRecipe, deleteRecipe, updateRecipeRating } from '@/lib/db'
+import { getRecipeById, upsertRecipe, deleteRecipe, updateRecipeRating, updateRecipeEffort } from '@/lib/db'
 import { updateMealieRating } from '@/lib/mealie'
-import { errorResponse, readJsonObject, parseRecipeInput, optionalRating } from '@/lib/validate'
+import { errorResponse, readJsonObject, parseRecipeInput, optionalRating, optionalEffort } from '@/lib/validate'
 
 export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -38,8 +38,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const recipe = getRecipeById(id)
     if (!recipe) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-    if ('rating' in body) {
-      const rating = optionalRating(body.rating)
+    // Validate everything before writing anything.
+    const effort = 'effort' in body ? optionalEffort(body.effort) : undefined
+    const rating = 'rating' in body ? optionalRating(body.rating) : undefined
+
+    if (effort !== undefined) updateRecipeEffort(id, effort)
+
+    // Rating 1 means "nicht nochmal" (autofill never picks it again).
+    if (rating !== undefined) {
       updateRecipeRating(id, rating)
       if (recipe.mealie_slug) {
         try {

@@ -17,7 +17,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     // Only known, validated fields reach the DB layer.
     const data: Partial<MealPlanEntry> = {}
-    if (body.status !== undefined) data.status = requireStatus(body.status)
+    // Legacy field: validated, but the entry always stays approved.
+    if (body.status !== undefined) { requireStatus(body.status); data.status = 'approved' }
     if (body.servings !== undefined) data.servings = requireServings(body.servings)
     if (body.notes !== undefined) data.notes = optionalString(body.notes, 'notes', LIMITS.notes)
     if (body.custom_meal_name !== undefined && body.custom_meal_name !== null) {

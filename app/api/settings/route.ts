@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSetting, setSetting } from '@/lib/db'
-import { getConfigSourceFlags, sanitizeUrl } from '@/lib/config'
+import {
+  getConfigSourceFlags, sanitizeUrl, DEFAULTED_SETTING_KEYS, getSettingWithDefault, normalizeSettingValue,
+} from '@/lib/config'
 import { requireAdmin } from '@/lib/admin'
 
 function stringValue(body: Record<string, unknown>, key: string): string | undefined {
@@ -23,6 +25,8 @@ export async function GET() {
     dinner_category: getSetting('dinner_category') || '',
     category_order: getSetting('category_order') || '',
     custom_category_keywords: getSetting('custom_category_keywords') || '{}',
+    // Notifications, time zone, nightly sync (always strings; defaults when unset)
+    ...Object.fromEntries(DEFAULTED_SETTING_KEYS.map(key => [key, getSettingWithDefault(key)])),
     env,
   })
 }
@@ -48,6 +52,22 @@ export async function POST(req: NextRequest) {
   const categoryOrder = stringValue(body, 'category_order')
   const customCategoryKeywords = stringValue(body, 'custom_category_keywords')
 
+  // Validate the new keys before writing anything, so a bad value never
+  // leaves a half-saved form behind.
+  const defaulted: [string, string][] = []
+  for (const key of DEFAULTED_SETTING_KEYS) {
+    const raw = body[key]
+    if (raw === undefined) continue
+    if (typeof raw !== 'string') {
+      return NextResponse.json({ error: `${key} muss ein Text sein` }, { status: 400 })
+    }
+    try {
+      defaulted.push([key, normalizeSettingValue(key, raw)])
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 400 })
+    }
+  }
+
   if (mealieUrl !== undefined && !env.mealie_url) setSetting('mealie_url', mealieUrl)
   if (mealieToken !== undefined && mealieToken !== '••••••••' && !env.mealie_token) {
     setSetting('mealie_token', mealieToken)
@@ -62,5 +82,6 @@ export async function POST(req: NextRequest) {
   if (dinnerCategory !== undefined) setSetting('dinner_category', dinnerCategory)
   if (categoryOrder !== undefined) setSetting('category_order', categoryOrder)
   if (customCategoryKeywords !== undefined) setSetting('custom_category_keywords', customCategoryKeywords)
+  for (const [key, value] of defaulted) setSetting(key, value)
   return NextResponse.json({ ok: true })
 }

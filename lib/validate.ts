@@ -133,6 +133,15 @@ export function optionalRating(value: unknown, field = 'rating'): number | null 
   return n
 }
 
+/** Effort: null clears, otherwise 'quick' | 'involved'. */
+export function optionalEffort(value: unknown, field = 'effort'): 'quick' | 'involved' | null {
+  if (value === undefined || value === null || value === '') return null
+  if (value !== 'quick' && value !== 'involved') {
+    throw new ValidationError(`${field} must be 'quick', 'involved' or null`)
+  }
+  return value
+}
+
 // --- Strings ---
 
 /** Required, non-empty after trimming, at most `maxLen` characters. */
@@ -189,6 +198,7 @@ export type RecipeInput = {
   image_url: string
   mealie_slug: string | null
   rating: number | null
+  effort: 'quick' | 'involved' | null
 }
 
 /**
@@ -225,6 +235,7 @@ export function parseRecipeInput(body: JsonObject): Partial<RecipeInput> & { nam
   if (body.image_url !== undefined) out.image_url = optionalString(body.image_url, 'image_url', LIMITS.url)
   if (body.mealie_slug !== undefined) out.mealie_slug = optionalNullableString(body.mealie_slug, 'mealie_slug', LIMITS.name)
   if (body.rating !== undefined) out.rating = optionalRating(body.rating)
+  if (body.effort !== undefined) out.effort = optionalEffort(body.effort)
   return out
 }
 
