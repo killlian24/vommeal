@@ -4,7 +4,7 @@ import Navigation from '@/components/Navigation'
 
 export const metadata: Metadata = {
   title: 'Vommeal',
-  description: 'Meal planning & shopping for two',
+  description: 'Essensplanung und Einkauf für zwei',
   manifest: '/manifest.json',
   icons: {
     icon: [
@@ -30,7 +30,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark">
+    <html lang="de" className="dark">
       <head>
         <meta name="mobile-web-app-capable" content="yes" />
       </head>

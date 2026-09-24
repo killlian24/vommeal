@@ -18,7 +18,11 @@ export function StarRating({ rating, max = 5, size = 12, editable = false, onCha
   if (!editable && (!rating || rating === 0)) return null
 
   return (
-    <span className="inline-flex items-center gap-px">
+    <span
+      className="inline-flex items-center gap-px"
+      role={editable ? 'group' : 'img'}
+      aria-label={editable ? 'Bewertung' : `${rating} von ${max} Sternen`}
+    >
       {Array.from({ length: max }, (_, i) => {
         const val = i + 1
         const filled = val <= active
@@ -28,7 +32,7 @@ export function StarRating({ rating, max = 5, size = 12, editable = false, onCha
             height={size}
             viewBox="0 0 24 24"
             fill={filled ? '#f97316' : 'none'}
-            stroke={filled ? '#f97316' : '#444'}
+            stroke={filled ? '#f97316' : '#767676'}
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -41,8 +45,10 @@ export function StarRating({ rating, max = 5, size = 12, editable = false, onCha
           <button
             key={i}
             type="button"
-            aria-label={val === rating ? `Clear ${val} star rating` : `Set ${val} star rating`}
-            className="p-1 -m-1 rounded focus-visible:outline-primary"
+            aria-label={val === rating ? 'Bewertung entfernen' : `${val} ${val === 1 ? 'Stern' : 'Sterne'} vergeben`}
+            // At least 40 px touch area per star; the negative margins keep the
+            // visual spacing tight while the hit areas overlap slightly.
+            className="p-2.5 -mx-1 -my-2 rounded focus-visible:outline-primary"
             onMouseEnter={() => setHovered(val)}
             onMouseLeave={() => setHovered(null)}
             onFocus={() => setHovered(val)}

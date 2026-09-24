@@ -25,8 +25,17 @@ const config: Config = {
         },
         text: {
           DEFAULT: '#f0f0f0',
-          muted: '#888',
-          faint: '#444',
+          muted: '#9a9a9a',
+          faint: '#767676',
+        },
+        // Readable text scale for the dark background. Use these instead of
+        // ad-hoc greys: body text never darker than ink-muted, hints/labels
+        // never darker than ink-hint (disabled states excepted).
+        ink: {
+          DEFAULT: '#f0f0f0',
+          soft: '#c8c8c8',
+          muted: '#9a9a9a',
+          hint: '#7a7a7a',
         },
       },
       fontFamily: {

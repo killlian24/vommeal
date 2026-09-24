@@ -4,6 +4,11 @@
 
 :root {
   color-scheme: dark;
+  /* Text contrast scale (mirrors the `ink` colours in tailwind.config.ts) */
+  --ink: #f0f0f0;
+  --ink-soft: #c8c8c8;
+  --ink-muted: #9a9a9a;
+  --ink-hint: #7a7a7a;
 }
 
 * {
@@ -21,6 +26,7 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* Scrollbar styling */
@@ -50,7 +56,7 @@ input:focus, textarea:focus, select:focus {
 }
 
 input::placeholder, textarea::placeholder {
-  color: #555;
+  color: var(--ink-hint);
 }
 
 /* Transitions */

@@ -21,6 +21,7 @@ export function avatarColor(name: string, users: string[]): string {
 }
 
 const SIZES = {
+  xs: 'w-4 h-4 text-[9px]',
   sm: 'w-5 h-5 text-[10px]',
   md: 'w-7 h-7 text-xs',
   lg: 'w-8 h-8 text-xs',
@@ -35,6 +36,9 @@ export function Avatar({ name, users, size = 'sm', className = '' }: {
 }) {
   return (
     <span
+      title={name}
+      aria-label={name}
+      role="img"
       className={`${SIZES[size]} rounded-full flex items-center justify-center font-bold text-white flex-shrink-0 ${className}`}
       style={{ background: avatarColor(name, users) }}
     >
