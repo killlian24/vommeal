@@ -119,8 +119,6 @@ export default function ShoppingPage() {
   const [addingTonight, setAddingTonight] = useState(false)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [newItem, setNewItem] = useState('')
-  const [newAmount, setNewAmount] = useState('')
-  const [showAdd, setShowAdd] = useState(false)
   const [showPantry, setShowPantry] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [staples, setStaples] = useState<PantryStaple[]>([])
@@ -427,7 +425,6 @@ export default function ShoppingPage() {
 
   const openReview = async () => {
     setMenuOpen(false)
-    setShowAdd(false)
     setShowPantry(false)
     track('shopping_review_open')
     const end = endOfNextWeek()
@@ -530,24 +527,42 @@ export default function ShoppingPage() {
 
   // --- Manual add / copy ------------------------------------------------------
 
+  const addInputRef = useRef<HTMLInputElement | null>(null)
+
+  // Adds one or more items ("Banane, Milch, Brot"). The field stays open and
+  // focused so several things can be typed in a row without tapping "+" again.
   const addItem = async () => {
-    const name = newItem.trim()
-    if (!name) return
-    try {
-      const res = await fetch('/api/shopping', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, amount: newAmount.trim() }),
-      })
-      const item = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        showToast(item.error || 'Eintrag konnte nicht hinzugefügt werden', { duration: ERROR_MS })
-        return
+    const names = newItem.split(/[,;\n]+/).map(n => n.trim()).filter(Boolean)
+    if (names.length === 0) return
+    setNewItem('')
+    addInputRef.current?.focus()
+    const added: ShoppingItem[] = []
+    const failed: string[] = []
+    for (const name of names) {
+      try {
+        const res = await fetch('/api/shopping', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        })
+        const item = await res.json().catch(() => ({}))
+        if (res.ok) added.push(item as ShoppingItem)
+        else failed.push(name)
+      } catch {
+        failed.push(name)
       }
-      setItems(prev => [...prev, item])
-      setNewItem(''); setNewAmount(''); setShowAdd(false)
-    } catch {
-      showToast('Eintrag konnte nicht hinzugefügt werden', { duration: ERROR_MS })
+    }
+    if (added.length > 0) {
+      setItems(prev => [...prev, ...added])
+      track('shopping_manual_add', { count: added.length })
+    }
+    if (failed.length > 0) {
+      setNewItem(failed.join(', '))
+      showToast(`Nicht hinzugefügt: ${failed.join(', ')}`, { duration: ERROR_MS })
+    } else if (added.length === 1) {
+      showToast(`${added[0].name} → ${CATEGORY_LABELS[added[0].category] || added[0].category}`)
+    } else if (added.length > 1) {
+      showToast(`${added.length} Einträge hinzugefügt`)
     }
   }
 
@@ -628,14 +643,6 @@ export default function ShoppingPage() {
             </p>
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0">
-            <button
-              onClick={() => { setShowPantry(false); setMenuOpen(false); setShowAdd(a => !a) }}
-              aria-label={showAdd ? 'Hinzufügen schließen' : 'Eintrag hinzufügen'}
-              title={showAdd ? 'Schließen' : 'Eintrag hinzufügen'}
-              className={`${iconBtn} border border-[#2a2a2a] bg-[#1c1c1c] text-[#d0d0d0] hover:text-white hover:bg-[#252525]`}
-            >
-              {showAdd ? <X size={18} /> : <Plus size={18} />}
-            </button>
             <div className="relative">
               <button
                 onClick={() => setMenuOpen(o => !o)}
@@ -672,7 +679,7 @@ export default function ShoppingPage() {
                     </button>
                     <button
                       role="menuitem"
-                      onClick={() => { setMenuOpen(false); setShowAdd(false); setShowPantry(true) }}
+                      onClick={() => { setMenuOpen(false); setShowPantry(true) }}
                       className="w-full min-h-[44px] flex items-center gap-3 px-4 text-sm text-[#e5e5e5] hover:bg-[#252525]"
                     >
                       <Package size={16} className="text-[#9a9a9a]" />
@@ -716,39 +723,30 @@ export default function ShoppingPage() {
         )}
       </div>
 
-      {/* Add item — a real form so Enter (and the mobile keyboard's Go/Done) submits */}
-      {showAdd && (
-        <form
-          onSubmit={e => { e.preventDefault(); addItem() }}
-          className="bg-[#141414] border border-[#2a2a2a] rounded-xl p-4 space-y-3 animate-slide-up"
+      {/* Quick add — always visible, stays focused after Enter, commas add several */}
+      <form
+        onSubmit={e => { e.preventDefault(); addItem() }}
+        className="flex gap-2"
+      >
+        <input
+          ref={addInputRef}
+          value={newItem}
+          onChange={e => setNewItem(e.target.value)}
+          placeholder="Was fehlt? z. B. Banane, Milch"
+          className="flex-1 min-h-[48px] placeholder:text-[#7a7a7a]"
+          enterKeyHint="enter"
+          autoComplete="off"
+          aria-label="Eintrag hinzufügen"
+        />
+        <button
+          type="submit"
+          disabled={!newItem.trim()}
+          aria-label="Auf die Liste"
+          className="min-w-[48px] min-h-[48px] flex items-center justify-center rounded-lg bg-primary hover:bg-primary-hover text-white transition-colors disabled:opacity-40"
         >
-          <div className="flex gap-2">
-            <input
-              value={newItem}
-              onChange={e => setNewItem(e.target.value)}
-              placeholder="Was fehlt?"
-              className="flex-1 min-h-[44px] placeholder:text-[#7a7a7a]"
-              autoFocus
-              enterKeyHint="done"
-              aria-label="Eintrag"
-            />
-            <input
-              value={newAmount}
-              onChange={e => setNewAmount(e.target.value)}
-              placeholder="Menge"
-              className="!w-24 min-h-[44px] placeholder:text-[#7a7a7a]"
-              enterKeyHint="done"
-              aria-label="Menge (optional)"
-            />
-          </div>
-          <button
-            type="submit"
-            className="w-full min-h-[44px] rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-colors"
-          >
-            Auf die Liste
-          </button>
-        </form>
-      )}
+          <Plus size={20} />
+        </button>
+      </form>
 
       {/* Pantry staples panel */}
       {showPantry && (
