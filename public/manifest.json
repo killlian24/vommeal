@@ -1,7 +1,9 @@
 {
   "name": "Vommeal",
   "short_name": "Vommeal",
-  "description": "Meal planning for two",
+  "description": "Essensplanung und Einkauf für zwei",
+  "lang": "de",
+  "dir": "ltr",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0a0a0a",
@@ -29,6 +31,38 @@
       "src": "/icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png"
+    }
+  ],
+  "share_target": {
+    "action": "/share",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  },
+  "shortcuts": [
+    {
+      "name": "Heute",
+      "short_name": "Heute",
+      "description": "Was gibt's heute?",
+      "url": "/tonight",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Woche",
+      "short_name": "Woche",
+      "description": "Wochenplan",
+      "url": "/",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Einkauf",
+      "short_name": "Einkauf",
+      "description": "Einkaufsliste",
+      "url": "/shopping",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
     }
   ]
 }
