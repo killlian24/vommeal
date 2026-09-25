@@ -13,7 +13,7 @@ import {
   Section, MetaText, Label, Hint, Toggle, PrimaryButton, StatusBox, responseError, secondaryButtonClass,
 } from '@/components/settings/ui'
 import { NotificationsSection, parseServiceList } from '@/components/settings/NotificationsSection'
-import type { NotifySettings } from '@/components/settings/NotificationsSection'
+import type { NotifySettings, NotifyTextDefaults } from '@/components/settings/NotificationsSection'
 import { UsageSection } from '@/components/settings/UsageSection'
 
 type Settings = {
@@ -23,6 +23,7 @@ type Settings = {
   dinner_category: string; category_order: string; custom_category_keywords: string
   mealie_nightly_sync?: string
   timezone?: string
+  notify_text_defaults?: NotifyTextDefaults
   env?: {
     mealie_url: boolean; mealie_token: boolean
     ha_url: boolean; ha_token: boolean; ha_entity: boolean
@@ -52,6 +53,10 @@ const NOTIFY_DEFAULTS: NotifySettings = {
   notify_daily_enabled: '0',
   notify_daily_time: '16:00',
   app_public_url: '',
+  notify_people: '{}',
+  notify_text_daily_planned: '',
+  notify_text_daily_empty: '',
+  notify_text_weekly: '',
 }
 
 export default function SettingsPage() {
@@ -270,6 +275,10 @@ export default function SettingsPage() {
     notify_daily_enabled: settings.notify_daily_enabled ?? NOTIFY_DEFAULTS.notify_daily_enabled,
     notify_daily_time: settings.notify_daily_time ?? NOTIFY_DEFAULTS.notify_daily_time,
     app_public_url: settings.app_public_url ?? NOTIFY_DEFAULTS.app_public_url,
+    notify_people: settings.notify_people ?? NOTIFY_DEFAULTS.notify_people,
+    notify_text_daily_planned: settings.notify_text_daily_planned ?? NOTIFY_DEFAULTS.notify_text_daily_planned,
+    notify_text_daily_empty: settings.notify_text_daily_empty ?? NOTIFY_DEFAULTS.notify_text_daily_empty,
+    notify_text_weekly: settings.notify_text_weekly ?? NOTIFY_DEFAULTS.notify_text_weekly,
   }
   const notifyDeviceCount = parseServiceList(settings.notify_services).length
   const envHint = (name: string) => `Wird in Docker über ${name} festgelegt.`
@@ -566,6 +575,8 @@ export default function SettingsPage() {
             initial={notifyInitial}
             haConfigured={haConfigured}
             timezone={settings.timezone}
+            profileNames={profileNames}
+            textDefaults={settings.notify_text_defaults}
             authedFetch={authedFetch}
             softFetch={softFetch}
             onSaved={values => setSettings(s => ({ ...s, ...values }))}

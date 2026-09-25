@@ -2,10 +2,13 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { BellRing, RefreshCw, Smartphone } from 'lucide-react'
+import { DEFAULT_NOTIFY_TEXTS, NOTIFY_KIND_LABELS, NOTIFY_TEXT_KEYS } from '@/lib/notifyTemplates'
+import type { NotifyKind } from '@/lib/notifyTemplates'
 import {
   Hint, Label, PrimaryButton, StatusBox, Toggle, responseError, secondaryButtonClass,
 } from './ui'
 import type { AuthedFetch } from './ui'
+import { NOTIFY_KIND_ORDER, NotifyTextCard, NotifyTextsHint } from './NotifyTexts'
 
 export type NotifySettings = {
   notify_services: string
@@ -15,7 +18,13 @@ export type NotifySettings = {
   notify_daily_enabled: string
   notify_daily_time: string
   app_public_url: string
+  notify_people: string
+  notify_text_daily_planned: string
+  notify_text_daily_empty: string
+  notify_text_weekly: string
 }
+
+export type NotifyTextDefaults = Partial<Record<NotifyKind, string>>
 
 type NotifyService = { id: string; name?: string }
 type ServiceState =
@@ -67,6 +76,35 @@ export function parseServiceList(raw: string | undefined): string[] {
   }
 }
 
+/** Parses notify_people ({service id: profile name}); anything malformed counts as empty. */
+export function parsePeople(raw: string | undefined): Record<string, string> {
+  try {
+    const parsed = JSON.parse(raw || '{}')
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === 'string'),
+    )
+  } catch {
+    return {}
+  }
+}
+
+function foldName(value: string): string {
+  return value.toLowerCase()
+    .replace(/ä/g, 'a').replace(/ö/g, 'o').replace(/ü/g, 'u').replace(/ß/g, 'ss')
+    .replace(/[^a-z0-9]/g, '')
+}
+
+/** 'notify.mobile_app_kilians_iphone' + ['Kilian', 'Susi'] → 'Kilian'. Only a unique match counts. */
+export function suggestPerson(serviceId: string, profileNames: string[]): string {
+  const device = foldName(serviceId.replace(/^notify\./, '').replace(/^mobile_app_/, ''))
+  const matches = profileNames.filter(name => {
+    const folded = foldName(name)
+    return folded.length >= 2 && device.includes(folded)
+  })
+  return matches.length === 1 ? matches[0] : ''
+}
+
 function isValidAppUrl(value: string): boolean {
   if (!value) return true
   if (!/^https?:\/\//i.test(value)) return false
@@ -88,27 +126,100 @@ function describeTestErrors(errors: unknown): string[] {
   })
 }
 
-export function NotificationsSection({ initial, haConfigured, timezone, authedFetch, softFetch, onSaved }: {
+type TextState = Record<NotifyKind, string>
+
+type FormState = {
+  selected: string[]
+  people: Record<string, string>
+  weeklyEnabled: boolean
+  weeklyDay: string
+  weeklyTime: string
+  dailyEnabled: boolean
+  dailyTime: string
+  appUrl: string
+  texts: TextState
+}
+
+/** The settings payload for the whole section. A text equal to its default is stored as '' (= default). */
+function buildValues(form: FormState, defaults: TextState, profileNames: string[]): NotifySettings {
+  const text = (kind: NotifyKind) => {
+    const t = form.texts[kind].trim()
+    return t === defaults[kind].trim() ? '' : t
+  }
+  return {
+    notify_services: JSON.stringify(form.selected),
+    // Only devices that get messages need a person; '' = nobody. The server
+    // accepts only current profile names, so a renamed person becomes nobody.
+    notify_people: JSON.stringify(Object.fromEntries(form.selected.map(id => {
+      const person = form.people[id] ?? ''
+      return [id, profileNames.includes(person) ? person : '']
+    }))),
+    notify_weekly_enabled: form.weeklyEnabled ? '1' : '0',
+    notify_weekly_day: form.weeklyDay,
+    notify_weekly_time: form.weeklyTime,
+    notify_daily_enabled: form.dailyEnabled ? '1' : '0',
+    notify_daily_time: form.dailyTime,
+    app_public_url: form.appUrl.trim(),
+    notify_text_daily_planned: text('daily_planned'),
+    notify_text_daily_empty: text('daily_empty'),
+    notify_text_weekly: text('weekly'),
+  }
+}
+
+export function NotificationsSection({
+  initial, haConfigured, timezone, profileNames: rawProfileNames, textDefaults, authedFetch, softFetch, onSaved,
+}: {
   initial: NotifySettings
   haConfigured: boolean
   timezone?: string
+  profileNames: string[]
+  textDefaults?: NotifyTextDefaults
   authedFetch: AuthedFetch
   softFetch: (url: string) => Promise<Response>
   onSaved: (values: NotifySettings) => void
 }) {
+  // Trimmed like the server does when it checks notify_people
+  const profileNames = rawProfileNames.map(n => n.trim()).filter(Boolean)
+  const defaults: TextState = {
+    daily_planned: textDefaults?.daily_planned || DEFAULT_NOTIFY_TEXTS.daily_planned,
+    daily_empty: textDefaults?.daily_empty || DEFAULT_NOTIFY_TEXTS.daily_empty,
+    weekly: textDefaults?.weekly || DEFAULT_NOTIFY_TEXTS.weekly,
+  }
+  const initialText = (kind: NotifyKind) => {
+    const saved = (initial[NOTIFY_TEXT_KEYS[kind] as keyof NotifySettings] || '').trim()
+    return saved === defaults[kind].trim() ? '' : saved
+  }
+
   const [selected, setSelected] = useState<string[]>(() => parseServiceList(initial.notify_services))
+  const [people, setPeople] = useState<Record<string, string>>(() => parsePeople(initial.notify_people))
+  // Devices whose person was filled in automatically and not saved yet
+  const [suggested, setSuggested] = useState<Set<string>>(new Set())
   const [weeklyEnabled, setWeeklyEnabled] = useState(initial.notify_weekly_enabled !== '0')
   const [weeklyDay, setWeeklyDay] = useState(initial.notify_weekly_day || '0')
   const [weeklyTime, setWeeklyTime] = useState(initial.notify_weekly_time || '18:00')
   const [dailyEnabled, setDailyEnabled] = useState(initial.notify_daily_enabled === '1')
   const [dailyTime, setDailyTime] = useState(initial.notify_daily_time || '16:00')
   const [appUrl, setAppUrl] = useState(initial.app_public_url || '')
+  const [texts, setTexts] = useState<TextState>(() => ({
+    daily_planned: initialText('daily_planned'),
+    daily_empty: initialText('daily_empty'),
+    weekly: initialText('weekly'),
+  }))
   const [services, setServices] = useState<ServiceState>({ status: 'loading' })
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [saveError, setSaveError] = useState('')
+  const [testKind, setTestKind] = useState<NotifyKind>('daily_empty')
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<TestResult>(null)
+
+  const form: FormState = { selected, people, weeklyEnabled, weeklyDay, weeklyTime, dailyEnabled, dailyTime, appUrl, texts }
+  const values = buildValues(form, defaults, profileNames)
+  const serialized = JSON.stringify(values)
+  // What the server has; compared against the form to know about unsaved changes
+  // On the first render the form holds exactly what was loaded
+  const [savedSnapshot, setSavedSnapshot] = useState(serialized)
+  const dirty = serialized !== savedSnapshot
 
   const loadServices = useCallback(async (withPrompt = false) => {
     setServices({ status: 'loading' })
@@ -137,55 +248,85 @@ export function NotificationsSection({ initial, haConfigured, timezone, authedFe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [haConfigured])
 
+  // Devices that were already selected before people could be assigned get a
+  // suggestion too, marked as unsaved until "Speichern". The server drops
+  // "niemand" entries, so only do this while nobody has been assigned at all.
+  useEffect(() => {
+    if (profileNames.length === 0) return
+    if (Object.keys(parsePeople(initial.notify_people)).length > 0) return
+    const additions: Record<string, string> = {}
+    for (const id of selected) {
+      if (people[id] !== undefined) continue
+      const guess = suggestPerson(id, profileNames)
+      if (guess) additions[id] = guess
+    }
+    if (Object.keys(additions).length === 0) return
+    setPeople(prev => ({ ...additions, ...prev }))
+    setSuggested(prev => new Set([...Array.from(prev), ...Object.keys(additions)]))
+    // Only once the profile names are known
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileNames.join('|')])
+
   const toggleService = (id: string) => {
+    const ticking = !selected.includes(id)
     setSelected(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id])
+    if (ticking && people[id] === undefined) {
+      const guess = suggestPerson(id, profileNames)
+      setPeople(prev => ({ ...prev, [id]: guess }))
+      if (guess) setSuggested(prev => new Set(prev).add(id))
+    }
+    setTestResult(null)
+  }
+
+  const setPerson = (id: string, name: string) => {
+    setPeople(prev => ({ ...prev, [id]: name }))
+    setSuggested(prev => { const next = new Set(prev); next.delete(id); return next })
     setTestResult(null)
   }
 
   const appUrlTrimmed = appUrl.trim()
   const appUrlValid = isValidAppUrl(appUrlTrimmed)
 
-  const save = async () => {
+  /** Saves the whole section. Returns true when the server has the current values. */
+  const save = async (): Promise<boolean> => {
     setSaveError(''); setSaved(false)
     if (!appUrlValid) {
       // The inline message under the field already explains the problem
       document.getElementById('app-public-url')?.focus()
-      return
-    }
-    const values: NotifySettings = {
-      notify_services: JSON.stringify(selected),
-      notify_weekly_enabled: weeklyEnabled ? '1' : '0',
-      notify_weekly_day: weeklyDay,
-      notify_weekly_time: weeklyTime,
-      notify_daily_enabled: dailyEnabled ? '1' : '0',
-      notify_daily_time: dailyTime,
-      app_public_url: appUrlTrimmed,
+      return false
     }
     setSaving(true)
     try {
       const res = await authedFetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(values),
+        body: serialized,
       })
-      if (!res.ok) { setSaveError(await responseError(res)); return }
+      if (!res.ok) { setSaveError(await responseError(res)); return false }
+      setSavedSnapshot(serialized)
+      setSuggested(new Set())
       onSaved(values)
       setSaved(true)
       setTimeout(() => setSaved(false), 2500)
+      return true
     } catch {
       setSaveError('Keine Verbindung zu Vommeal.')
+      return false
     } finally {
       setSaving(false)
     }
   }
 
   const sendTest = async () => {
-    setTesting(true); setTestResult(null)
+    setTestResult(null)
+    // The server builds the test from the saved people and texts, so save first
+    if (dirty && !(await save())) return
+    setTesting(true)
     try {
       const res = await authedFetch('/api/ha/notify-test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ services: selected }),
+        body: JSON.stringify({ services: selected, kind: testKind }),
       })
       const data = await res.json().catch(() => null)
       const details = describeTestErrors(data?.errors)
@@ -199,8 +340,10 @@ export function NotificationsSection({ initial, haConfigured, timezone, authedFe
         const ok = !!data.ok && sent > 0 && details.length === 0
         let message: string
         if (sent === 0) message = 'Es wurde nichts gesendet.'
-        else if (ok) message = `Gesendet an ${sent} ${sent === 1 ? 'Gerät' : 'Geräte'}. Schaut aufs Handy.`
-        else message = `Nur an ${sent} von ${total} Geräten gesendet.`
+        else if (ok) {
+          message = `„${NOTIFY_KIND_LABELS[testKind]}“ an ${sent} ${sent === 1 ? 'Gerät' : 'Geräte'} gesendet. Schaut aufs Handy.`
+          if (testKind !== 'daily_planned') message += ' Ein Tipp auf einen Knopf antwortet nur mit „✓ Der Knopf funktioniert“.'
+        } else message = `Nur an ${sent} von ${total} Geräten gesendet.`
         setTestResult({ ok, message, details })
       }
     } catch {
@@ -218,10 +361,17 @@ export function NotificationsSection({ initial, haConfigured, timezone, authedFe
     ...missing.map(id => ({ id, missing: true })),
   ]
 
+  // Name used in the text previews: the first person that gets a message
+  const previewName = selected.map(id => people[id]).find(Boolean) || profileNames[0] || 'Kilian'
+
   return (
     <>
+      <p className="text-sm leading-relaxed text-[#a8a8a8]">
+        Jedes Handy bekommt seine eigene Nachricht mit Namen. Über die Knöpfe in der Nachricht könnt ihr direkt planen, ohne die App zu öffnen.
+      </p>
+
       {/* Devices */}
-      <div>
+      <div className="border-t border-[#262626] pt-4">
         <div className="flex items-center justify-between gap-2">
           <p className="text-[13px] font-medium text-[#c4c4c4]">Geräte</p>
           {haConfigured && (
@@ -236,7 +386,9 @@ export function NotificationsSection({ initial, haConfigured, timezone, authedFe
             </button>
           )}
         </div>
-        <Hint className="mt-0.5 mb-2">Wählt die Handys aus, auf denen die Home-Assistant-App Nachrichten anzeigen soll.</Hint>
+        <Hint className="mt-0.5 mb-2">
+          Wählt die Handys aus, auf denen die Home-Assistant-App Nachrichten anzeigen soll, und bei „Wer?“, wem das Handy gehört.
+        </Hint>
 
         {!haConfigured && (
           <StatusBox ok={false}>
@@ -270,29 +422,55 @@ export function NotificationsSection({ initial, haConfigured, timezone, authedFe
           <ul className="mt-2 space-y-1.5">
             {rows.map(({ id, missing: isMissing }) => {
               const checked = selected.includes(id)
+              const name = friendlyServiceName(id)
+              const showPicker = checked && profileNames.length > 0
               return (
-                <li key={id}>
-                  <label className={`flex items-center gap-3 min-h-[48px] px-3 py-2 rounded-lg border cursor-pointer transition-colors ${
+                <li
+                  key={id}
+                  className={`flex items-center gap-2 min-h-[48px] pl-3 pr-2 py-1.5 rounded-lg border transition-colors ${
                     checked ? 'bg-primary/10 border-primary/40' : 'bg-[#0f0f0f] border-[#262626] hover:border-[#3a3a3a]'
-                  }`}>
+                  }`}
+                >
+                  <label className="flex items-center gap-2.5 min-w-0 flex-1 min-h-[40px] cursor-pointer">
                     <input
                       type="checkbox"
                       checked={checked}
                       onChange={() => toggleService(id)}
                       className="h-5 w-5 flex-shrink-0 accent-[#f97316] p-0"
                     />
-                    <Smartphone size={16} className="text-[#8f8f8f] flex-shrink-0" />
+                    <Smartphone size={16} className="hidden sm:block text-[#8f8f8f] flex-shrink-0" />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-sm text-white truncate">{friendlyServiceName(id)}</span>
-                      <span className="block text-[11px] text-[#8f8f8f] truncate">
-                        {isMissing ? 'Gerade nicht in Home Assistant gefunden' : id}
-                      </span>
+                      <span className="block text-sm text-white truncate">{name}</span>
+                      {!isMissing && showPicker && suggested.has(id) ? (
+                        <span className="block text-[11px] leading-tight text-[#a8a8a8]">Vorschlag, noch nicht gespeichert</span>
+                      ) : (
+                        <span className="block text-[11px] text-[#8f8f8f] truncate">
+                          {isMissing ? 'Gerade nicht in Home Assistant gefunden' : id}
+                        </span>
+                      )}
                     </span>
                   </label>
+                  {showPicker && (
+                    <label className="flex items-center gap-1.5 flex-shrink-0">
+                      <span className="text-[11px] text-[#a8a8a8]">Wer?</span>
+                      <select
+                        value={profileNames.includes(people[id] ?? '') ? people[id] : ''}
+                        onChange={e => setPerson(id, e.target.value)}
+                        aria-label={`Wer bekommt die Nachrichten auf ${name}?`}
+                        className="h-10 w-[92px] px-2 text-sm"
+                      >
+                        {profileNames.map(p => <option key={p} value={p}>{p}</option>)}
+                        <option value="">niemand</option>
+                      </select>
+                    </label>
+                  )}
                 </li>
               )
             })}
           </ul>
+        )}
+        {profileNames.length === 0 && selected.length > 0 && (
+          <Hint>Legt oben unter „Profile“ eure Namen an, dann könnt ihr jedem Handy eine Person zuordnen.</Hint>
         )}
       </div>
 
@@ -360,6 +538,25 @@ export function NotificationsSection({ initial, haConfigured, timezone, authedFe
         )}
       </div>
 
+      {/* Message texts */}
+      <div className="border-t border-[#262626] pt-4">
+        <p className="text-[13px] font-medium text-[#c4c4c4]">Texte</p>
+        <NotifyTextsHint />
+        <div className="space-y-3">
+          {NOTIFY_KIND_ORDER.map(kind => (
+            <NotifyTextCard
+              key={kind}
+              kind={kind}
+              value={texts[kind]}
+              defaultText={defaults[kind]}
+              previewName={previewName}
+              hasAppUrl={appUrlTrimmed !== '' && appUrlValid}
+              onChange={text => { setTexts(prev => ({ ...prev, [kind]: text })); setSaveError('') }}
+            />
+          ))}
+        </div>
+      </div>
+
       {/* Public app URL */}
       <div className="border-t border-[#262626] pt-4">
         <Label htmlFor="app-public-url">App-Adresse</Label>
@@ -385,6 +582,39 @@ export function NotificationsSection({ initial, haConfigured, timezone, authedFe
         )}
       </div>
 
+      {/* Test notification */}
+      <div className="border-t border-[#262626] pt-4">
+        <Label htmlFor="notify-test-kind">Testnachricht</Label>
+        <div className="flex flex-wrap gap-2">
+          <select
+            id="notify-test-kind"
+            value={testKind}
+            onChange={e => { setTestKind(e.target.value as NotifyKind); setTestResult(null) }}
+            className="h-11 flex-1 min-w-[210px]"
+          >
+            {NOTIFY_KIND_ORDER.map(kind => <option key={kind} value={kind}>{NOTIFY_KIND_LABELS[kind]}</option>)}
+          </select>
+          <button
+            type="button"
+            onClick={sendTest}
+            disabled={testing || saving || selected.length === 0}
+            title={selected.length === 0 ? 'Erst ein Gerät auswählen' : undefined}
+            className={secondaryButtonClass}
+          >
+            <BellRing size={15} className={testing ? 'animate-pulse' : ''} />
+            {testing ? 'Wird gesendet …' : 'Senden'}
+          </button>
+        </div>
+        {selected.length === 0 && haConfigured && services.status === 'ok' && services.services.length > 0 ? (
+          <Hint>Wählt mindestens ein Gerät aus, um eine Testnachricht zu senden.</Hint>
+        ) : (
+          <Hint>
+            Geht an die ausgewählten Geräte, mit Namen und Knöpfen zum Ausprobieren.
+            {dirty && ' Eure Änderungen werden vorher gespeichert.'}
+          </Hint>
+        )}
+      </div>
+
       {testResult && (
         <StatusBox ok={testResult.ok}>
           {testResult.message}
@@ -397,22 +627,10 @@ export function NotificationsSection({ initial, haConfigured, timezone, authedFe
       )}
       {saveError && <StatusBox ok={false}>{saveError}</StatusBox>}
 
-      <div className="flex flex-wrap gap-2 pt-1">
-        <button
-          type="button"
-          onClick={sendTest}
-          disabled={testing || selected.length === 0}
-          title={selected.length === 0 ? 'Erst ein Gerät auswählen' : undefined}
-          className={secondaryButtonClass}
-        >
-          <BellRing size={15} className={testing ? 'animate-pulse' : ''} />
-          {testing ? 'Wird gesendet …' : 'Testnachricht senden'}
-        </button>
-        <PrimaryButton onClick={save} disabled={saving} done={saved} label="Speichern" />
+      <div className="flex flex-wrap items-center gap-3 border-t border-[#262626] pt-4">
+        <PrimaryButton onClick={() => { void save() }} disabled={saving} done={saved} label="Speichern" />
+        {dirty && !saved && <span className="text-xs text-[#a8a8a8]">Ungespeicherte Änderungen</span>}
       </div>
-      {selected.length === 0 && haConfigured && services.status === 'ok' && services.services.length > 0 && (
-        <Hint className="mt-0">Wählt mindestens ein Gerät aus, um eine Testnachricht zu senden.</Hint>
-      )}
     </>
   )
 }
