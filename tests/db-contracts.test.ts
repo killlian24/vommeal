@@ -147,3 +147,55 @@ describe('usage events', () => {
     expect(old.n).toBe(0)
   })
 })
+
+describe('recipe deletion mirrors Mealie', async () => {
+  const { removeVanishedRecipes } = await import('../lib/mealieSync')
+  const mealieRecipe = (id: string, slug: string) =>
+    db.upsertRecipe({ id, name: `Rezept ${slug}`, mealie_id: `mid-${slug}`, mealie_slug: slug, source: 'mealie' })
+
+  it('keeps the name on planned evenings when a recipe is deleted', () => {
+    mealieRecipe('del1', 'test123')
+    db.addMealPlanEntry({
+      id: 'mdel1', date: '2026-10-05', meal_type: 'dinner', recipe_id: 'del1', custom_meal_name: null,
+      servings: 2, notes: '', status: 'approved', suggested_by: 'Kilian',
+    })
+    db.deleteRecipe('del1')
+    expect(db.getRecipeById('del1')).toBeNull()
+    const entry = db.getMealPlanRange('2026-10-05', '2026-10-05')[0]
+    expect(entry.recipe_id).toBeNull()
+    expect(entry.custom_meal_name).toBe('Rezept test123')
+  })
+
+  it('removes a recipe that Mealie no longer lists', () => {
+    for (const s of ['a', 'b', 'c', 'gone']) mealieRecipe(`v-${s}`, s)
+    const listed = new Set(['lasagne', 'a', 'b', 'c'])
+    const result = removeVanishedRecipes(listed, new Set())
+    expect(result.removed).toBe(1)
+    expect(result.removedNames).toEqual(['Rezept gone'])
+    expect(db.getRecipeById('v-gone')).toBeNull()
+    expect(db.getRecipeById('v-a')).not.toBeNull()
+  })
+
+  it('does not remove a renamed recipe that was seen by id', () => {
+    mealieRecipe('v-renamed', 'old-slug')
+    const result = removeVanishedRecipes(new Set(['lasagne', 'a', 'b', 'c']), new Set(['mid-old-slug']))
+    expect(result.removed).toBe(0)
+  })
+
+  it('removes nothing when Mealie lists no recipes', () => {
+    const result = removeVanishedRecipes(new Set(), new Set())
+    expect(result.removed).toBe(0)
+    expect(result.removalSkipped).toBeTruthy()
+    expect(db.getRecipeById('v-a')).not.toBeNull()
+  })
+
+  it('stops when most recipes would vanish at once', () => {
+    const result = removeVanishedRecipes(new Set(['lasagne']), new Set())
+    expect(result.removed).toBe(0)
+    expect(result.removalSkipped).toMatch(/Sicherheit/)
+  })
+
+  it('never touches local-only recipes', () => {
+    expect(db.getRecipeById('r2')).not.toBeNull()
+  })
+})

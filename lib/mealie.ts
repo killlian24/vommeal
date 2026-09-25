@@ -320,6 +320,36 @@ export async function createMealieRecipe(input: NewMealieRecipe): Promise<string
   return cleanSlug
 }
 
+/** Delete a recipe in Mealie. A recipe that is already gone counts as deleted. */
+export async function deleteMealieRecipe(slug: string): Promise<void> {
+  try {
+    await mealieRequest('DELETE', `/recipes/${encodeURIComponent(slug)}`)
+  } catch (e) {
+    if (e instanceof MealieHttpError && e.status === 404) return
+    throw e
+  }
+}
+
+/**
+ * Make sure a Mealie recipe carries the given category (e.g. "Abendessen").
+ * Needed because the recipe sync only lists that category: an imported
+ * recipe without it would disappear from Vommeal on the next sync.
+ */
+export async function ensureMealieCategory(slug: string, categoryName: string): Promise<void> {
+  const wanted = categoryName.trim().toLowerCase()
+  if (!wanted) return
+  const recipe = await mealieRequest<Record<string, unknown>>('GET', `/recipes/${slug}`)
+  const current = Array.isArray(recipe.recipeCategory) ? recipe.recipeCategory as { name?: string }[] : []
+  if (current.some(c => c?.name?.toLowerCase() === wanted)) return
+  const cats = await mealieGet<{ items?: { id: string; name: string; slug: string }[] }>(
+    '/organizers/categories?page=1&perPage=200'
+  )
+  const cat = cats.items?.find(c => c.name.toLowerCase() === wanted)
+  if (!cat) return
+  recipe.recipeCategory = [...current, { id: cat.id, name: cat.name, slug: cat.slug }]
+  await mealieRequest('PUT', `/recipes/${slug}`, recipe)
+}
+
 export function getMealieRecipeUrl(slug: string): string {
   const config = getMealieConfig()
   if (!config) return ''

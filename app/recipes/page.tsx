@@ -30,6 +30,8 @@ type SyncProgress = {
   synced?: number
   current?: string
   created?: number
+  removed?: number
+  removalSkipped?: string
   errors?: number
   failed?: { slug: string; error: string }[]
   message?: string
@@ -239,7 +241,9 @@ export default function RecipesPage() {
               ) : syncProgress.status === 'done' ? (
                 <span className="text-green-400">
                   ✓ Fertig: {syncProgress.created} neu, {syncProgress.synced} aktualisiert
+                  {(syncProgress.removed ?? 0) > 0 && `, ${syncProgress.removed} entfernt`}
                   {(syncProgress.errors ?? 0) > 0 && `, ${syncProgress.errors} fehlgeschlagen`}
+                  {syncProgress.removalSkipped && <span className="block text-amber-300">{syncProgress.removalSkipped}</span>}
                 </span>
               ) : (
                 <>

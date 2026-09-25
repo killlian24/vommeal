@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getRecipeById, upsertRecipe, deleteRecipe, updateRecipeRating, updateRecipeEffort } from '@/lib/db'
-import { updateMealieRating } from '@/lib/mealie'
+import { updateMealieRating, deleteMealieRecipe } from '@/lib/mealie'
+import { IMAGE_CACHE_DIR } from '@/lib/images'
+import fs from 'fs'
+import path from 'path'
 import { errorResponse, readJsonObject, parseRecipeInput, optionalRating, optionalEffort } from '@/lib/validate'
 
 export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -61,8 +64,24 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   } catch (e) { return errorResponse(e) }
 }
 
+/**
+ * Delete a recipe. Mealie recipes are deleted in Mealie first; if Mealie
+ * refuses or is unreachable, nothing is deleted locally either, so the two
+ * stay in step.
+ */
 export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
+  const recipe = getRecipeById(id)
+  if (!recipe) return NextResponse.json({ error: 'Rezept nicht gefunden' }, { status: 404 })
+  if (recipe.source === 'mealie' && recipe.mealie_slug) {
+    try {
+      await deleteMealieRecipe(recipe.mealie_slug)
+    } catch (e) {
+      console.error('[recipe delete] mealie', String(e))
+      return NextResponse.json({ error: 'Löschen in Mealie hat nicht geklappt – bitte später nochmal versuchen' }, { status: 502 })
+    }
+  }
   deleteRecipe(id)
+  try { fs.rmSync(path.join(IMAGE_CACHE_DIR, `${id}.webp`), { force: true }) } catch { /* cache only */ }
   return NextResponse.json({ ok: true })
 }

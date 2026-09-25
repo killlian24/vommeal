@@ -100,10 +100,19 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
   }
 
   const del = async () => {
-    if (!confirm('Rezept wirklich löschen?')) return
-    await fetch(`/api/recipes/${id}`, { method: 'DELETE' })
+    const where = recipe.source === 'mealie' ? ' Es wird auch in Mealie gelöscht.' : ''
+    if (!confirm(`„${recipe.name}“ wirklich löschen?${where} Geplante Abende behalten den Namen.`)) return
+    setSaveError('')
+    const res = await fetch(`/api/recipes/${id}`, { method: 'DELETE' }).catch(() => null)
+    if (!res || !res.ok) {
+      const data = res ? await res.json().catch(() => ({})) : {}
+      setSaveError(data?.error || 'Löschen hat nicht geklappt')
+      return
+    }
+    track('recipe_delete', { source: recipe.source })
     router.push('/recipes')
   }
+
 
   const setEffort = async (effort: Effort) => {
     const previous = recipe.effort ?? null
@@ -188,12 +197,10 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
                 <Edit2 size={12} />
                 Bearbeiten
               </button>
-              {recipe.source === 'local' && (
-                <button onClick={del} title="Rezept löschen"
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs transition-all border border-red-500/20">
-                  <Trash2 size={12} /> Löschen
-                </button>
-              )}
+              <button onClick={del} title="Rezept löschen"
+                className="min-h-[40px] flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs transition-all border border-red-500/20">
+                <Trash2 size={12} /> Löschen
+              </button>
             </>
           )}
           {editing && (

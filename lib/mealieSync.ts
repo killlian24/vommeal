@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { fetchMealieRecipeSlugs, fetchMealieRecipeDetail, fetchMealieSlugsForCategory } from './mealie'
-import { upsertRecipe, getAllRecipes, getRecipeByMealieId, getSetting } from './db'
+import { upsertRecipe, getAllRecipes, getRecipeByMealieId, getSetting, deleteRecipe } from './db'
 import type { Recipe } from './db'
 
 /**
@@ -22,6 +22,11 @@ export type MealieSyncResult = {
   created: number
   errors: number
   failed: { slug: string; error: string }[]
+  /** Local Mealie recipes removed because Mealie no longer lists them */
+  removed: number
+  removedNames: string[]
+  /** Set when removal was skipped by the safety check */
+  removalSkipped?: string
 }
 
 type MealieDetail = Awaited<ReturnType<typeof fetchMealieRecipeDetail>>
@@ -87,6 +92,7 @@ async function runSync(onProgress: (p: MealieSyncProgress) => void): Promise<Mea
     getAllRecipes().filter(r => r.mealie_id).map(r => [r.mealie_id!, r])
   )
 
+  const seenMealieIds = new Set<string>()
   let synced = 0
   let created = 0
   let errors = 0
@@ -97,6 +103,7 @@ async function runSync(onProgress: (p: MealieSyncProgress) => void): Promise<Mea
       const mr = await fetchMealieRecipeDetail(slug)
       const existingRecipe = existingByMealieId.get(mr.mealie_id)
       upsertMealieDetail(mr, existingRecipe?.id)
+      seenMealieIds.add(mr.mealie_id)
       if (existingRecipe) { synced++ } else { created++ }
     } catch (e) {
       errors++
@@ -108,7 +115,38 @@ async function runSync(onProgress: (p: MealieSyncProgress) => void): Promise<Mea
     onProgress({ status: 'syncing', total, synced: synced + created, current: slug, errors })
   }
 
-  const result = { total, synced, created, errors, failed }
+  const removal = removeVanishedRecipes(new Set(slugs), seenMealieIds)
+  const result = { total, synced, created, errors, failed, ...removal }
   onProgress({ status: 'done', ...result })
   return result
+}
+
+/**
+ * Mirror deletions: drop local Mealie recipes that Mealie no longer lists
+ * (deleted there, or removed from the dinner category). Safety stop: nothing
+ * is removed when Mealie listed no recipes at all, or when more than half of
+ * the local Mealie recipes (and more than 3) would go — that smells like a
+ * misconfiguration rather than a real clean-up.
+ */
+export function removeVanishedRecipes(
+  listedSlugs: Set<string>,
+  seenMealieIds: Set<string>,
+): Pick<MealieSyncResult, 'removed' | 'removedNames' | 'removalSkipped'> {
+  const local = getAllRecipes().filter(r => r.source === 'mealie')
+  const vanished = local.filter(r =>
+    !(r.mealie_slug && listedSlugs.has(r.mealie_slug)) &&
+    !(r.mealie_id && seenMealieIds.has(r.mealie_id))
+  )
+  if (vanished.length === 0) return { removed: 0, removedNames: [] }
+  if (listedSlugs.size === 0) {
+    return { removed: 0, removedNames: [], removalSkipped: 'Mealie hat keine Rezepte geliefert – nichts gelöscht' }
+  }
+  if (vanished.length > 3 && vanished.length > local.length / 2) {
+    return {
+      removed: 0, removedNames: [],
+      removalSkipped: `${vanished.length} Rezepte fehlen in Mealie – zur Sicherheit nichts gelöscht`,
+    }
+  }
+  for (const r of vanished) deleteRecipe(r.id)
+  return { removed: vanished.length, removedNames: vanished.map(r => r.name) }
 }

@@ -386,8 +386,21 @@ export function getRecipeByMealieId(mealieId: string): Recipe | null {
   return row ? parseRecipe(row) : null
 }
 
+/**
+ * Delete a recipe locally. Planned evenings that used it keep the recipe's
+ * name as a free-text meal instead of turning blank (the FK sets recipe_id
+ * to NULL); Swipen votes for it are removed by the cascade.
+ */
 export function deleteRecipe(id: string) {
-  getDb().prepare('DELETE FROM recipes WHERE id = ?').run(id)
+  const db = getDb()
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE meal_plan
+      SET custom_meal_name = COALESCE(NULLIF(custom_meal_name, ''), (SELECT name FROM recipes WHERE id = ?))
+      WHERE recipe_id = ?
+    `).run(id, id)
+    db.prepare('DELETE FROM recipes WHERE id = ?').run(id)
+  })()
 }
 
 // --- Meal Plan ---

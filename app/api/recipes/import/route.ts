@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
-  fetchMealieRecipeDetail, importMealieRecipeFromUrl, isMealieConfigured,
+  ensureMealieCategory, fetchMealieRecipeDetail, importMealieRecipeFromUrl, isMealieConfigured,
   MealieHttpError, MealieUnreachableError,
 } from '@/lib/mealie'
 import { upsertMealieDetail } from '@/lib/mealieSync'
 import { LIMITS } from '@/lib/validate'
+import { getSetting } from '@/lib/db'
 
 function fail(error: string, status: number) {
   return NextResponse.json({ error }, { status })
@@ -51,6 +52,13 @@ export async function POST(req: NextRequest) {
       return fail('Auf dieser Seite wurde kein Rezept gefunden', 400)
     }
     return fail('Import in Mealie fehlgeschlagen', 502)
+  }
+
+  // The sync only lists the dinner category; without it the imported recipe
+  // would vanish from Vommeal on the next sync.
+  const dinnerCategory = getSetting('dinner_category') || ''
+  if (dinnerCategory) {
+    try { await ensureMealieCategory(slug, dinnerCategory) } catch (e) { console.error('[recipe import] category', String(e)) }
   }
 
   try {
