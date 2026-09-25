@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { autofillCandidates, planAutofill, isWeeknight } from '../app/api/meal-plan/autofill/plan'
-import type { AutofillRecipe } from '../app/api/meal-plan/autofill/plan'
+import { autofillCandidates, planAutofill, isWeeknight } from '../lib/autofillPlan'
+import type { AutofillRecipe } from '../lib/autofillPlan'
 
 // Deterministic "random" for stable tests.
 function seeded(seed = 1) {

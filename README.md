@@ -1,121 +1,122 @@
 # Vommeal
 
-Meal planning PWA for two. Weekly planner, Mealie recipe sync, HA shopping list integration, push reminders via Home Assistant, recipe import by link, fun voting mode.
+Essensplaner als Web-App (PWA) für den Haushalt: Wochenplan, Rezepte aus Mealie, Einkaufsliste mit Home-Assistant-Abgleich, Erinnerungen per Push, Rezeptimport per Link und ein Fun-Modus zum gemeinsamen Abstimmen.
 
 ---
 
-## Install on Synology via Portainer
+## Voraussetzungen
 
-Assumes Docker + Portainer are already running on your NAS.
+- **Ein Rechner, der dauerhaft läuft, mit Docker**, z. B. ein Synology-NAS mit Portainer oder Container Manager, ein Raspberry Pi oder ein Linux-Server.
+- **Mealie** (empfohlen): Selbst gehostete Rezeptverwaltung, aus der Vommeal die Rezepte holt. Ohne Mealie lassen sich Rezepte nur von Hand in Vommeal anlegen, Rezeptimport per Link und Bewertungen in Mealie fallen weg.
+- **Home Assistant** (optional): Für den Abgleich der Einkaufsliste mit einer HA-Todo-Liste (z. B. Google Keep) und für Push-Erinnerungen über die HA-App auf den Handys.
+- **Tailscale** (optional): Für den Zugriff von unterwegs. Vommeal hat kein Login und gehört nicht offen ins Internet (siehe [Zugriff von unterwegs](#zugriff-von-unterwegs)).
 
-### 1. Create the data folder
+---
 
-SSH into your NAS and create the folder where Vommeal stores its database:
+## Installation
+
+### Synology mit Portainer
+
+Docker und Portainer müssen auf dem NAS schon laufen.
+
+**1. Datenordner anlegen.** Per SSH auf dem NAS den Ordner für die Datenbank anlegen:
 
 ```bash
 mkdir -p /volume1/docker/vommeal/data
 ```
 
-You do not need `git` installed on the NAS when deploying through Portainer's repository mode.
+`git` muss auf dem NAS nicht installiert sein, Portainer holt den Code selbst.
 
-### 2. Deploy in Portainer
+**2. Stack anlegen.** Portainer → **Stacks** → **Add stack** → **Repository**:
 
-Portainer → **Stacks** → **Add stack** → choose **Repository**:
-
-- **Repository URL:** `https://github.com/killlian24/vommeal`
+- **Repository URL:** `https://github.com/killlian24/vommeal` (oder die URL eures Forks)
 - **Compose path:** `docker-compose.yml`
+- **Environment variables:** mindestens `TZ=Europe/Berlin` (Standard ist `Europe/Copenhagen`), weitere Variablen siehe unten.
 
-The compose file already stores the database in the Synology folder:
+**3. Deployen.** Der erste Build dauert 3–5 Minuten (Node-Pakete und Next.js kompilieren). Danach ist Vommeal unter `http://<nas-ip>:3333` erreichbar.
 
-```yaml
-services:
-  vommeal:
-    build: .
-    container_name: vommeal
-    restart: unless-stopped
-    ports:
-      - "3333:3000"
-    volumes:
-      - /volume1/docker/vommeal/data:/app/data
-    environment:
-      - NODE_ENV=production
-      - DATA_DIR=/app/data
-      - TZ=${TZ:-Europe/Copenhagen}
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+### Beliebiger Docker-Rechner (ohne Portainer)
+
+```bash
+git clone https://github.com/killlian24/vommeal.git
+cd vommeal
+DATA_PATH=./data TZ=Europe/Berlin docker compose up -d --build
 ```
 
-First build takes 3–5 minutes (Node deps + Next.js compile). The container is healthy when `http://<nas-ip>:3333` loads.
+Die Variablen lassen sich auch in eine `.env`-Datei neben der `docker-compose.yml` schreiben, dann reicht `docker compose up -d --build`.
+
+### Variablen der `docker-compose.yml`
+
+| Variable | Standard | Zweck |
+| --- | --- | --- |
+| `DATA_PATH` | `/volume1/docker/vommeal/data` | Ordner auf dem Host für Datenbank, Backups und Bild-Cache. Auf Nicht-Synology-Systemen anpassen, z. B. `./data`. |
+| `TZ` | `Europe/Copenhagen` | Zeitzone des Containers (Backup-Dateinamen, Logs). |
+| `MEALIE_URL`, `MEALIE_TOKEN` | leer | Mealie-Zugang, alternativ in den Einstellungen der App. |
+| `HA_URL`, `HA_TOKEN`, `HA_ENTITY` | leer | Home-Assistant-Zugang, alternativ in den Einstellungen der App. |
+| `APP_PASSWORD` | leer | Optionales Passwort für Einstellungen und Backup-Download. |
+
+Port `3333` und das Docker-Netz `172.26.0.0/24` stehen fest in der `docker-compose.yml`. Kollidiert das Netz mit einem vorhandenen, dort ein anderes freies /24 eintragen.
 
 ---
 
-## Mealie and Home Assistant setup
+## Einrichtung in der App
 
-Easiest: deploy Vommeal first, open `http://<nas-ip>:3333/settings`, and enter the Mealie and Home Assistant values in the app.
+`http://<nas-ip>:3333/settings` öffnen:
 
-Cleaner Docker option: set them in Portainer's **Environment variables** section for the stack. The included compose file already passes these variables into the container.
+- **Namen:** eure beiden Namen (werden pro Browser gemerkt)
+- **Mealie-URL und API-Token:** für den Rezept-Sync. Den Token erstellt man in Mealie unter Profil → API Tokens.
+- **Home Assistant:** URL, Long-Lived Access Token und Todo-Entität der Einkaufsliste (z. B. `todo.einkaufsliste`)
+- **Abendessen-Kategorie:** Mealie-Kategorie, auf die die Rezepte gefiltert werden (z. B. `Abendessen`)
+- **Benachrichtigungen:** Geräte, Uhrzeiten, App-Adresse und Zeitzone (siehe unten)
 
-In Portainer's environment-variable table, use the variable name without spaces as the **name**, and put the token or URL as the **value**:
+Auf dem Handy Vommeal im Browser öffnen und **„Zum Startbildschirm hinzufügen“** wählen, dann läuft es wie eine App.
+
+### Zugangsdaten: in der App oder in Portainer
+
+Am einfachsten trägt man Mealie und Home Assistant direkt in den Einstellungen ein. Die Tokens landen dann in der SQLite-Datenbank.
+
+Sauberer ist es, sie in Portainer unter **Environment variables** des Stacks zu setzen. In der Tabelle steht der Variablenname ohne Leerzeichen als **name**, der Wert als **value**:
 
 ```text
-MEALIE_URL=http://your-mealie-address:9000
-MEALIE_TOKEN=your-mealie-api-token
-HA_URL=http://your-home-assistant-address:8123
-HA_TOKEN=your-home-assistant-long-lived-token
-HA_ENTITY=todo.your_shopping_list_entity
-APP_PASSWORD=optional-admin-password
+MEALIE_URL=http://eure-mealie-adresse:9000
+MEALIE_TOKEN=euer-mealie-token
+HA_URL=http://eure-home-assistant-adresse:8123
+HA_TOKEN=euer-long-lived-token
+HA_ENTITY=todo.eure_einkaufsliste
+APP_PASSWORD=optionales-passwort
 ```
 
-Do not paste YAML list items into Portainer's environment-variable table. These are wrong there:
+So ist es falsch (keine YAML-Listenpunkte, keine Leerzeichen im Namen):
 
 ```text
-- MEALIE_URL=http://your-mealie-address:9000
-Home Assistant Token=your-token
-HA TOKEN=your-token
+- MEALIE_URL=http://eure-mealie-adresse:9000
+Home Assistant Token=euer-token
+HA TOKEN=euer-token
 ```
 
-The compose file maps the Portainer variables like this:
+Als Adressen die verwenden, die das NAS bzw. der Container erreicht, meist LAN-Adressen wie `http://192.168.x.x:8123`. `localhost` funktioniert nur, wenn der Dienst im selben Container läuft.
 
-```yaml
-environment:
-  - NODE_ENV=production
-  - DATA_DIR=/app/data
-  - MEALIE_URL=${MEALIE_URL:-}
-  - MEALIE_TOKEN=${MEALIE_TOKEN:-}
-  - HA_URL=${HA_URL:-}
-  - HA_TOKEN=${HA_TOKEN:-}
-  - HA_ENTITY=${HA_ENTITY:-}
-  - APP_PASSWORD=${APP_PASSWORD:-}
-```
+Sind die Werte in Portainer gesetzt, gelten sie als von Docker gesteuert: Die Einstellungen zeigen sie an, die Felder sind aber gesperrt und werden nur in Portainer geändert.
 
-Use addresses that the NAS/container can reach, usually LAN addresses such as `http://192.168.x.x:8123`. Do not use `localhost` unless the service runs inside the same container.
+`APP_PASSWORD` schützt sensible Aktionen wie das Ändern der Einstellungen und den Backup-Download. Ist es gesetzt, fragt Vommeal beim ersten geschützten Schritt danach.
 
-When these values are set in Portainer, Vommeal treats them as Docker-controlled. The Settings page will show the active values, but those fields are disabled and must be changed in Portainer.
+### Einkaufsliste und Home Assistant
 
-If you leave these variables empty, Vommeal Settings stays editable. That is simpler, but stores the tokens in the SQLite database.
+Home Assistant ist die Schnell-Erfassung: Unterwegs Einträge dort hinzufügen (z. B. per Sprachassistent oder Google Keep), dann in Vommeal auf **Sync** tippen.
 
-Optional: set `APP_PASSWORD` to protect sensitive actions such as changing Settings and downloading a database backup. When it is set, Vommeal asks for the password the first time a protected action is used.
+Der Sync holt zuerst die offenen HA-Einträge, verknüpft bekannte über ihre HA-UID, übernimmt neue, ordnet sie Kategorien zu, schickt fehlende Vommeal-Einträge an HA und **schreibt die HA-Liste danach komplett neu** in Kategorie-Reihenfolge. Das Neuschreiben ist nötig, weil HA-Todo-Listen nicht bei jeder Integration eine zuverlässige Sortierfunktion anbieten. Deshalb die echte Liste erst eintragen, wenn der Rest läuft.
 
-### Home Assistant sync behavior
+UIDs und ein kleines Sync-Protokoll liegen in SQLite, wiederholte Syncs erzeugen also keine Duplikate, solange Einträge über UID oder exakt gleichen Text zugeordnet werden können.
 
-Home Assistant is treated as the quick-capture list. Add items there during the day, then press **Sync** in Vommeal.
+Einträge, die Vommeal keiner Kategorie zuordnen kann, landen unter **Sonstiges**. Kategorie in Vommeal ändern und erneut synchronisieren.
 
-Sync pulls the active Home Assistant todo items first, links known items by HA UID, imports new HA-only items into Vommeal, categorizes them, sends missing Vommeal items to HA, and then rewrites the active HA list in category order. The rewrite is necessary because Home Assistant todo lists do not expose a reliable move/reorder API for every todo integration.
+### Rezeptbilder
 
-The sync stores HA UIDs and a small sync log in SQLite so repeated syncs should be idempotent and should not create duplicates when items can be matched by UID or by their exact displayed text.
+Bilder laufen über Vommeal (`/api/images/<id>`), nicht direkt über Mealie. Der Server lädt jedes Bild einmal, speichert es 7 Tage in `<DATA_PATH>/cache/images/` und liefert es von dort aus. Deshalb erscheinen Bilder auch unterwegs über Tailscale, wenn Mealie selbst nicht erreichbar ist. Der Cache-Ordner kann jederzeit gelöscht werden.
 
-Items that Vommeal cannot confidently categorize stay in **Other** and are marked internally as needing a category. Change the category in Vommeal and sync again.
+### Nächtlicher Mealie-Sync
 
-### Recipe images
-
-Recipe images are loaded through Vommeal (`/api/images/<id>`), not directly from Mealie. The server fetches each image once, caches it for 7 days in `/volume1/docker/vommeal/data/cache/images/`, and serves it from there. That is why pictures also show up when you open Vommeal over Tailscale away from home, where Mealie itself is not reachable. The cache folder can be deleted at any time.
-
-### Nightly Mealie sync
-
-Every night at 03:30 (time zone from Settings) Vommeal pulls all recipes from Mealie, the same as pressing **Sync** in Settings. Turn it off in Settings if you prefer syncing by hand. Your own marks in Vommeal (e.g. "schnell" / "aufwendig") are kept; Mealie does not overwrite them.
+Jede Nacht um 03:30 (Zeitzone aus den Einstellungen) holt Vommeal alle Rezepte aus Mealie, genau wie **Sync** in den Einstellungen. Lässt sich dort abschalten. Eigene Markierungen in Vommeal (z. B. „schnell“ / „aufwendig“) bleiben erhalten.
 
 ---
 
@@ -124,15 +125,45 @@ Every night at 03:30 (time zone from Settings) Vommeal pulls all recipes from Me
 Vommeal schickt Erinnerungen als Push-Nachricht über Home Assistant, genauer über die **Home Assistant Companion App** auf den Handys:
 
 1. **HA-App installieren:** Auf beiden Handys die Home Assistant App installieren (iPhone: App Store, Android: Play Store), mit eurem Home Assistant verbinden und Benachrichtigungen erlauben. Jedes Handy erscheint danach in HA als Dienst `notify.mobile_app_<gerätename>`.
-2. **Geräte auswählen:** In Vommeal unter **Einstellungen → Benachrichtigungen** die Geräte ankreuzen, die Nachrichten bekommen sollen, und mit **Testnachricht senden** prüfen.
-3. **App-Adresse eintragen:** Unter **App-Adresse** genau die Adresse eintragen, mit der ihr Vommeal öffnet, also die Tailscale- oder LAN-Adresse (z. B. `http://nas.tailXXXX.ts.net:3333` oder `http://192.168.0.10:3333`). Ein Tipp auf die Nachricht öffnet dann direkt die passende Seite. Ohne Adresse kommen die Nachrichten trotzdem, nur ohne Link.
+2. **Geräte auswählen:** In Vommeal unter **Einstellungen → Benachrichtigungen** die Geräte ankreuzen, die Nachrichten bekommen sollen.
+3. **Person pro Handy:** Jedem Gerät eine Person zuordnen (z. B. iPhone → Kilian, Android → Susi). Die Nachricht nennt dann den Namen („Susi, heute gibt es …“), und ein Tipp auf einen Knopf wird dieser Person zugeschrieben. Geräte ohne Person bekommen denselben Text ohne Namen.
+4. **App-Adresse eintragen:** Unter **App-Adresse** genau die Adresse eintragen, mit der ihr Vommeal öffnet, also die Tailscale- oder LAN-Adresse (z. B. `http://nas.tailXXXX.ts.net:3333` oder `http://192.168.0.10:3333`). Ein Tipp auf die Nachricht öffnet dann direkt die passende Seite. Ohne Adresse kommen die Nachrichten trotzdem, nur ohne Link und ohne die Knöpfe „Andere Ideen“ / „Selbst planen“.
+5. **Testen:** **Testnachricht senden** schickt ein Beispiel mit echten Knöpfen. Die Test-Knöpfe ändern nichts, sie antworten nur mit „✓ Der Knopf funktioniert“. Kommt diese Antwort, ist alles eingerichtet.
 
-Erinnerungen:
+### Erinnerungen und Knöpfe
 
-- **Wochenplanung** (Standard: sonntags 18:00): „Nächste Woche sind noch N Abende frei – kurz planen?“ – nur wenn in der nächsten Woche (Mo–So) noch Abende leer sind. Öffnet die nächste Woche im Planer.
-- **Heute** (Standard: aus, 16:00): „Heute: <Gericht>“ bzw. „Heute ist noch nichts geplant“. Öffnet `/tonight`.
+- **Heute** (Standard: aus, 16:00)
+  - Ist etwas geplant: „Susi, heute gibt es Butter Chicken 🍽️“ – ohne Knöpfe.
+  - Ist nichts geplant: Vommeal schlägt ein Rezept vor (dieselben Regeln wie die Seite „Heute“: nichts mit „nicht nochmal“, nichts aus den letzten 21 Tagen oder schon für die nächsten Tage geplant, gut bewertete zuerst, Mo–Do bevorzugt schnelle Rezepte). Knöpfe:
+    - **„<Rezept> kochen“** plant das Rezept für heute,
+    - **„Reste“** trägt „Reste“ für heute ein,
+    - **„Andere Ideen“** öffnet die Seite „Heute“ mit weiteren Vorschlägen.
+- **Wochenplanung** (Standard: sonntags 18:00): „Nächste Woche sind noch 5 Abende frei – kurz planen?“ – nur wenn in der nächsten Woche (Mo–So) noch Abende leer sind. Knöpfe:
+  - **„Woche füllen“** füllt die leeren Abende automatisch (wie „Fast“ im Planer),
+  - **„Selbst planen“** öffnet die nächste Woche im Planer.
 
-Tag, Uhrzeit und Zeitzone (Standard `Europe/Copenhagen`) lassen sich in den Einstellungen ändern. Jede Erinnerung wird höchstens einmal pro Tag verschickt. Der Planer läuft nur im Docker-Container (Produktion), nicht im lokalen Dev-Server (siehe `VOMMEAL_SCHEDULER` in `.env.example`).
+Nach einem Tipp ersetzt Vommeal die Nachricht auf diesem Handy durch eine Bestätigung („✓ Butter Chicken ist für heute geplant“, „✓ 5 Abende gefüllt“). Das andere Handy bekommt eine kurze Info („Kilian hat Butter Chicken für heute geplant“), die dort die alte Nachricht mit den Knöpfen ersetzt. Ein schon geplanter Abend wird nie überschrieben: Wer zu spät tippt, bekommt „Heute ist schon … geplant“. Doppelte Tipps schaden nicht.
+
+Android zeigt höchstens drei Knöpfe, iOS kürzt lange Titel; lange Rezeptnamen werden deshalb gekürzt. Auf dem iPhone erscheinen die Knöpfe nach langem Drücken bzw. Herunterziehen der Nachricht.
+
+### Eigene Texte
+
+Unter **Einstellungen → Benachrichtigungen** lassen sich die drei Texte anpassen (höchstens 200 Zeichen, leer = Standardtext). Platzhalter:
+
+| Platzhalter | Bedeutung | Verfügbar in |
+| --- | --- | --- |
+| `{name}` | Person des Handys | allen Texten |
+| `{gericht}` | geplantes Gericht | „Heute – etwas geplant“ |
+| `{vorschlag}` | vorgeschlagenes Rezept | „Heute – nichts geplant“ |
+| `{anzahl}` | Anzahl freier Abende | „Wochenplanung“ |
+
+Hat ein Handy keine Person, fällt `{name}` samt folgendem Komma oder Doppelpunkt weg. Gibt es keinen Vorschlag (z. B. keine Rezepte), entfällt der Satz mit `{vorschlag}`.
+
+### Keine HA-Automation nötig
+
+Vommeal hört selbst auf die Knöpfe: Der Server hält eine Verbindung zur WebSocket-API von Home Assistant offen (mit demselben Token wie für die Einkaufsliste) und reagiert auf das Ereignis `mobile_app_notification_action`. In Home Assistant muss dafür nichts eingerichtet werden. Die Verbindung wird nach Abbrüchen automatisch neu aufgebaut; im Container-Log stehen Zeilen wie `[ha-events] connected to …`. Lehnt Home Assistant den Token ab, versucht Vommeal es nicht weiter (sonst könnte HA das NAS sperren), bis die HA-Einstellungen erneut gespeichert werden. Änderungen an HA-Adresse, Token oder Geräteliste in den Einstellungen gelten sofort; stehen Adresse oder Token als Docker-Variablen in Portainer, braucht eine Änderung dort wie immer einen Neustart des Containers.
+
+Tag, Uhrzeit und Zeitzone (Standard `Europe/Copenhagen`) lassen sich in den Einstellungen ändern. Jede Erinnerung wird höchstens einmal pro Tag verschickt. Planer und Knopf-Empfang laufen nur im Docker-Container (Produktion), nicht im lokalen Dev-Server (siehe `VOMMEAL_SCHEDULER` in `.env.example`).
 
 ---
 
@@ -147,69 +178,44 @@ Klappt der Import nicht, erkennt Mealie auf der Seite kein Rezept; dann das Reze
 
 ---
 
-## Troubleshooting
+## Updates
 
-If the app keeps loading or Settings values do not save, the container probably cannot write to the SQLite database folder. The Docker image fixes `/app/data` ownership on startup, so redeploy the latest stack from GitHub first.
-
-If it still cannot save, check that this folder exists on the NAS:
+In Portainer den Stack aus dem Repository neu deployen (**Pull and redeploy**). Ohne Portainer:
 
 ```bash
-mkdir -p /volume1/docker/vommeal/data
+git pull
+docker compose up -d --build
 ```
 
-Then redeploy the stack in Portainer.
-
-If Mealie or Home Assistant fields do not show as Docker-controlled, the variables are not reaching the container. In Portainer, either leave them empty and configure Vommeal in **Settings**, or add them in the stack **Environment variables** table using exact names like `MEALIE_URL` and `HA_TOKEN`.
+Die Datenbank im Datenordner wird bei Updates nie angefasst.
 
 ---
 
-## First-run setup
+## Zugriff von unterwegs
 
-Open `http://<nas-ip>:3333` → **Settings**:
+**Tailscale** auf dem NAS und den Handys installieren und Vommeal über die Tailnet-IP oder den MagicDNS-Namen des NAS öffnen. Am Router müssen keine Ports geöffnet werden.
 
-- **User names** — yours and your partner's (remembered per browser via localStorage)
-- **Mealie URL + API token** — for recipe sync, unless set in Portainer
-- **Home Assistant URL + token + todo entity** — for shopping list sync with Google Keep, unless set in Portainer
-- **Dinner category** — Mealie category to filter recipes (e.g. `Abendessen`)
-- **Benachrichtigungen** — devices, reminder times, app address and time zone (see above)
-
----
-
-## Updating
-
-In Portainer, redeploy the stack from the repository and enable pulling the latest image/source if Portainer asks.
-
-Your database in `/volume1/docker/vommeal/data/` is never touched by updates.
-
----
-
-## Access outside home
-
-Use **Tailscale** — install it on the NAS and your devices, then access Vommeal via the NAS tailnet IP or MagicDNS name. No router ports need to be opened.
-
-Do **not** port-forward Vommeal directly from your router, and do not use Tailscale Funnel for this app unless you add authentication first. Vommeal is intended for trusted LAN/Tailscale access.
+Vommeal **nicht** per Portweiterleitung am Router freigeben und auch nicht über Tailscale Funnel, solange keine eigene Authentifizierung davor sitzt. Vommeal ist für vertrauenswürdige Zugriffe im Heimnetz oder per Tailscale gedacht.
 
 ---
 
 ## Backup
 
-Use **Settings** → **About & Docker** → **Download database backup** for a safe SQLite backup.
+**Einstellungen** → **Über & Docker** → **Datenbank-Backup herunterladen** erzeugt ein konsistentes SQLite-Backup.
 
-The live database files live in `/volume1/docker/vommeal/data/`. Because SQLite uses WAL mode, manual file backups should include `vommeal.db`, `vommeal.db-wal`, and `vommeal.db-shm` when they exist.
+Die Datenbank liegt im Datenordner (`/volume1/docker/vommeal/data/` bzw. `DATA_PATH`). Weil SQLite im WAL-Modus läuft, gehören zu einer manuellen Dateisicherung `vommeal.db`, `vommeal.db-wal` und `vommeal.db-shm`, falls vorhanden.
 
-### Automatic daily backups
+### Automatische tägliche Backups
 
-Vommeal also backs itself up automatically:
+- **Wo:** `<DATA_PATH>/backups/vommeal-JJJJ-MM-TT.db`
+- **Wann:** etwa 30 Sekunden nach dem Containerstart, danach alle 24 Stunden (eigener Timer, unabhängig von den Erinnerungen). Pro Kalendertag entsteht höchstens eine Datei; existiert sie schon, wird der Lauf übersprungen.
+- **Aufbewahrung:** Dateien älter als 14 Tage werden bei jedem Lauf gelöscht. Wer sie länger behalten will, kopiert sie woanders hin (Hyper Backup, anderer Ordner, …).
+- **Wie:** über die Online-Backup-API von SQLite, also konsistent auch bei laufender App und ohne `-wal`/`-shm`-Dateien. Im Container-Log erscheinen Zeilen wie `[backup] created: ...`.
 
-- **Where:** `/volume1/docker/vommeal/data/backups/vommeal-YYYY-MM-DD.db` (`${DATA_DIR}/backups/` in general).
-- **When:** about 30 seconds after the container starts and then every 24 hours (own timer, independent of the reminder scheduler). Only one file per calendar day is written; if today's file already exists the run is skipped.
-- **Retention:** files older than 14 days are deleted on each run. Copy a file elsewhere (Hyper Backup, another share, ...) if you want to keep it longer.
-- **How:** the copy is made with SQLite's online backup API, so it is consistent even while the app is running and does not need the `-wal`/`-shm` files. Check the container log for `[backup] created: ...` lines.
+### Wiederherstellen
 
-### Restore
-
-1. Stop the container in Portainer.
-2. In File Station (or over SSH) rename the current `vommeal.db` to keep it, delete any `vommeal.db-wal` / `vommeal.db-shm` files next to it, and copy the backup into place:
+1. Container in Portainer stoppen.
+2. Im Datenordner (File Station oder SSH) die aktuelle `vommeal.db` umbenennen, eventuelle `vommeal.db-wal` / `vommeal.db-shm` löschen und das Backup an ihre Stelle kopieren:
 
    ```bash
    cd /volume1/docker/vommeal/data
@@ -218,30 +224,46 @@ Vommeal also backs itself up automatically:
    cp backups/vommeal-2026-01-31.db vommeal.db
    ```
 
-   A file downloaded from **Settings** works the same way.
+   Ein über die Einstellungen heruntergeladenes Backup funktioniert genauso.
 
-3. Start the container again. The entrypoint fixes file ownership, so a copy made by your own user works.
+3. Container wieder starten. Das Entrypoint-Skript korrigiert die Dateirechte, eine mit dem eigenen Benutzer kopierte Datei funktioniert also.
 
-Treat the database and its backups as private: they may contain Mealie/Home Assistant tokens and meal-planning data.
+Datenbank und Backups vertraulich behandeln: Sie können Mealie- und Home-Assistant-Tokens sowie eure Essensplanung enthalten.
 
 ---
 
-## Local development
+## Fehlerbehebung
+
+**App lädt endlos oder Einstellungen werden nicht gespeichert:** Meist kann der Container nicht in den Datenordner schreiben. Das Image korrigiert die Rechte von `/app/data` beim Start, also zuerst den aktuellen Stand neu deployen. Hilft das nicht, prüfen, ob der Ordner existiert:
 
 ```bash
-cp .env.example .env.local   # then edit it
+mkdir -p /volume1/docker/vommeal/data
+```
+
+und den Stack erneut deployen.
+
+**Mealie- oder HA-Felder erscheinen nicht als von Docker gesteuert:** Die Variablen kommen nicht im Container an. In Portainer entweder leer lassen und in den Einstellungen konfigurieren oder in der Tabelle **Environment variables** mit exakten Namen wie `MEALIE_URL` und `HA_TOKEN` eintragen.
+
+**Mealie oder Home Assistant nicht erreichbar, obwohl die Adresse stimmt:** Prüfen, ob das Docker-Netz (`172.26.0.0/24` in der `docker-compose.yml`) mit einem anderen Netz kollidiert, und dort ggf. ein anderes freies /24 eintragen.
+
+---
+
+## Lokale Entwicklung
+
+```bash
+cp .env.example .env.local   # danach anpassen
 npm install
 npm run dev                  # http://localhost:3000
 ```
 
-Useful scripts: `npm run typecheck`, `npm run lint`, `npm test`.
+Nützliche Skripte: `npm run typecheck`, `npm run lint`, `npm test`.
 
-**Do not point a local dev server at your real Home Assistant.** The shopping-list sync rewrites the real Google Keep list (it removes and re-adds every item to sort it), so a local run with real credentials modifies the list your household is using. `.env.example` therefore ships with
+**Einen lokalen Dev-Server nicht mit dem echten Home Assistant verbinden.** Der Einkaufslisten-Sync schreibt die echte Liste neu (alle Einträge werden entfernt und sortiert neu angelegt), ein lokaler Lauf mit echten Zugangsdaten verändert also die Liste, die der Haushalt gerade benutzt. `.env.example` enthält deshalb
 
 ```text
 HA_URL=http://127.0.0.1:9
 ```
 
-a deliberately dead address: every HA call fails fast and nothing is touched. Only replace it with the real URL when you actually want local runs to sync. The same applies to values entered on the local Settings page: those are stored in your local `data/vommeal.db`, so keep the HA fields empty there too.
+eine absichtlich tote Adresse: Jeder HA-Aufruf schlägt sofort fehl, nichts wird verändert. Nur durch die echte URL ersetzen, wenn lokale Läufe wirklich synchronisieren sollen. Dasselbe gilt für Werte auf der lokalen Einstellungsseite: Sie landen in der lokalen `data/vommeal.db`, also dort die HA-Felder ebenfalls leer lassen.
 
-`MEALIE_*` can be left empty; recipe sync is then simply unavailable and you can create recipes by hand. The local database (`./data`, ignored by git) also receives the daily backups described above.
+`MEALIE_*` kann leer bleiben; der Rezept-Sync ist dann nicht verfügbar und Rezepte werden von Hand angelegt. Die lokale Datenbank (`./data`, von git ignoriert) bekommt ebenfalls die täglichen Backups.

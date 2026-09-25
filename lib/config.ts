@@ -1,4 +1,5 @@
 import { getSetting } from './db'
+import { NOTIFY_TEXT_MAX } from './notifyTemplates'
 
 export type MealieConfig = {
   baseUrl: string
@@ -129,6 +130,12 @@ export const SETTING_DEFAULTS = {
   app_public_url: '',
   timezone: DEFAULT_TIMEZONE,
   mealie_nightly_sync: '1',
+  /** JSON object: notify service id → profile name (user1_name / user2_name). */
+  notify_people: '{}',
+  /** Custom notification texts (lib/notifyTemplates.ts); '' = built-in default. */
+  notify_text_daily_planned: '',
+  notify_text_daily_empty: '',
+  notify_text_weekly: '',
 } as const
 
 export type DefaultedSettingKey = keyof typeof SETTING_DEFAULTS
@@ -141,13 +148,50 @@ export function getSettingWithDefault(key: DefaultedSettingKey): string {
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
 const NOTIFY_SERVICE_RE = /^notify\.[a-z0-9_]{1,100}$/
 
+export type NormalizeContext = {
+  /** Allowed person names for notify_people (the two profile names). */
+  profileNames?: string[]
+}
+
+/** The two profile names from settings (empty ones left out). */
+export function getProfileNames(): string[] {
+  return [getSetting('user1_name') || '', getSetting('user2_name') || '']
+    .map(n => n.trim())
+    .filter(Boolean)
+}
+
 /**
  * Validate (and normalize) a value for one of the defaulted settings.
  * Returns the value to store, or throws an Error with a German message.
  */
-export function normalizeSettingValue(key: DefaultedSettingKey, raw: string): string {
+export function normalizeSettingValue(key: DefaultedSettingKey, raw: string, ctx: NormalizeContext = {}): string {
   const value = raw.trim()
   switch (key) {
+    case 'notify_text_daily_planned':
+    case 'notify_text_daily_empty':
+    case 'notify_text_weekly':
+      if (value.length > NOTIFY_TEXT_MAX) throw new Error(`Der Text darf höchstens ${NOTIFY_TEXT_MAX} Zeichen lang sein`)
+      return value
+    case 'notify_people': {
+      let parsed: unknown
+      try { parsed = JSON.parse(value || '{}') } catch { throw new Error('notify_people muss ein JSON-Objekt sein') }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('notify_people muss ein JSON-Objekt wie {"notify.mobile_app_…": "Name"} sein')
+      }
+      const entries = Object.entries(parsed as Record<string, unknown>)
+      if (entries.length > 50) throw new Error('notify_people hat zu viele Einträge')
+      const allowed = new Set((ctx.profileNames ?? getProfileNames()).map(n => n.trim()).filter(Boolean))
+      const out: Record<string, string> = {}
+      for (const [service, person] of entries) {
+        if (!NOTIFY_SERVICE_RE.test(service)) throw new Error(`notify_people: ungültiger Dienst ${service.slice(0, 60)}`)
+        if (typeof person !== 'string') throw new Error('notify_people: Namen müssen Texte sein')
+        const name = person.trim()
+        if (!name) continue // '' = no person assigned
+        if (!allowed.has(name)) throw new Error(`notify_people: „${name.slice(0, 40)}“ ist kein Profilname`)
+        out[service] = name
+      }
+      return JSON.stringify(out)
+    }
     case 'notify_weekly_enabled':
     case 'notify_daily_enabled':
     case 'mealie_nightly_sync':
@@ -196,5 +240,20 @@ export function getNotifyServices(): string[] {
     return Array.isArray(parsed) ? parsed.filter((s): s is string => typeof s === 'string' && NOTIFY_SERVICE_RE.test(s)) : []
   } catch {
     return []
+  }
+}
+
+/** Person (profile name) per notify service; services without a person are left out. */
+export function getNotifyPeople(): Record<string, string> {
+  try {
+    const parsed = JSON.parse(getSettingWithDefault('notify_people'))
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>)
+        .filter((e): e is [string, string] => NOTIFY_SERVICE_RE.test(e[0]) && typeof e[1] === 'string' && !!e[1].trim())
+        .map(([k, v]) => [k, v.trim()]),
+    )
+  } catch {
+    return {}
   }
 }

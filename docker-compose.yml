@@ -13,7 +13,8 @@ services:
       # so it is easy to inspect, back up, and restore from File Station.
       # Daily automatic backups are written to the backups/ subfolder
       # (vommeal-YYYY-MM-DD.db, 14 days retained) — see README "Backup".
-      - /volume1/docker/vommeal/data:/app/data
+      # On other hosts set DATA_PATH (e.g. ./data or /srv/vommeal/data).
+      - ${DATA_PATH:-/volume1/docker/vommeal/data}:/app/data
     environment:
       - NODE_ENV=production
       - DATA_DIR=/app/data

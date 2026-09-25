@@ -4,6 +4,7 @@ import {
   getConfigSourceFlags, sanitizeUrl, DEFAULTED_SETTING_KEYS, getSettingWithDefault, normalizeSettingValue,
 } from '@/lib/config'
 import { requireAdmin } from '@/lib/admin'
+import { DEFAULT_NOTIFY_TEXTS } from '@/lib/notifyTemplates'
 
 function stringValue(body: Record<string, unknown>, key: string): string | undefined {
   const value = body[key]
@@ -27,6 +28,8 @@ export async function GET() {
     custom_category_keywords: getSetting('custom_category_keywords') || '{}',
     // Notifications, time zone, nightly sync (always strings; defaults when unset)
     ...Object.fromEntries(DEFAULTED_SETTING_KEYS.map(key => [key, getSettingWithDefault(key)])),
+    // Built-in texts shown when notify_text_* is empty, keyed by kind (daily_planned, daily_empty, weekly).
+    notify_text_defaults: DEFAULT_NOTIFY_TEXTS,
     env,
   })
 }
@@ -54,6 +57,11 @@ export async function POST(req: NextRequest) {
 
   // Validate the new keys before writing anything, so a bad value never
   // leaves a half-saved form behind.
+  // notify_people may only name the profiles, including names saved in this same request.
+  const profileNames = [
+    (user1Name ?? getSetting('user1_name') ?? '').trim(),
+    (user2Name ?? getSetting('user2_name') ?? '').trim(),
+  ].filter(Boolean)
   const defaulted: [string, string][] = []
   for (const key of DEFAULTED_SETTING_KEYS) {
     const raw = body[key]
@@ -62,7 +70,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `${key} muss ein Text sein` }, { status: 400 })
     }
     try {
-      defaulted.push([key, normalizeSettingValue(key, raw)])
+      defaulted.push([key, normalizeSettingValue(key, raw, { profileNames })])
     } catch (e) {
       return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 400 })
     }
@@ -83,5 +91,12 @@ export async function POST(req: NextRequest) {
   if (categoryOrder !== undefined) setSetting('category_order', categoryOrder)
   if (customCategoryKeywords !== undefined) setSetting('custom_category_keywords', customCategoryKeywords)
   for (const [key, value] of defaulted) setSetting(key, value)
+
+  // The Home Assistant listener for notification buttons (lib/haEvents.ts)
+  // reconnects with the new address/token and starts or stops with the device list.
+  if (haUrl !== undefined || haToken !== undefined || body.notify_services !== undefined) {
+    const { refreshHaEvents } = await import('@/lib/haEvents')
+    refreshHaEvents()
+  }
   return NextResponse.json({ ok: true })
 }

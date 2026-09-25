@@ -6,7 +6,7 @@ import path from 'path'
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vommeal-scheduler-'))
 process.env.DATA_DIR = tmpDir
 
-const { isDue, nextWeekDates, countEmptyEvenings, weeklyReminderMessage, dailyMessage, schedulerEnabled } = await import('../lib/scheduler')
+const { isDue, nextWeekDates, schedulerEnabled } = await import('../lib/scheduler')
 const { zonedParts, normalizeSettingValue } = await import('../lib/config')
 const { appLink, buildNotifyPayload } = await import('../lib/notify')
 
@@ -68,26 +68,6 @@ describe('next week', () => {
     expect(nextWeekDates('2026-09-21', 1)[0]).toBe('2026-09-28')
     // Saturday
     expect(nextWeekDates('2026-09-26', 6)[0]).toBe('2026-09-28')
-  })
-
-  it('counts empty evenings', () => {
-    const dates = nextWeekDates('2026-09-27', 0)
-    expect(countEmptyEvenings(dates, [])).toBe(7)
-    expect(countEmptyEvenings(dates, ['2026-09-28', '2026-09-28', '2026-10-04', '2026-09-27'])).toBe(5)
-  })
-})
-
-describe('messages', () => {
-  it('weekly', () => {
-    expect(weeklyReminderMessage(0)).toBeNull()
-    expect(weeklyReminderMessage(1)).toBe('Nächste Woche ist noch 1 Abend frei – kurz planen?')
-    expect(weeklyReminderMessage(4)).toBe('Nächste Woche sind noch 4 Abende frei – kurz planen?')
-  })
-
-  it('daily', () => {
-    expect(dailyMessage(undefined)).toBe('Heute ist noch nichts geplant')
-    expect(dailyMessage({ custom_meal_name: null, recipe: { name: 'Lasagne' } as never })).toBe('Heute: Lasagne')
-    expect(dailyMessage({ custom_meal_name: 'Reste', recipe: undefined })).toBe('Heute: Reste')
   })
 })
 

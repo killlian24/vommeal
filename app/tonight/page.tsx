@@ -9,11 +9,12 @@ import { ShoppingCart, Clock, ChevronRight, BookOpen, Shuffle, Zap, ChefHat, Thu
 import { StarRating } from '@/components/StarRating'
 import { QUICK_MEALS, quickMealEmoji } from '@/lib/quickMeals'
 import { track } from '@/lib/track'
+import { inDinnerCategory, pickSuggestions as pickFrom } from '@/lib/suggest'
 
 type Effort = 'quick' | 'involved' | null
 type Recipe = {
   id: string; name: string; image_url: string; prep_time: number; cook_time: number
-  rating: number | null; effort?: Effort
+  rating: number | null; effort?: Effort; tags?: string[]
 }
 type MealEntry = {
   id: string; date: string; recipe_id: string | null; custom_meal_name: string | null
@@ -22,7 +23,6 @@ type MealEntry = {
 
 const ISO = 'yyyy-MM-dd'
 const HISTORY_DAYS = 30
-const RECENT_DAYS = 21
 const RATE_WINDOW_DAYS = 2
 const PROMPTED_KEY = (entryId: string) => `vommeal_rate_prompted_${entryId}`
 
@@ -42,65 +42,9 @@ function markPrompted(entryId: string) {
   try { localStorage.setItem(PROMPTED_KEY(entryId), '1') } catch { /* storage unavailable */ }
 }
 
-// Rating ≥ 4 first, then unrated, then the middling ones. Rating 1 never gets here.
-function ratingScore(rating: number | null): number {
-  if (rating == null) return 2
-  if (rating >= 4) return 3
-  return 1
-}
-
-/**
- * Picks `count` recipes to cook today.
- * - never rating 1 ("nicht nochmal")
- * - nothing cooked in the last 21 days or already planned for the next days
- * - prefers rating ≥ 4, then unrated; Mon–Thu prefers quick recipes
- * - slight randomness; `exclude` skips what was just shown (for "Andere Vorschläge")
- */
-function pickSuggestions(recipes: Recipe[], entries: MealEntry[], exclude: Set<string>, count = 3): Recipe[] {
-  const now = new Date()
-  const today = format(now, ISO)
-  const recentStart = format(subDays(now, RECENT_DAYS), ISO)
-  const weekday = now.getDay() // 0 = Sonntag
-  const preferQuick = weekday >= 1 && weekday <= 4
-
-  const lastCooked = new Map<string, string>()
-  const planned = new Set<string>()
-  for (const e of entries) {
-    if (!e.recipe_id) continue
-    if (e.date >= today) { planned.add(e.recipe_id); continue }
-    const prev = lastCooked.get(e.recipe_id)
-    if (!prev || e.date > prev) lastCooked.set(e.recipe_id, e.date)
-  }
-
-  const allowed = recipes.filter(r => r.rating !== 1 && !planned.has(r.id))
-  const fresh = allowed.filter(r => (lastCooked.get(r.id) ?? '') < recentStart)
-
-  const score = (r: Recipe) => {
-    let s = ratingScore(r.rating) + Math.random() * 1.2
-    if (preferQuick) {
-      if (r.effort === 'quick') s += 1.5
-      else if (r.effort === 'involved') s -= 1
-    }
-    return s
-  }
-
-  let pool = fresh.filter(r => !exclude.has(r.id))
-  if (pool.length < count) pool = fresh // shuffled through everything: start over
-  const picked = pool
-    .map(r => ({ r, s: score(r) }))
-    .sort((a, b) => b.s - a.s)
-    .slice(0, count)
-    .map(x => x.r)
-
-  // Small collection: top up with the recipes cooked longest ago.
-  if (picked.length < count) {
-    const ids = new Set(picked.map(r => r.id))
-    const rest = allowed
-      .filter(r => !ids.has(r.id))
-      .sort((a, b) => (lastCooked.get(a.id) ?? '').localeCompare(lastCooked.get(b.id) ?? ''))
-    picked.push(...rest.slice(0, count - picked.length))
-  }
-  return picked
+// Same rules as the daily notification (lib/suggest.ts), for the phone's local today.
+function pickSuggestions(recipes: Recipe[], entries: MealEntry[], exclude: Set<string>, dinnerCategory: string): Recipe[] {
+  return pickFrom(inDinnerCategory(recipes, dinnerCategory), entries, { today: format(new Date(), ISO), exclude })
 }
 
 // Mealie offline or image gone: show the card background instead of a broken-image glyph.
@@ -134,6 +78,7 @@ export default function TonightPage() {
   const [planning, setPlanning] = useState<string | null>(null)
   const [suggestions, setSuggestions] = useState<Recipe[]>([])
   const [seen, setSeen] = useState<Set<string>>(new Set())
+  const [dinnerCategory, setDinnerCategory] = useState('')
   const [ratePrompt, setRatePrompt] = useState<MealEntry | null>(null)
   const [toast, setToast] = useState('')
 
@@ -169,7 +114,9 @@ export default function TonightPage() {
         setCurrentUser(user || settings.user1_name || settings.user2_name || '')
 
         setRecipes(recipeData)
-        const first = pickSuggestions(recipeData, entryData, new Set())
+        const category = typeof settings.dinner_category === 'string' ? settings.dinner_category : ''
+        setDinnerCategory(category)
+        const first = pickSuggestions(recipeData, entryData, new Set(), category)
         setSuggestions(first)
         setSeen(new Set(first.map(r => r.id)))
 
@@ -247,7 +194,7 @@ export default function TonightPage() {
   }
 
   const shuffle = () => {
-    const next = pickSuggestions(recipes, entries, seen)
+    const next = pickSuggestions(recipes, entries, seen, dinnerCategory)
     setSuggestions(next)
     setSeen(prev => {
       const merged = new Set(prev)

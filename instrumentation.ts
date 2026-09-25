@@ -9,11 +9,18 @@
  * - Daily SQLite backups (lib/backup.ts, own 24 h timer).
  * - Scheduler for notifications and the nightly Mealie sync (lib/scheduler.ts);
  *   it only runs in production or with VOMMEAL_SCHEDULER=1.
+ * - Listener for taps on notification buttons (lib/haEvents.ts), same gate as
+ *   the scheduler; connects only while HA and notify devices are set up.
  */
 export async function register() {
-  if (process.env.NEXT_RUNTIME !== 'nodejs') return
-  const { scheduleBackups } = await import('./lib/backup')
-  scheduleBackups()
-  const { startScheduler } = await import('./lib/scheduler')
-  startScheduler()
+  // Written as `if (=== 'nodejs') { … }` (not an early return) so the bundler
+  // drops these imports from the edge build entirely.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    const { scheduleBackups } = await import('./lib/backup')
+    scheduleBackups()
+    const { startScheduler } = await import('./lib/scheduler')
+    startScheduler()
+    const { startHaEvents } = await import('./lib/haEvents')
+    await startHaEvents().catch(e => console.error(`[ha-events] start failed: ${String(e)}`))
+  }
 }

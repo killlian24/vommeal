@@ -1,8 +1,9 @@
-import { getMealPlanRange, getSetting, setSetting } from './db'
-import type { MealPlanEntry } from './db'
+import { getSetting, setSetting } from './db'
 import { getNotifyServices, getSettingWithDefault, getTimezone, zonedParts } from './config'
 import type { ZonedParts } from './config'
 import { isMealieConfigured } from './mealie'
+import { NOTIFY_TAGS } from './notifyContent'
+import type { Builder } from './notifyJobs'
 
 /**
  * In-process scheduler, started from instrumentation.ts.
@@ -58,23 +59,6 @@ export function nextWeekDates(today: string, weekday: number): string[] {
   return Array.from({ length: 7 }, (_, i) => addDaysIso(monday, i))
 }
 
-export function countEmptyEvenings(dates: string[], plannedDates: Iterable<string>): number {
-  const planned = new Set(plannedDates)
-  return dates.filter(d => !planned.has(d)).length
-}
-
-/** Weekly reminder text, or null when nothing is left to plan. */
-export function weeklyReminderMessage(emptyEvenings: number): string | null {
-  if (emptyEvenings <= 0) return null
-  if (emptyEvenings === 1) return 'Nächste Woche ist noch 1 Abend frei – kurz planen?'
-  return `Nächste Woche sind noch ${emptyEvenings} Abende frei – kurz planen?`
-}
-
-export function dailyMessage(entry: Pick<MealPlanEntry, 'custom_meal_name' | 'recipe'> | null | undefined): string {
-  const dish = entry?.recipe?.name?.trim() || entry?.custom_meal_name?.trim()
-  return dish ? `Heute: ${dish}` : 'Heute ist noch nichts geplant'
-}
-
 // ---------------------------------------------------------------------------
 // Jobs
 // ---------------------------------------------------------------------------
@@ -89,11 +73,12 @@ type Job = {
   run: (now: ZonedParts) => Promise<void>
 }
 
-async function notify(message: string, path: string, tag: string) {
-  const { notifyConfigured } = await import('./notify')
-  const result = await notifyConfigured(message, path, tag)
-  if (result.errors.length) console.error(`[scheduler] ${tag}: ${result.errors.join('; ')}`)
-  else console.log(`[scheduler] ${tag}: sent to ${result.sent} device(s)`)
+/** Send a personalized message to every configured device (text per person, see lib/notifyJobs.ts). */
+async function notifyAll(build: Builder, tag: string, label: string) {
+  const { getRecipients, notifyEach } = await import('./notify')
+  const result = await notifyEach(getRecipients(), build, tag)
+  if (result.errors.length) console.error(`[scheduler] ${label}: ${result.errors.join('; ')}`)
+  else console.log(`[scheduler] ${label}: sent to ${result.sent} device(s)`)
 }
 
 function hasNotifyServices(): boolean {
@@ -112,14 +97,14 @@ const JOBS: Job[] = [
         lastRun,
       }),
     run: async now => {
-      const dates = nextWeekDates(now.date, now.weekday)
-      const planned = getMealPlanRange(dates[0], dates[6]).map(e => e.date)
-      const message = weeklyReminderMessage(countEmptyEvenings(dates, planned))
-      if (!message) {
+      const { emptyEvenings, weeklyBuilder } = await import('./notifyJobs')
+      const monday = nextWeekDates(now.date, now.weekday)[0]
+      const empty = emptyEvenings(monday)
+      if (empty === 0) {
         console.log('[scheduler] weekly reminder: next week is fully planned, skipped')
         return
       }
-      await notify(message, '/?week=next', 'vommeal-weekly')
+      await notifyAll(weeklyBuilder(monday, empty).build, NOTIFY_TAGS.weekly, 'weekly reminder')
     },
   },
   {
@@ -129,8 +114,9 @@ const JOBS: Job[] = [
       getSettingWithDefault('notify_daily_enabled') === '1' && hasNotifyServices() &&
       isDue(now, { time: getSettingWithDefault('notify_daily_time'), lastRun }),
     run: async now => {
-      const entry = getMealPlanRange(now.date, now.date)[0]
-      await notify(dailyMessage(entry), '/tonight', 'vommeal-daily')
+      const { dailyBuilder } = await import('./notifyJobs')
+      const { kind, build } = dailyBuilder(now.date)
+      await notifyAll(build, NOTIFY_TAGS.daily, `daily reminder (${kind})`)
     },
   },
   {
