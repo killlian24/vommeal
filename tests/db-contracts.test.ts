@@ -70,10 +70,10 @@ describe('approval migration', () => {
 
 describe('recipe image_url contract', () => {
   it('returns the proxy URL for stored images and empty otherwise', () => {
-    expect(db.getRecipeById('r1')!.image_url).toBe('/api/images/r1')
+    expect(db.getRecipeById('r1')!.image_url).toMatch(/^\/api\/images\/r1\?v=[0-9a-z]+$/)
     expect(db.getRecipeById('r2')!.image_url).toBe('')
-    expect(db.getAllRecipes().find(r => r.id === 'r1')!.image_url).toBe('/api/images/r1')
-    expect(db.getMealPlanRange('2026-09-21', '2026-09-21')[0].recipe!.image_url).toBe('/api/images/r1')
+    expect(db.getAllRecipes().find(r => r.id === 'r1')!.image_url).toMatch(/^\/api\/images\/r1\?v=[0-9a-z]+$/)
+    expect(db.getMealPlanRange('2026-09-21', '2026-09-21')[0].recipe!.image_url).toMatch(/^\/api\/images\/r1\?v=[0-9a-z]+$/)
   })
 
   it('keeps the stored upstream URL when the proxy URL is written back', () => {
@@ -82,12 +82,12 @@ describe('recipe image_url contract', () => {
     expect(db.getRecipeImageSource('r1')).toBe('http://mealie.lan:9000/api/media/recipes/abc/images/original.webp')
     db.upsertRecipe({ ...db.getRecipeById('r2')!, image_url: 'https://example.com/brot.jpg' })
     expect(db.getRecipeImageSource('r2')).toBe('https://example.com/brot.jpg')
-    expect(db.getRecipeById('r2')!.image_url).toBe('/api/images/r2')
+    expect(db.getRecipeById('r2')!.image_url).toMatch(/^\/api\/images\/r2\?v=[0-9a-z]+$/)
   })
 
   it('maps nomination recipes too', () => {
     db.addNomination({ id: 'n1', date: '2026-09-24', recipe_id: 'r1', user_name: 'Kilian' })
-    expect(db.getNominationsForRange('2026-09-24', '2026-09-24')[0].recipe!.image_url).toBe('/api/images/r1')
+    expect(db.getNominationsForRange('2026-09-24', '2026-09-24')[0].recipe!.image_url).toMatch(/^\/api\/images\/r1\?v=[0-9a-z]+$/)
   })
 })
 
@@ -197,5 +197,21 @@ describe('recipe deletion mirrors Mealie', async () => {
 
   it('never touches local-only recipes', () => {
     expect(db.getRecipeById('r2')).not.toBeNull()
+  })
+})
+
+describe('image versioning', async () => {
+  const { resolveImageSource } = await import('../lib/images')
+  it('gives a replaced Mealie image a new public URL', () => {
+    db.upsertRecipe({ id: 'img1', name: 'Bildtest', source: 'mealie', image_url: 'http://mealie.lan:9000/api/media/recipes/x/images/original.webp?v=aaaa' })
+    const before = db.getRecipeById('img1')!.image_url
+    db.upsertRecipe({ id: 'img1', name: 'Bildtest', source: 'mealie', image_url: 'http://mealie.lan:9000/api/media/recipes/x/images/original.webp?v=bbbb' })
+    const after = db.getRecipeById('img1')!.image_url
+    expect(before).not.toBe(after)
+    expect(after).toMatch(/^\/api\/images\/img1\?v=[0-9a-z]+$/)
+  })
+  it('keeps the image key when pointing a stored URL at a new Mealie address', () => {
+    expect(resolveImageSource('http://old:9000/api/media/recipes/x/images/original.webp?v=bbbb', 'http://new:9925'))
+      .toBe('http://new:9925/api/media/recipes/x/images/original.webp?v=bbbb')
   })
 })

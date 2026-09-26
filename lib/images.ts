@@ -44,7 +44,7 @@ export function sniffImageType(buf: Buffer): string | null {
  */
 export function resolveImageSource(stored: string, mealieBaseUrl: string | null): string {
   if (!mealieBaseUrl) return stored
-  const m = /^https?:\/\/[^/]+(?:\/.*)?(\/api\/media\/recipes\/[^?#]+)$/i.exec(stored)
+  const m = /^https?:\/\/[^/]+(?:\/.*?)?(\/api\/media\/recipes\/[^#]+)$/i.exec(stored)
   if (!m) return stored
   return `${mealieBaseUrl}${m[1]}`
 }

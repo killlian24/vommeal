@@ -288,7 +288,17 @@ export type Instruction = { text: string }
  * see the same-origin proxy, which also works over Tailscale away from home.
  */
 export function publicImageUrl(recipeId: string, storedUrl: unknown): string {
-  return typeof storedUrl === 'string' && storedUrl.trim() ? `/api/images/${recipeId}` : ''
+  if (typeof storedUrl !== 'string' || !storedUrl.trim()) return ''
+  // Version from the stored upstream URL: a replaced image gets a new URL,
+  // so browsers and the PWA do not keep showing the old one for 7 days.
+  return `/api/images/${recipeId}?v=${imageVersion(storedUrl)}`
+}
+
+/** Short, stable hash (djb2, base36) of the stored image URL. */
+export function imageVersion(storedUrl: string): string {
+  let h = 5381
+  for (let i = 0; i < storedUrl.length; i++) h = ((h << 5) + h + storedUrl.charCodeAt(i)) | 0
+  return (h >>> 0).toString(36)
 }
 
 function isProxyImageUrl(url: string | undefined): boolean {

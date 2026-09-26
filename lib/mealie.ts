@@ -205,8 +205,10 @@ export async function fetchMealieRecipeDetail(slug: string): Promise<{
     }, ing.display)) || [],
     // A single instruction containing ",1. … ,2. …" is a merged step list.
     instructions: normalizeInstructions(r.recipeInstructions?.map(i => ({ text: i.text })) || []),
+    // Mealie gives every uploaded image a new random key (`image`). Keeping it
+    // in the URL lets the image cache and the phones notice a replaced image.
     image_url: r.image
-      ? `${getMealieConfig()?.baseUrl}/api/media/recipes/${r.id}/images/original.webp`
+      ? `${getMealieConfig()?.baseUrl}/api/media/recipes/${r.id}/images/original.webp?v=${encodeURIComponent(String(r.image))}`
       : '',
     rating: r.rating ?? null,
   }
