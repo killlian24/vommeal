@@ -2,6 +2,7 @@ import Database from 'better-sqlite3'
 import path from 'path'
 import fs from 'fs'
 import { normalizeIngredient, normalizeInstructions } from './ingredients'
+import { planShift, planMove, planReorder, addDaysIso, type PlanMove, type PlanSlot } from './planMoves'
 
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data')
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true })
@@ -536,6 +537,87 @@ export function deleteMealPlanEntry(id: string) {
 
 export function deleteMealPlanRange(startDate: string, endDate: string) {
   getDb().prepare('DELETE FROM meal_plan WHERE date BETWEEN ? AND ?').run(startDate, endDate)
+}
+
+// --- Moving planned evenings ---
+// Entries only ever change their date: id, created_at and suggested_by stay,
+// so shopping items that reference the entry (meal_plan_id / meal_plan_ids)
+// keep pointing at the same dinner.
+
+export type PlanChangeResult =
+  | { ok: true; moves: PlanMove[]; filled: MealPlanEntry | null }
+  | { ok: false; error: string }
+
+function applyMealPlanMoves(db: Database.Database, moves: PlanMove[]) {
+  const update = db.prepare('UPDATE meal_plan SET date = ? WHERE id = ?')
+  for (const m of moves) update.run(m.to, m.id)
+}
+
+/**
+ * Shift the evening on `from` and the directly following planned evenings by
+ * one day (see planShift). With `fill` (only for days = 1) a quick meal is
+ * planned on the freed `from` evening. Atomic.
+ */
+export function shiftMealPlan(
+  from: string,
+  days: 1 | -1,
+  fill?: { id: string; name: string; suggested_by: string } | null,
+): PlanChangeResult {
+  const db = getDb()
+  let result: PlanChangeResult = { ok: false, error: 'Unbekannter Fehler' }
+  db.transaction(() => {
+    const slots = db.prepare(
+      "SELECT id, date FROM meal_plan WHERE meal_type = 'dinner' AND date >= ? ORDER BY date ASC"
+    ).all(addDaysIso(from, -1)) as PlanSlot[]
+    const plan = planShift(slots, from, days)
+    if (!plan.ok) { result = plan; return }
+    applyMealPlanMoves(db, plan.moves)
+    let filled: MealPlanEntry | null = null
+    if (fill && days === 1) {
+      filled = addMealPlanEntry({
+        id: fill.id, date: from, meal_type: 'dinner', recipe_id: null,
+        custom_meal_name: fill.name, servings: 2, notes: '', status: 'approved',
+        suggested_by: fill.suggested_by,
+      })
+    }
+    result = { ok: true, moves: plan.moves, filled }
+  })()
+  return result
+}
+
+/** Move one entry to `to`; an entry already there swaps places. Atomic. */
+export function moveMealPlanEntry(id: string, to: string): PlanChangeResult {
+  const db = getDb()
+  let result: PlanChangeResult = { ok: false, error: 'Unbekannter Fehler' }
+  db.transaction(() => {
+    const slots = db.prepare(
+      "SELECT id, date FROM meal_plan WHERE meal_type = 'dinner' AND (id = ? OR date = ?)"
+    ).all(id, to) as PlanSlot[]
+    const plan = planMove(slots, id, to)
+    if (!plan.ok) { result = plan; return }
+    applyMealPlanMoves(db, plan.moves)
+    result = { ok: true, moves: plan.moves, filled: null }
+  })()
+  return result
+}
+
+/** Set the dates of several entries at once (undo). Never leaves two entries on one date. */
+export function reorderMealPlan(targets: { id: string; date: string }[]): PlanChangeResult {
+  const db = getDb()
+  let result: PlanChangeResult = { ok: false, error: 'Unbekannter Fehler' }
+  db.transaction(() => {
+    const ids = targets.map(t => t.id)
+    const dates = targets.map(t => t.date)
+    const marks = (n: number) => Array(n).fill('?').join(', ')
+    const slots = targets.length === 0 ? [] : db.prepare(
+      `SELECT id, date FROM meal_plan WHERE meal_type = 'dinner' AND (id IN (${marks(ids.length)}) OR date IN (${marks(dates.length)}))`
+    ).all(...ids, ...dates) as PlanSlot[]
+    const plan = planReorder(slots, targets)
+    if (!plan.ok) { result = plan; return }
+    applyMealPlanMoves(db, plan.moves)
+    result = { ok: true, moves: plan.moves, filled: null }
+  })()
+  return result
 }
 
 // --- Nominations (Fun mode) ---

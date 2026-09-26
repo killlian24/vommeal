@@ -9,6 +9,9 @@ export const QUICK_MEALS = [
 
 export type QuickMealName = typeof QUICK_MEALS[number]['name']
 
+/** Filled into an evening that was freed by moving its dinner to later. */
+export const EATING_OUT: QuickMealName = 'Auswärts essen'
+
 export function quickMealEmoji(name: string | null | undefined): string | null {
   return QUICK_MEALS.find(q => q.name === name)?.emoji ?? null
 }

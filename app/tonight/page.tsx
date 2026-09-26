@@ -1,13 +1,14 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { format, addDays, subDays, isToday, isTomorrow, isYesterday } from 'date-fns'
 import { de } from 'date-fns/locale'
 import Image from 'next/image'
 import Link from 'next/link'
-import { ShoppingCart, Clock, ChevronRight, BookOpen, Shuffle, Zap, ChefHat, ThumbsDown } from 'lucide-react'
+import { ShoppingCart, Clock, ChevronRight, BookOpen, Shuffle, Zap, ChefHat, ThumbsDown, CalendarClock } from 'lucide-react'
 import { StarRating } from '@/components/StarRating'
-import { QUICK_MEALS, quickMealEmoji } from '@/lib/quickMeals'
+import { QUICK_MEALS, EATING_OUT, quickMealEmoji } from '@/lib/quickMeals'
+import { shiftPlan, undoPlanChange } from '@/lib/planApi'
 import { track } from '@/lib/track'
 import { inDinnerCategory, pickSuggestions as pickFrom } from '@/lib/suggest'
 
@@ -25,6 +26,8 @@ const ISO = 'yyyy-MM-dd'
 const HISTORY_DAYS = 30
 const RATE_WINDOW_DAYS = 2
 const PROMPTED_KEY = (entryId: string) => `vommeal_rate_prompted_${entryId}`
+// Evenings without cooking: nothing to move to tomorrow.
+const NO_COOKING: string[] = [EATING_OUT, 'Bestellen', 'Frei']
 
 function dayLabel(dateStr: string): string {
   const d = new Date(dateStr + 'T12:00:00')
@@ -80,9 +83,16 @@ export default function TonightPage() {
   const [seen, setSeen] = useState<Set<string>>(new Set())
   const [dinnerCategory, setDinnerCategory] = useState('')
   const [ratePrompt, setRatePrompt] = useState<MealEntry | null>(null)
-  const [toast, setToast] = useState('')
+  const [toast, setToast] = useState<{ msg: string; action?: { label: string; onClick: () => void } } | null>(null)
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // "Heute doch nicht": null = closed, 'ask' = choose what tonight becomes
+  const [postpone, setPostpone] = useState<null | 'ask' | 'busy'>(null)
 
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 2500) }
+  const showToast = (msg: string, opts?: { action?: { label: string; onClick: () => void }; duration?: number }) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    setToast({ msg, action: opts?.action })
+    toastTimer.current = setTimeout(() => setToast(null), opts?.duration ?? 2500)
+  }
 
   const loadEntries = useCallback(async (): Promise<MealEntry[]> => {
     const now = new Date()
@@ -193,6 +203,38 @@ export default function TonightPage() {
     if (await planToday({ custom_meal_name: name }, name)) track('tonight_quick', { name })
   }
 
+  // Today's dinner (and the evenings right after it) move one day later;
+  // tonight becomes "Auswärts essen" or stays free.
+  const postponeToday = async (eatingOut: boolean) => {
+    setPostpone('busy')
+    try {
+      const res = await shiftPlan({ from: format(new Date(), ISO), days: 1, fill: eatingOut ? EATING_OUT : null, suggested_by: currentUser })
+      track('plan_shift', { days: 1, filled: !!res.filled, via: 'tonight' })
+      await loadEntries()
+      setPostpone(null)
+      showToast('Auf morgen geschoben', {
+        duration: 6000,
+        action: {
+          label: 'Rückgängig',
+          onClick: async () => {
+            if (toastTimer.current) clearTimeout(toastTimer.current)
+            setToast(null)
+            try {
+              await undoPlanChange(res.moves, res.filled?.id)
+              showToast('Zurückgenommen')
+            } catch (e) {
+              showToast(e instanceof Error ? e.message : 'Konnte nicht zurückgenommen werden')
+            }
+            await loadEntries().catch(() => {})
+          },
+        },
+      })
+    } catch (e) {
+      setPostpone('ask')
+      showToast(e instanceof Error ? e.message : 'Konnte nicht verschoben werden')
+    }
+  }
+
   const shuffle = () => {
     const next = pickSuggestions(recipes, entries, seen, dinnerCategory)
     setSuggestions(next)
@@ -242,6 +284,7 @@ export default function TonightPage() {
   const todayRecipe = todayEntry ? fullRecipe(todayEntry) : undefined
   const todayEmoji = todayEntry && !todayEntry.recipe_id ? (quickMealEmoji(todayEntry.custom_meal_name) ?? '🍽️') : null
   const rateRecipe = ratePrompt ? fullRecipe(ratePrompt) : undefined
+  const postponable = !!todayEntry && (!!todayEntry.recipe_id || !NO_COOKING.includes(todayEntry.custom_meal_name ?? ''))
 
   return (
     <div className="space-y-5">
@@ -356,6 +399,49 @@ export default function TonightPage() {
                 >
                   <ShoppingCart size={15} />
                   {addingDate === today ? 'Wird hinzugefügt…' : 'Zutaten auf die Einkaufsliste'}
+                </button>
+              </div>
+            )}
+
+            {/* Heute doch nicht: move the dinner (and the rest) one day later.
+                Not offered for evenings without cooking (eating out, ordering, free). */}
+            {!postponable ? null : postpone === null ? (
+              <button
+                type="button"
+                onClick={() => setPostpone('ask')}
+                className="mt-3 w-full flex items-center justify-center gap-1.5 min-h-[44px] rounded-xl text-sm font-medium text-ink-muted hover:text-white active:bg-[#1c1c1c] transition-all"
+              >
+                <CalendarClock size={15} /> Heute doch nicht – auf morgen schieben
+              </button>
+            ) : (
+              <div className="mt-3 rounded-xl border border-[#2a2a2a] bg-[#1a1a1a] p-3 text-left">
+                <p className="text-sm font-semibold text-white">Auf morgen schieben – und heute Abend?</p>
+                <p className="text-xs text-ink-muted mt-0.5">Die nächsten geplanten Abende rutschen mit bis zum ersten freien Tag.</p>
+                <div className="grid grid-cols-2 gap-2 mt-3">
+                  <button
+                    type="button"
+                    onClick={() => postponeToday(true)}
+                    disabled={postpone === 'busy'}
+                    className="min-h-[44px] flex items-center justify-center gap-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-50"
+                  >
+                    <span aria-hidden>🍽️</span> {EATING_OUT}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => postponeToday(false)}
+                    disabled={postpone === 'busy'}
+                    className="min-h-[44px] rounded-lg border border-[#2a2a2a] bg-[#1c1c1c] text-ink-soft text-sm font-medium transition-all disabled:opacity-50"
+                  >
+                    Frei lassen
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPostpone(null)}
+                  disabled={postpone === 'busy'}
+                  className="mt-1 w-full min-h-[40px] text-sm text-ink-muted hover:text-white transition-colors"
+                >
+                  Abbrechen
                 </button>
               </div>
             )}
@@ -482,8 +568,17 @@ export default function TonightPage() {
 
       {/* Toast */}
       {toast && (
-        <div role="status" className="fixed bottom-24 md:bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 bg-[#1e1e1e] border border-[#333] rounded-full text-sm text-white shadow-xl animate-slide-up whitespace-nowrap">
-          {toast}
+        // Full-width wrapper for centring: the slide-up animation sets `transform`.
+        <div className="fixed inset-x-0 bottom-24 md:bottom-6 md:left-56 z-50 flex justify-center px-4 pointer-events-none">
+          <div role="status" className="pointer-events-auto flex items-center gap-2 pl-4 pr-1.5 min-h-[44px] max-w-full bg-[#1e1e1e] border border-[#333] rounded-full text-sm text-white shadow-xl animate-slide-up whitespace-nowrap">
+            <span className={`truncate ${toast.action ? '' : 'pr-2.5'}`}>{toast.msg}</span>
+            {toast.action && (
+              <button onClick={toast.action.onClick}
+                className="min-h-[40px] px-3 rounded-full text-primary font-semibold hover:bg-white/5 transition-colors flex-shrink-0">
+                {toast.action.label}
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>

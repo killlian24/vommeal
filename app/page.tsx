@@ -5,14 +5,18 @@ import { format, startOfWeek, addDays, isToday, parseISO, getDay } from 'date-fn
 import { de } from 'date-fns/locale'
 import {
   ChevronLeft, ChevronRight, ChevronDown, Plus, X, Search, ShoppingCart, RefreshCw,
-  Zap, Dices, Heart, XCircle, ArrowLeftRight, ArrowRight,
+  Zap, Dices, Heart, XCircle, ArrowLeftRight, ArrowRight, CalendarClock,
 } from 'lucide-react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { StarRating } from '@/components/StarRating'
 import { Avatar, avatarColor } from '@/components/Avatar'
 import { track } from '@/lib/track'
-import { QUICK_MEALS, quickMealEmoji } from '@/lib/quickMeals'
+import { QUICK_MEALS, EATING_OUT, quickMealEmoji } from '@/lib/quickMeals'
+import { planMove, applyMoves, type PlanMove } from '@/lib/planMoves'
+import { shiftPlan, movePlanEntry, undoPlanChange } from '@/lib/planApi'
+import { useLongPressDrag, type DragDrop } from '@/lib/useLongPressDrag'
+import { MoveSheet } from '@/components/MoveSheet'
 
 type Recipe = {
   id: string; name: string; image_url: string; prep_time: number; cook_time: number
@@ -33,6 +37,9 @@ type Picker = { date: string; replaceId?: string }
 const SERVINGS = 2
 const CARDS_PER_DAY = 3
 const LEFTOVERS = 'Reste'
+// Replacing today's dinner with one of these keeps the old dish by default
+// (it moves to tomorrow, the rest of the week slides along).
+const KEEP_OLD_BY_DEFAULT: string[] = [EATING_OUT, 'Bestellen']
 
 const ds = (d: Date) => format(d, 'yyyy-MM-dd')
 const fmt = (d: Date, pattern: string) => format(d, pattern, { locale: de })
@@ -55,6 +62,7 @@ function rangeLabel(start: Date, end: Date): string {
 
 const mealName = (e: MealEntry) => e.recipe?.name || e.custom_meal_name || 'Essen'
 const abende = (n: number) => `${n} ${n === 1 ? 'Abend' : 'Abende'}`
+const errorText = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback)
 
 // SQLite stores created_at as "YYYY-MM-DD HH:MM:SS" in UTC; the API may also
 // return a full ISO string for freshly created rows. Normalise to a timestamp.
@@ -91,7 +99,7 @@ function MealThumb({ entry, recipe, size }: { entry?: MealEntry; recipe?: Recipe
   if (r?.image_url && !broken) {
     return (
       <div className={`${size} relative rounded-lg overflow-hidden flex-shrink-0 bg-[#1e1e1e]`}>
-        <Image src={r.image_url} alt="" fill className="object-cover" unoptimized onError={() => setBroken(true)} />
+        <Image src={r.image_url} alt="" fill className="object-cover" unoptimized draggable={false} onError={() => setBroken(true)} />
       </div>
     )
   }
@@ -102,6 +110,8 @@ function MealThumb({ entry, recipe, size }: { entry?: MealEntry; recipe?: Recipe
 }
 
 const iconBtn = 'w-10 h-10 flex items-center justify-center rounded-lg transition-all'
+// Highlight for the day row under a dragged card
+const dropBadge = 'absolute top-1.5 right-1.5 z-10 px-2 py-0.5 rounded-full bg-primary text-white text-xs font-semibold pointer-events-none'
 const secondaryBtn = 'min-h-[40px] flex items-center justify-center gap-1.5 px-3 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-ink-soft hover:text-white text-sm font-medium transition-all disabled:opacity-50'
 
 export default function PlanPage() {
@@ -118,6 +128,10 @@ export default function PlanPage() {
   const [creatingRecipe, setCreatingRecipe] = useState(false)
   const [nextDayFree, setNextDayFree] = useState(false)
   const [addLeftovers, setAddLeftovers] = useState(false)
+  // Replace mode: keep the old dish by shifting it one day later (null = default)
+  const [keepOld, setKeepOld] = useState<boolean | null>(null)
+  const [moveFor, setMoveFor] = useState<MealEntry | null>(null)
+  const [moving, setMoving] = useState(false)
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState<Toast | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -316,7 +330,7 @@ export default function PlanPage() {
 
   const openPicker = async (date: string, replaceId?: string) => {
     setPicker({ date, replaceId })
-    setSearch(''); setCustomName(''); setAddLeftovers(false); setNextDayFree(false)
+    setSearch(''); setCustomName(''); setAddLeftovers(false); setNextDayFree(false); setKeepOld(null)
     const next = ds(addDays(parseISO(date), 1))
     if (next >= startStr && next <= endStr) {
       setNextDayFree(!entries.find(e => e.date === next))
@@ -339,6 +353,9 @@ export default function PlanPage() {
     const { date, replaceId } = picker
     const name = opts.name ?? customName.trim()
     if (!opts.recipeId && !name) return
+    const replaced = replaceId ? entries.find(e => e.id === replaceId) : undefined
+    const keep = !!replaced && (keepOld ?? (date === todayStr && !!opts.quick && KEEP_OLD_BY_DEFAULT.includes(name)))
+    if (replaced && keep) { await replaceKeepingOld(replaced, opts, name); return }
     setSaving(true)
     const res = await postEntry({ date, recipe_id: opts.recipeId || null, custom_meal_name: opts.recipeId ? null : name })
     if (!res.ok) {
@@ -349,7 +366,7 @@ export default function PlanPage() {
     track(replaceId ? 'plan_replace' : 'plan_add', replaceId ? {} : { quick: !!opts.quick })
 
     let leftovers = false
-    if (addLeftovers && nextDayFree && !opts.quick) {
+    if (addLeftovers && nextDayFree && !opts.quick && !keep) {
       const next = ds(addDays(parseISO(date), 1))
       const r = await postEntry({ date: next, recipe_id: null, custom_meal_name: LEFTOVERS })
       if (r.ok) { leftovers = true; track('plan_leftovers') }
@@ -359,6 +376,34 @@ export default function PlanPage() {
     refresh()
     const label = opts.label || (opts.recipeId ? recipes.find(r => r.id === opts.recipeId)?.name || 'Rezept' : name)
     showToast(leftovers ? `${label} + Reste morgen` : `${fmt(parseISO(date), 'EEEE')}: ${label}`)
+  }
+
+  // Replace, but keep the old dish: it (and the evenings right after it) move
+  // one day later, then the new choice goes onto the freed evening.
+  const replaceKeepingOld = async (replaced: MealEntry, opts: { recipeId?: string; quick?: boolean; label?: string }, name: string) => {
+    const date = replaced.date
+    setSaving(true)
+    try {
+      const res = await shiftPlan({ from: date, days: 1, fill: opts.quick ? name : null, suggested_by: currentUser })
+      let createdId = res.filled?.id ?? null
+      if (!opts.quick) {
+        const r = await postEntry({ date, recipe_id: opts.recipeId || null, custom_meal_name: opts.recipeId ? null : name })
+        if (!r.ok) {
+          await undoPlanChange(res.moves).catch(() => {})
+          throw new Error('Konnte nicht gespeichert werden')
+        }
+        createdId = (await r.json()).id ?? null
+      }
+      track('plan_replace')
+      track('plan_shift', { days: 1, filled: true, via: 'picker' })
+      closePicker()
+      const label = opts.label || (opts.recipeId ? recipes.find(r => r.id === opts.recipeId)?.name || 'Rezept' : name)
+      afterPlanChange(res.moves, createdId, `${label} · ${mealName(replaced)} → ${fmt(addDays(parseISO(date), 1), 'EEEEEE')}`)
+    } catch (e) {
+      showToast(errorText(e, 'Konnte nicht gespeichert werden'))
+    } finally {
+      setSaving(false)
+    }
   }
 
   // Free text → new recipe in Mealie (dinner category), then planned like any recipe.
@@ -420,6 +465,73 @@ export default function PlanPage() {
       },
     })
   }
+
+  // ---- Moving evenings ----------------------------------------------------
+
+  // Toast with a 6 s undo that restores the old dates (and removes an evening
+  // that was planned on the freed day).
+  const afterPlanChange = (moves: PlanMove[], createdId: string | null | undefined, msg: string) => {
+    refresh()
+    showToast(msg, {
+      duration: 6000,
+      action: {
+        label: 'Rückgängig',
+        onClick: async () => {
+          hideToast()
+          try {
+            await undoPlanChange(moves, createdId)
+            showToast('Zurückgenommen')
+          } catch (e) {
+            showToast(errorText(e, 'Konnte nicht zurückgenommen werden'))
+          }
+          refresh()
+        },
+      },
+    })
+  }
+
+  const shiftEntry = async (entry: MealEntry, days: 1 | -1, fillEatingOut: boolean) => {
+    if (moving) return
+    setMoving(true)
+    try {
+      const res = await shiftPlan({
+        from: entry.date, days, fill: days === 1 && fillEatingOut ? EATING_OUT : null, suggested_by: currentUser,
+      })
+      track('plan_shift', { days, filled: !!res.filled })
+      setMoveFor(null)
+      afterPlanChange(res.moves, res.filled?.id, 'Verschoben')
+    } catch (e) {
+      showToast(errorText(e, 'Konnte nicht verschoben werden'))
+      refresh()
+    } finally {
+      setMoving(false)
+    }
+  }
+
+  const moveEntryTo = async (id: string, to: string, via: 'sheet' | 'drag') => {
+    if (moving) return
+    // Optimistic: show the new order right away, the server confirms it.
+    const local = planMove(entries, id, to)
+    if (local.ok) setEntries(prev => applyMoves(prev, local.moves))
+    setMoving(true)
+    try {
+      const { moves } = await movePlanEntry(id, to)
+      const swap = moves.length > 1
+      track(via === 'drag' ? 'plan_drag' : 'plan_move', { swap })
+      setMoveFor(null)
+      afterPlanChange(moves, null, swap ? 'Getauscht' : 'Verschoben')
+    } catch (e) {
+      showToast(errorText(e, 'Konnte nicht verschoben werden'))
+      refresh()
+    } finally {
+      setMoving(false)
+    }
+  }
+
+  const drag = useLongPressDrag({
+    onDrop: ({ id, to }: DragDrop) => { moveEntryTo(id, to, 'drag') },
+    canDrop: date => date >= todayStr,
+  })
 
   const autofillWeek = async () => {
     if (!currentUser) { setShowUserPicker(true); return }
@@ -764,24 +876,29 @@ export default function PlanPage() {
         </div>
       )}
 
-      {/* Days */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+      {/* Days (planned cards can be long-pressed and dragged onto another day) */}
+      <div ref={drag.containerRef} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
         {cardDays.map(day => {
           const entry = getEntry(day)
           const dateStr = ds(day)
           const today = isToday(day)
           const past = dateStr < todayStr
           const dayLabel = today ? 'Heute' : fmt(day, 'EEEE')
+          const dropOver = drag.overDate === dateStr
 
           if (loading) {
             return <div key={dateStr} className="skeleton h-[60px] rounded-xl" />
           }
 
           if (entry) {
+            const lifted = drag.dragId === entry.id
             return (
-              <div key={dateStr} className={`rounded-xl border bg-[#141414] overflow-hidden ${
-                today ? 'border-primary/50' : 'border-[#232323]'
-              }`}>
+              <div key={dateStr} data-drop-date={dateStr} {...drag.bind(entry.id, dateStr, !past)}
+                className={`relative rounded-xl border overflow-hidden select-none [-webkit-touch-callout:none] ${
+                  dropOver ? 'border-primary bg-primary/10 ring-2 ring-primary/60'
+                    : today ? 'border-primary/50 bg-[#141414]' : 'border-[#232323] bg-[#141414]'
+                } ${lifted ? 'shadow-2xl shadow-black/80 ring-2 ring-primary/70 cursor-grabbing' : ''}`}>
+                {dropOver && <span className={dropBadge}>tauschen</span>}
                 <div className="flex items-center gap-3 p-2.5 pb-1">
                   <MealThumb entry={entry} size="w-14 h-14" />
                   <div className="flex-1 min-w-0">
@@ -789,7 +906,7 @@ export default function PlanPage() {
                       {dayLabel} <span className="font-normal text-ink-hint">{fmt(day, 'd.M.')}</span>
                     </p>
                     {entry.recipe_id ? (
-                      <Link href={`/recipes/${entry.recipe_id}`}
+                      <Link href={`/recipes/${entry.recipe_id}`} draggable={false}
                         className="block text-[15px] font-semibold text-white leading-snug line-clamp-2 hover:text-primary transition-colors">
                         {mealName(entry)}
                       </Link>
@@ -813,6 +930,10 @@ export default function PlanPage() {
                       <ShoppingCart size={16} />
                     </button>
                   )}
+                  <button onClick={() => setMoveFor(entry)} aria-label={`${mealName(entry)} verschieben`} title="Verschieben"
+                    className={`${iconBtn} text-ink-muted hover:text-white hover:bg-[#1c1c1c]`}>
+                    <CalendarClock size={17} />
+                  </button>
                   <button onClick={() => openPicker(dateStr, entry.id)}
                     className="min-h-[40px] flex items-center gap-1.5 px-2.5 rounded-lg text-sm text-ink-soft hover:text-white hover:bg-[#1c1c1c] transition-all">
                     <ArrowLeftRight size={15} /> Tauschen
@@ -840,9 +961,10 @@ export default function PlanPage() {
 
           if (dayNoms.length > 0) {
             return (
-              <div key={dateStr} className={`flex items-center gap-2 min-h-[56px] pl-3 pr-1.5 py-1.5 rounded-xl border border-dashed ${
-                today ? 'border-primary/50' : 'border-[#2c2c2c]'
-              } bg-[#101010]`}>
+              <div key={dateStr} data-drop-date={dateStr} className={`relative flex items-center gap-2 min-h-[56px] pl-3 pr-1.5 py-1.5 rounded-xl border border-dashed ${
+                dropOver ? 'border-primary bg-primary/10 ring-2 ring-primary/60' : today ? 'border-primary/50 bg-[#101010]' : 'border-[#2c2c2c] bg-[#101010]'
+              }`}>
+                {dropOver && <span className={dropBadge}>hierher</span>}
                 {dayHead}
                 <button onClick={() => setSettleDate(dateStr)}
                   className={`flex-1 min-h-[40px] flex items-center justify-center gap-1.5 rounded-lg border text-sm font-medium transition-all ${
@@ -861,10 +983,12 @@ export default function PlanPage() {
           }
 
           return (
-            <button key={dateStr} onClick={() => openPicker(dateStr)} disabled={past}
-              className={`w-full flex items-center gap-2 min-h-[52px] px-3 rounded-xl border border-dashed text-left transition-all ${
-                today ? 'border-primary/50 bg-primary/5' : 'border-[#2c2c2c] bg-[#101010]'
+            <button key={dateStr} data-drop-date={dateStr} onClick={() => openPicker(dateStr)} disabled={past}
+              className={`relative w-full flex items-center gap-2 min-h-[52px] px-3 rounded-xl border border-dashed text-left transition-all ${
+                dropOver ? 'border-primary bg-primary/10 ring-2 ring-primary/60'
+                  : today ? 'border-primary/50 bg-primary/5' : 'border-[#2c2c2c] bg-[#101010]'
               } hover:bg-[#181818] disabled:opacity-50`}>
+              {dropOver && <span className={dropBadge}>hierher</span>}
               {dayHead}
               <span className="flex-1 flex items-center gap-1.5 text-sm font-medium text-ink-soft">
                 <Plus size={16} className="text-primary" /> {past ? 'nichts geplant' : 'Abendessen planen'}
@@ -916,6 +1040,28 @@ export default function PlanPage() {
             </div>
 
             <div className="p-4 space-y-3 overflow-y-auto">
+              {/* Replace mode: keep the old dish by moving it one day later */}
+              {picker.replaceId && (() => {
+                const replaced = entries.find(e => e.id === picker.replaceId)
+                if (!replaced) return null
+                const nextLabel = picker.date === todayStr ? 'morgen' : fmt(addDays(parseISO(picker.date), 1), 'EEEE')
+                const auto = keepOld === null && picker.date === todayStr
+                return (
+                  <label className="flex items-center gap-3 min-h-[44px] px-3 py-2 rounded-xl bg-[#1a1a1a] border border-[#262626] cursor-pointer">
+                    <CalendarClock size={18} className="text-primary flex-shrink-0" />
+                    <span className="flex-1 text-sm text-ink-soft">
+                      {mealName(replaced)} nicht verwerfen, sondern auf {nextLabel} schieben
+                      <span className="block text-xs text-ink-hint">
+                        Der Rest rutscht mit{auto ? ' · bei Auswärts essen oder Bestellen automatisch' : ''}
+                      </span>
+                    </span>
+                    <input type="checkbox" checked={keepOld ?? false} onChange={e => setKeepOld(e.target.checked)}
+                      className="sr-only peer" />
+                    <span aria-hidden className="relative flex-shrink-0 w-11 h-6 rounded-full bg-[#333] peer-checked:bg-primary transition-colors after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5" />
+                  </label>
+                )
+              })()}
+
               {/* Quick options */}
               <div className="grid grid-cols-2 gap-2">
                 {QUICK_MEALS.map(q => (
@@ -950,8 +1096,8 @@ export default function PlanPage() {
                 )}
               </div>
 
-              {/* Leftovers for tomorrow */}
-              {nextDayFree && (
+              {/* Leftovers for tomorrow (not when tomorrow gets the old dish) */}
+              {nextDayFree && !keepOld && (
                 <label className="flex items-center gap-3 min-h-[44px] px-3 rounded-xl bg-[#1a1a1a] border border-[#262626] cursor-pointer">
                   <span className="text-lg">🍲</span>
                   <span className="flex-1 text-sm text-ink-soft">
@@ -993,6 +1139,19 @@ export default function PlanPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Verschieben sheet */}
+      {moveFor && (
+        <MoveSheet
+          entry={{ id: moveFor.id, date: moveFor.date, name: mealName(moveFor) }}
+          weekStart={startStr}
+          today={todayStr}
+          busy={moving}
+          onClose={() => setMoveFor(null)}
+          onShift={(days, fillEatingOut) => shiftEntry(moveFor, days, fillEatingOut)}
+          onMoveTo={date => moveEntryTo(moveFor.id, date, 'sheet')}
+        />
       )}
 
       {/* Swipen overlay */}
