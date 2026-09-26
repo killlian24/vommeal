@@ -3,11 +3,15 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import {
   Check, Plus, Copy, RefreshCw, ChevronDown, ChevronRight, X, Moon, Package, Tags, Search,
-  MoreHorizontal, ListPlus, Send, CircleCheck, Info,
+  MoreHorizontal, ListPlus, Send, CircleCheck,
 } from 'lucide-react'
 import { format, startOfWeek, addDays, parseISO } from 'date-fns'
 import { de } from 'date-fns/locale'
 import { track } from '@/lib/track'
+import {
+  type Selection, initialSelection, isSelected, toggleItem, setMealOn, setAllMealsOn,
+  activeMealIds, isHidden, mealCounts, buildCommitLines,
+} from '@/lib/shoppingSelection'
 
 type ShoppingItem = {
   id: string; name: string; amount: string; unit: string
@@ -39,18 +43,34 @@ type ReviewItem = {
   category: string
   recipe_names: string[]
   meal_plan_ids: string[]
-  meals: { date: string; recipe_name: string }[]
+  meals: { meal_plan_id: string; date: string; recipe_name: string }[]
   status: 'new' | 'staple' | 'on_list'
+  added?: boolean
+}
+
+/** A planned recipe meal in the review sheet. */
+type ReviewMeal = {
+  meal_plan_id: string
+  date: string
+  name: string
+  recipe_id: string
+  item_count: number
+  /** Already shopped for — starts off and sits under „Schon eingekauft“. */
+  added: boolean
+  /** Hardly any ingredients in Mealie. */
+  thin: boolean
 }
 
 type Review = {
   phase: 'loading' | 'select' | 'saving' | 'added' | 'sending' | 'sent'
   items: ReviewItem[]
-  hints: { recipe_name: string; count: number }[]
-  meals: number
-  skippedMeals: number
+  meals: ReviewMeal[]
   haConfigured: boolean
   end: string
+  /** „Trotzdem anzeigen“ was tapped on the everything-bought screen. */
+  showAll?: boolean
+  /** Meals marked „schon eingekauft“ in this sheet. */
+  markedBought: string[]
   added?: number
   merged?: number
   sendResult?: { ok: boolean; msg: string }
@@ -88,6 +108,15 @@ function datedMealsLabel(meals: ReviewItem['meals']): string {
     .sort((a, b) => a.date.localeCompare(b.date))
     .map(m => `${format(parseISO(m.date), 'EEEEEE d.', { locale: de })} ${m.recipe_name}`)
     .join(' · ')
+}
+
+/** "Heute", "Morgen" or "Sa 3." for a meal row. */
+function mealDayLabel(date: string): string {
+  const d = parseISO(date)
+  const today = new Date()
+  if (format(d, 'yyyy-MM-dd') === format(today, 'yyyy-MM-dd')) return 'Heute'
+  if (format(d, 'yyyy-MM-dd') === format(addDays(today, 1), 'yyyy-MM-dd')) return 'Morgen'
+  return format(d, 'EEEEEE d.', { locale: de })
 }
 
 function endOfNextWeek(): string {
@@ -129,8 +158,9 @@ export default function ShoppingPage() {
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null)
   const [lastSync, setLastSync] = useState<SyncResult | null>(null)
   const [review, setReview] = useState<Review | null>(null)
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [sel, setSel] = useState<Selection>(() => initialSelection([]))
   const [stapleBusy, setStapleBusy] = useState<string | null>(null)
+  const [markBusy, setMarkBusy] = useState<string | null>(null)
 
   const hideToast = () => {
     if (toastTimer.current) clearTimeout(toastTimer.current)
@@ -428,8 +458,8 @@ export default function ShoppingPage() {
     setShowPantry(false)
     track('shopping_review_open')
     const end = endOfNextWeek()
-    setReview({ phase: 'loading', items: [], hints: [], meals: 0, skippedMeals: 0, haConfigured: false, end })
-    setSelected(new Set())
+    setReview({ phase: 'loading', items: [], meals: [], haConfigured: false, end, markedBought: [] })
+    setSel(initialSelection([]))
     try {
       const res = await fetch('/api/shopping', {
         method: 'POST',
@@ -439,15 +469,15 @@ export default function ShoppingPage() {
       const data = await res.json().catch(() => ({}))
       if (!res.ok || !data.ok) throw new Error(data.error || 'preview failed')
       const reviewItems: ReviewItem[] = data.items ?? []
-      setSelected(new Set(reviewItems.filter(i => i.status === 'new').map(i => i.key)))
+      const reviewMeals: ReviewMeal[] = Array.isArray(data.meals) ? data.meals : []
+      setSel(initialSelection(reviewMeals))
       setReview({
         phase: 'select',
         items: reviewItems,
-        hints: data.hints ?? [],
-        meals: data.meals ?? 0,
-        skippedMeals: data.skipped_meals ?? 0,
+        meals: reviewMeals,
         haConfigured: !!data.ha_configured,
         end: data.end ?? end,
+        markedBought: [],
       })
     } catch {
       setReview(r => r && { ...r, phase: 'select', error: 'Zutaten konnten nicht geladen werden. Bitte nochmal versuchen.' })
@@ -459,13 +489,50 @@ export default function ShoppingPage() {
     setReview(null)
   }
 
-  const toggleReviewItem = (key: string) => {
-    setSelected(prev => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
+  const toggleReviewItem = (item: ReviewItem) => {
+    setSel(prev => toggleItem(item, prev))
+  }
+
+  const toggleMeal = (meal: ReviewMeal) => {
+    if (!review) return
+    const on = !sel.on.has(meal.meal_plan_id)
+    track('shopping_meal_toggle', { on })
+    setSel(prev => setMealOn(meal.meal_plan_id, on, review.items, prev))
+  }
+
+  /** Record a meal as „schon eingekauft“ (bought = true) or open it again (bought = false). */
+  const markMealBought = async (meal: ReviewMeal, bought: boolean) => {
+    if (!review || markBusy) return
+    const id = meal.meal_plan_id
+    const before = { review, sel }
+    if (bought) track('shopping_meal_mark_bought')
+    setMarkBusy(id)
+    setSel(prev => setMealOn(id, !bought, review.items, prev))
+    setReview(r => r && {
+      ...r,
+      meals: r.meals.map(m => m.meal_plan_id === id ? { ...m, added: bought } : m),
+      markedBought: bought ? [...r.markedBought.filter(x => x !== id), id] : r.markedBought.filter(x => x !== id),
     })
+    try {
+      const res = await fetch('/api/shopping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'mark_meals', meal_plan_ids: [id], added: bought }),
+      })
+      if (!res.ok) throw new Error('mark_meals failed')
+    } catch {
+      setSel(before.sel)
+      setReview(r => r && { ...r, meals: before.review.meals, markedBought: before.review.markedBought })
+      showToast('Konnte nicht gespeichert werden', { duration: ERROR_MS })
+    } finally {
+      setMarkBusy(null)
+    }
+  }
+
+  const showAllMeals = () => {
+    if (!review) return
+    setSel(prev => setAllMealsOn(review.meals.map(m => m.meal_plan_id), prev))
+    setReview(r => r && { ...r, showAll: true })
   }
 
   const markAlwaysThere = async (item: ReviewItem) => {
@@ -474,20 +541,26 @@ export default function ShoppingPage() {
     setStapleBusy(null)
     if (!staple) return
     track('pantry_add', { from: 'review' })
-    setSelected(prev => { const next = new Set(prev); next.delete(item.key); return next })
+    setSel(prev => {
+      const overrides = new Map(prev.overrides)
+      overrides.delete(item.key)
+      return { on: prev.on, overrides }
+    })
     setReview(r => r && { ...r, items: r.items.map(i => i.key === item.key ? { ...i, status: 'staple' } : i) })
     showToast(`„${item.name}“ ist jetzt im Vorrat`)
   }
 
   const commitReview = async () => {
     if (!review) return
-    const chosen = review.items.filter(i => i.status !== 'on_list' && selected.has(i.key))
-    // Items already on the list are sent too, so their row learns the new meals.
-    const alreadyOnList = review.items.filter(i => i.status === 'on_list')
-    const payload = [...chosen, ...alreadyOnList].map(({ name, category, recipe_names, meal_plan_ids }) => ({
-      name, category, recipe_names, meal_plan_ids,
-    }))
-    if (chosen.length === 0) return
+    // Items already on the list are sent too (for meals that are on), so their row learns the
+    // new meals. Each line only names the meals it is currently for.
+    const mealNames = new Map(review.meals.map(m => [m.meal_plan_id, m.name]))
+    const { chosen, lines: payload } = buildCommitLines(review.items, sel, mealNames)
+    if (chosen.length === 0) {
+      // Nothing to add, but meals were marked „schon eingekauft“ — that is already saved.
+      if (review.markedBought.length > 0) setReview(null)
+      return
+    }
     setReview(r => r && { ...r, phase: 'saving', error: undefined })
     try {
       const res = await fetch('/api/shopping', {
@@ -615,21 +688,76 @@ export default function ShoppingPage() {
 
   const reviewGroups = useMemo(() => {
     if (!review) return []
+    const bought = new Set(review.meals.filter(m => m.added).map(m => m.meal_plan_id))
+    const visible = review.items.filter(i => !isHidden(i, sel, bought))
     return displayCategoryOrder
       .map(cat => ({
         cat,
-        items: review.items
+        items: visible
           .filter(i => (CATEGORIES.includes(i.category) ? i.category : 'other') === cat)
           .sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || a.name.localeCompare(b.name, 'de')),
       }))
       .filter(g => g.items.length > 0)
     // displayCategoryOrder is derived from categoryOrder + items
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [review, categoryOrder, items])
+  }, [review, sel, categoryOrder, items])
 
-  const selectedCount = review ? review.items.filter(i => i.status !== 'on_list' && selected.has(i.key)).length : 0
+  const selectedCount = review ? review.items.filter(i => isSelected(i, sel)).length : 0
+  const openMeals = review ? review.meals.filter(m => !m.added) : []
+  const boughtMeals = review ? review.meals.filter(m => m.added) : []
+  /** Every planned meal is already shopped for and none was switched back on. */
+  const allBought = !!review && review.meals.length > 0 && openMeals.length === 0
+    && !review.showAll && review.meals.every(m => !sel.on.has(m.meal_plan_id))
+  const canFinish = !!review && selectedCount === 0 && review.markedBought.length > 0
 
   const iconBtn = 'w-10 h-10 flex items-center justify-center rounded-lg transition-colors'
+
+  /** One row in the „Mahlzeiten“ block: switch + day/dish + „schon eingekauft“ action. */
+  const renderMealRow = (meal: ReviewMeal) => {
+    if (!review) return null
+    const on = sel.on.has(meal.meal_plan_id)
+    const { selected: nSel, total } = mealCounts(meal.meal_plan_id, review.items, sel)
+    const busy = review.phase === 'saving' || markBusy === meal.meal_plan_id
+    const detail = meal.added && !on
+      ? 'Antippen, um nochmal einzukaufen'
+      : total === 0 ? 'Keine Zutaten hinterlegt' : `${nSel} von ${total} Zutaten`
+    return (
+      <div key={meal.meal_plan_id} className="flex items-center gap-1 pr-1">
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          onClick={() => toggleMeal(meal)}
+          disabled={busy}
+          className="flex-1 min-w-0 min-h-[56px] flex items-center gap-3 pl-3 pr-1 py-2 text-left rounded-xl hover:bg-[#1c1c1c] disabled:opacity-60"
+        >
+          <span className={`relative flex-shrink-0 inline-block h-6 w-10 rounded-full transition-colors ${on ? 'bg-primary' : 'bg-[#3a3a3a]'}`}>
+            <span className={`absolute top-1 left-1 h-4 w-4 rounded-full bg-white shadow transition-transform ${on ? 'translate-x-4' : ''}`} />
+          </span>
+          <span className="flex-1 min-w-0">
+            <span className={`block text-[15px] leading-snug line-clamp-2 ${on ? 'text-white' : 'text-[#b5b5b5]'}`}>
+              <span className={on ? 'text-[#d0d0d0]' : 'text-[#9a9a9a]'}>{mealDayLabel(meal.date)}</span>
+              <span className="text-[#7a7a7a]"> · </span>
+              {meal.name}
+            </span>
+            <span className="block text-[13px] leading-snug text-[#9a9a9a]">
+              {detail}
+              {meal.thin && total > 0 && <span className="text-amber-200/90"> · kaum Zutaten in Mealie</span>}
+            </span>
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => markMealBought(meal, !meal.added)}
+          disabled={busy}
+          aria-label={meal.added ? `„${meal.name}“ doch nicht eingekauft` : `„${meal.name}“ als schon eingekauft markieren`}
+          className="flex-shrink-0 min-h-[44px] max-w-[96px] px-2 rounded-lg text-xs leading-tight text-center text-[#a5a5a5] underline decoration-[#555] underline-offset-2 hover:text-white hover:bg-[#1c1c1c] disabled:opacity-50"
+        >
+          {meal.added ? 'Nicht gekauft' : 'Schon eingekauft'}
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-5">
@@ -993,7 +1121,7 @@ export default function ShoppingPage() {
                 <h2 id="review-title" className="text-lg font-bold text-white">Zutaten der Woche</h2>
                 <p className="text-sm text-[#9a9a9a]">
                   Heute bis {format(parseISO(review.end), 'EEEEEE d. MMM', { locale: de })}
-                  {review.phase === 'select' && review.items.length > 0 && ' · Abwählen, was ihr habt'}
+                  {review.phase === 'select' && review.items.length > 0 && !allBought && ' · Abwählen, was ihr habt'}
                 </p>
               </div>
               <button
@@ -1019,88 +1147,116 @@ export default function ShoppingPage() {
               )}
 
               {(review.phase === 'select' || review.phase === 'saving') && !review.error && (
-                <>
-                  {review.hints.length > 0 && (
-                    <div className="mx-2 mb-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 space-y-0.5">
-                      {review.hints.map(h => (
-                        <p key={h.recipe_name} className="flex items-start gap-2 text-[13px] text-amber-200/90">
-                          <Info size={14} className="mt-0.5 flex-shrink-0" />
-                          <span>{h.recipe_name}: kaum Zutaten in Mealie hinterlegt</span>
-                        </p>
-                      ))}
-                    </div>
-                  )}
+                review.meals.length === 0 ? (
+                  <div className="text-center px-4 py-10">
+                    <p className="text-[#d0d0d0]">Keine Rezepte mit Zutaten geplant.</p>
+                    <p className="text-sm text-[#8a8a8a] mt-1">Reste, Auswärts essen und Bestellen brauchen keine Zutaten.</p>
+                  </div>
+                ) : allBought ? (
+                  <div className="text-center px-4 py-10">
+                    <CircleCheck size={36} className="mx-auto text-primary mb-3" />
+                    <p className="text-[#e5e5e5]">Alles für die geplanten Mahlzeiten ist schon eingekauft</p>
+                    <p className="text-sm text-[#9a9a9a] mt-1">Neu geplante Gerichte tauchen hier auf.</p>
+                    <button
+                      type="button"
+                      onClick={showAllMeals}
+                      className="mt-3 min-h-[44px] px-3 text-sm font-medium text-primary underline underline-offset-4 hover:text-primary-hover"
+                    >
+                      Trotzdem anzeigen
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    {/* Meals: switch whole dishes on / off */}
+                    <section aria-labelledby="review-meals" className="px-2 pt-1 pb-3">
+                      <h3 id="review-meals" className="pb-1.5 text-sm font-semibold text-white">Mahlzeiten</h3>
+                      {openMeals.length > 0 && (
+                        <div className="rounded-xl border border-[#262626] bg-[#171717] divide-y divide-[#232323]">
+                          {openMeals.map(meal => renderMealRow(meal))}
+                        </div>
+                      )}
+                      {boughtMeals.length > 0 && (
+                        <>
+                          <p className="pt-3 pb-1.5 text-xs font-semibold uppercase tracking-wide text-[#9a9a9a]">Schon eingekauft</p>
+                          <div className="rounded-xl border border-[#222] bg-[#141414] divide-y divide-[#202020]">
+                            {boughtMeals.map(meal => renderMealRow(meal))}
+                          </div>
+                        </>
+                      )}
+                    </section>
 
-                  {review.items.length === 0 ? (
-                    <div className="text-center px-4 py-10">
-                      <p className="text-[#d0d0d0]">
-                        {review.skippedMeals > 0 && review.meals === 0
-                          ? 'Alle geplanten Gerichte stehen schon auf der Liste.'
-                          : 'Keine Rezepte mit Zutaten geplant.'}
+                    <h3 className="px-2 pt-1 text-sm font-semibold text-white">Zutaten</h3>
+                    {reviewGroups.length === 0 ? (
+                      <p className="px-2 py-4 text-sm text-[#9a9a9a]">
+                        {review.items.length === 0
+                          ? 'In Mealie sind für diese Gerichte keine Zutaten hinterlegt.'
+                          : sel.on.size > 0
+                            ? 'Für die eingeschalteten Gerichte ist nichts mehr einzukaufen.'
+                            : 'Keine Mahlzeit eingeschaltet – schalte oben ein Gericht ein.'}
                       </p>
-                      <p className="text-sm text-[#8a8a8a] mt-1">
-                        {review.skippedMeals > 0 && review.meals === 0
-                          ? 'Neu geplante Gerichte tauchen hier auf.'
-                          : 'Reste, Auswärts essen und Bestellen brauchen keine Zutaten.'}
-                      </p>
-                    </div>
-                  ) : (
-                    reviewGroups.map(group => (
-                      <div key={group.cat} className="mb-2">
-                        <p className="px-2 pt-2 pb-1 text-xs font-semibold uppercase tracking-wide text-[#8a8a8a]">
-                          {CATEGORY_LABELS[group.cat] || group.cat}
-                        </p>
-                        {group.items.map(item => {
-                          const isOnList = item.status === 'on_list'
-                          const isSelected = !isOnList && selected.has(item.key)
-                          const tag = isOnList ? 'schon drauf' : isSelected ? '' : item.status === 'staple' ? 'Vorrat' : 'haben wir'
-                          return (
-                            <div key={item.key} className="flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => !isOnList && toggleReviewItem(item.key)}
-                                disabled={isOnList || review.phase === 'saving'}
-                                aria-pressed={isOnList ? undefined : isSelected}
-                                className="flex-1 min-w-0 min-h-[52px] flex items-center gap-3 px-2 py-2 rounded-lg text-left hover:bg-[#1a1a1a] disabled:hover:bg-transparent"
-                              >
-                                <span className={`w-[22px] h-[22px] flex-shrink-0 rounded-md border-2 flex items-center justify-center transition-colors ${
-                                  isSelected ? 'bg-primary border-primary' : isOnList ? 'border-[#3a3a3a] bg-[#262626]' : 'border-[#555]'
-                                }`}>
-                                  {isSelected && <Check size={13} className="text-white" strokeWidth={3} />}
-                                  {isOnList && <Check size={13} className="text-[#8a8a8a]" strokeWidth={3} />}
-                                </span>
-                                <span className="flex-1 min-w-0">
-                                  <span className={`block text-[15px] leading-snug ${isSelected ? 'text-white' : 'text-[#9a9a9a]'}`}>
-                                    {item.name}
-                                  </span>
-                                  <span className="block text-[13px] leading-snug text-[#8a8a8a] line-clamp-2">
-                                    {datedMealsLabel(item.meals)}
-                                  </span>
-                                </span>
-                                {tag && (
-                                  <span className="flex-shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-[#222] border border-[#333] text-[#a5a5a5]">
-                                    {tag}
-                                  </span>
-                                )}
-                              </button>
-                              {item.status === 'new' && (
+                    ) : (
+                      reviewGroups.map(group => (
+                        <div key={group.cat} className="mb-2">
+                          <p className="px-2 pt-2 pb-1 text-xs font-semibold uppercase tracking-wide text-[#8a8a8a]">
+                            {CATEGORY_LABELS[group.cat] || group.cat}
+                          </p>
+                          {group.items.map(item => {
+                            const isOnList = item.status === 'on_list'
+                            const itemSelected = isSelected(item, sel)
+                            const forMeals = activeMealIds(item, sel)
+                            const mealsOff = !item.meal_plan_ids.some(id => sel.on.has(id))
+                            const tag = isOnList ? 'schon drauf'
+                              : itemSelected ? ''
+                                : item.status === 'staple' ? 'Vorrat'
+                                  : mealsOff && !sel.overrides.has(item.key) ? 'Gericht aus' : 'haben wir'
+                            return (
+                              <div key={item.key} className="flex items-center gap-1">
                                 <button
                                   type="button"
-                                  onClick={() => markAlwaysThere(item)}
-                                  disabled={stapleBusy === item.key || review.phase === 'saving'}
-                                  title="Zum Vorrat hinzufügen – wird künftig nicht mehr vorausgewählt"
-                                  className="flex-shrink-0 min-h-[40px] px-2 rounded-lg text-xs text-[#9a9a9a] underline decoration-[#444] underline-offset-2 hover:text-white hover:bg-[#1a1a1a] disabled:opacity-50"
+                                  onClick={() => !isOnList && toggleReviewItem(item)}
+                                  disabled={isOnList || review.phase === 'saving'}
+                                  aria-pressed={isOnList ? undefined : itemSelected}
+                                  className="flex-1 min-w-0 min-h-[52px] flex items-center gap-3 px-2 py-2 rounded-lg text-left hover:bg-[#1a1a1a] disabled:hover:bg-transparent"
                                 >
-                                  Immer da
+                                  <span className={`w-[22px] h-[22px] flex-shrink-0 rounded-md border-2 flex items-center justify-center transition-colors ${
+                                    itemSelected ? 'bg-primary border-primary' : isOnList ? 'border-[#3a3a3a] bg-[#262626]' : 'border-[#555]'
+                                  }`}>
+                                    {itemSelected && <Check size={13} className="text-white" strokeWidth={3} />}
+                                    {isOnList && <Check size={13} className="text-[#8a8a8a]" strokeWidth={3} />}
+                                  </span>
+                                  <span className="flex-1 min-w-0">
+                                    <span className={`block text-[15px] leading-snug ${itemSelected ? 'text-white' : 'text-[#9a9a9a]'}`}>
+                                      {item.name}
+                                    </span>
+                                    <span className="block text-[13px] leading-snug text-[#8a8a8a] line-clamp-2">
+                                      {datedMealsLabel(item.meals.filter(m => forMeals.includes(m.meal_plan_id)))}
+                                    </span>
+                                  </span>
+                                  {tag && (
+                                    <span className="flex-shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-[#222] border border-[#333] text-[#a5a5a5]">
+                                      {tag}
+                                    </span>
+                                  )}
                                 </button>
-                              )}
-                            </div>
-                          )
-                        })}
-                      </div>
-                    ))
-                  )}
-                </>
+                                {item.status === 'new' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => markAlwaysThere(item)}
+                                    disabled={stapleBusy === item.key || review.phase === 'saving'}
+                                    title="Zum Vorrat hinzufügen – wird künftig nicht mehr vorausgewählt"
+                                    className="flex-shrink-0 min-h-[40px] px-2 rounded-lg text-xs text-[#9a9a9a] underline decoration-[#444] underline-offset-2 hover:text-white hover:bg-[#1a1a1a] disabled:opacity-50"
+                                  >
+                                    Immer da
+                                  </button>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      ))
+                    )}
+                  </>
+                )
               )}
 
               {(review.phase === 'added' || review.phase === 'sending' || review.phase === 'sent') && (
@@ -1124,12 +1280,14 @@ export default function ShoppingPage() {
             {/* Sheet footer */}
             <div className="px-4 pt-3 border-t border-[#222] pb-[max(1rem,env(safe-area-inset-bottom))]">
               {(review.phase === 'select' || review.phase === 'saving' || review.phase === 'loading') && (
-                review.items.length === 0 && review.phase !== 'loading' ? (
+                review.phase !== 'loading' && (review.meals.length === 0 || allBought || canFinish) ? (
                   <button
                     onClick={closeReview}
-                    className="w-full min-h-[48px] rounded-xl bg-[#1c1c1c] border border-[#2a2a2a] text-[#e5e5e5] text-base font-medium"
+                    className={canFinish || (allBought && review.markedBought.length > 0)
+                      ? 'w-full min-h-[48px] rounded-xl bg-primary hover:bg-primary-hover text-white text-base font-semibold transition-colors'
+                      : 'w-full min-h-[48px] rounded-xl bg-[#1c1c1c] border border-[#2a2a2a] text-[#e5e5e5] text-base font-medium'}
                   >
-                    Schließen
+                    {canFinish || (allBought && review.markedBought.length > 0) ? 'Fertig' : 'Schließen'}
                   </button>
                 ) : (
                   <button
