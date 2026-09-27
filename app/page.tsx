@@ -14,7 +14,9 @@ import { Avatar } from '@/components/Avatar'
 import { useCurrentUser } from '@/components/UserProvider'
 import { track } from '@/lib/track'
 import { QUICK_MEALS, EATING_OUT, quickMealEmoji } from '@/lib/quickMeals'
-import { planMove, applyMoves, type PlanMove } from '@/lib/planMoves'
+import { planMove, applyMoves, addDaysIso, type PlanMove } from '@/lib/planMoves'
+import { votePool } from '@/lib/votePool'
+import { RECENT_DAYS } from '@/lib/suggest'
 import { shiftPlan, movePlanEntry, undoPlanChange } from '@/lib/planApi'
 import { apiCall, NETWORK_ERROR } from '@/lib/apiCall'
 import { useLongPressDrag, type DragDrop } from '@/lib/useLongPressDrag'
@@ -32,6 +34,7 @@ import { dayLabel, shortDay, relativeWeekday, rangeLabel as dateRange } from '@/
 type Recipe = {
   id: string; name: string; image_url: string; prep_time: number; cook_time: number
   source: string; rating: number | null; effort?: 'quick' | 'involved' | null
+  never_again?: boolean
 }
 type Nomination = { id: string; date: string; recipe_id: string; user_name: string; recipe?: Recipe }
 type MealEntry = {
@@ -79,19 +82,6 @@ const normName = (s: string) => s.normalize('NFC').trim().replace(/\s+/g, ' ').t
 const abende = (n: number) => `${n} ${n === 1 ? 'Abend' : 'Abende'}`
 const errorText = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback)
 
-// Deterministic shuffle seeded by a string — both partners get the same cards per day
-function seededShuffle<T>(arr: T[], seed: string): T[] {
-  const copy = [...arr]
-  let h = 0
-  for (let i = 0; i < seed.length; i++) { h = Math.imul(31, h) + seed.charCodeAt(i) | 0 }
-  for (let i = copy.length - 1; i > 0; i--) {
-    h = Math.imul(1664525, h) + 1013904223 | 0
-    const j = Math.abs(h) % (i + 1)
-    ;[copy[i], copy[j]] = [copy[j], copy[i]]
-  }
-  return copy
-}
-
 async function fetchRangeAt(start: string, end: string): Promise<{ data: MealEntry[]; at: number }> {
   const res = await fetch(`/api/meal-plan?start=${start}&end=${end}`)
   if (!res.ok) throw new Error('meal plan load failed')
@@ -116,6 +106,59 @@ function MealThumb({ entry, recipe, size }: { entry?: MealEntry; recipe?: Recipe
   const emoji = quickMealEmoji(entry?.custom_meal_name) || '🍽️'
   return (
     <div className={`${size} rounded-lg bg-[#1e1e1e] flex items-center justify-center text-xl flex-shrink-0`}>{emoji}</div>
+  )
+}
+
+// Card for Abstimmen that can be swiped: right = Ja, left = Nein. Vertical
+// moves stay page scrolling (touch-action: pan-y); a short drag snaps back.
+const SWIPE_VOTE_PX = 90
+function SwipeCard({ onVote, children }: { onVote: (yes: boolean) => void; children: React.ReactNode }) {
+  const [dx, setDx] = useState(0)
+  const [leaving, setLeaving] = useState<0 | 1 | -1>(0)
+  const [dragging, setDragging] = useState(false)
+  const drag = useRef<{ id: number; x: number; y: number; horizontal: boolean | null } | null>(null)
+  const onDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (leaving || (e.pointerType === 'mouse' && e.button !== 0)) return
+    drag.current = { id: e.pointerId, x: e.clientX, y: e.clientY, horizontal: null }
+  }
+  const onMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = drag.current
+    if (!d || d.id !== e.pointerId) return
+    const mx = e.clientX - d.x
+    const my = e.clientY - d.y
+    if (d.horizontal === null && Math.hypot(mx, my) > 8) {
+      d.horizontal = Math.abs(mx) > Math.abs(my)
+      if (d.horizontal) { e.currentTarget.setPointerCapture(e.pointerId); setDragging(true) }
+    }
+    if (d.horizontal) setDx(mx)
+  }
+  const onUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = drag.current
+    if (!d || d.id !== e.pointerId) return
+    drag.current = null
+    setDragging(false)
+    if (d.horizontal && Math.abs(dx) >= SWIPE_VOTE_PX) {
+      const dir = dx > 0 ? 1 : -1
+      setLeaving(dir)
+      window.setTimeout(() => onVote(dir === 1), 160)
+    } else setDx(0)
+  }
+  const shift = leaving ? leaving * 480 : dx
+  const yes = Math.max(0, Math.min(1, dx / SWIPE_VOTE_PX))
+  const no = Math.max(0, Math.min(1, -dx / SWIPE_VOTE_PX))
+  return (
+    <div onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={() => { drag.current = null; setDragging(false); setDx(0) }}
+      className="relative mt-2 select-none touch-pan-y cursor-grab active:cursor-grabbing"
+      style={{
+        transform: `translateX(${shift}px) rotate(${shift / 24}deg)`,
+        transition: dragging ? 'none' : 'transform 160ms ease-out',
+      }}>
+      {children}
+      <span aria-hidden style={{ opacity: yes }}
+        className="absolute top-3 left-3 px-2.5 py-1 rounded-lg border-2 border-green-400 text-green-300 text-sm font-bold bg-black/50 pointer-events-none">JA</span>
+      <span aria-hidden style={{ opacity: no }}
+        className="absolute top-3 right-3 px-2.5 py-1 rounded-lg border-2 border-red-400 text-red-300 text-sm font-bold bg-black/50 pointer-events-none">NEIN</span>
+    </div>
   )
 }
 
@@ -162,6 +205,11 @@ export default function PlanPage() {
   const [funCardIndex, setFunCardIndex] = useState(0)
   const [funDone, setFunDone] = useState(false)
   const pendingVotes = useRef<Promise<unknown>[]>([])
+  // Plans from 21 days ago to the end of the week, loaded when voting starts:
+  // the cards follow the suggestion rules and stay the same while voting
+  const [voteEntries, setVoteEntries] = useState<MealEntry[] | null>(null)
+  // Days this phone voted on in this round, for the partner's status
+  const [votedDates, setVotedDates] = useState<string[]>([])
   const [settleDate, setSettleDate] = useState<string | null>(null)
   // "Zutaten der Woche" sheet for the week on screen or one evening
   const [ingredients, setIngredients] = useState<{ start: string; end: string; source: 'week' | 'card' } | null>(null)
@@ -752,8 +800,11 @@ export default function PlanPage() {
 
   // ---- Voting ("Abstimmen") ------------------------------------------------
 
+  // Same cards on both phones (seeded by the date), same rules as the suggestions
   const getCardsForDate = (dateStr: string): Recipe[] =>
-    seededShuffle(recipes, dateStr).slice(0, CARDS_PER_DAY)
+    votePool(recipes, voteEntries ?? entries, {
+      date: dateStr, today: todayStr, rangeStart: startStr, rangeEnd: endStr, count: CARDS_PER_DAY,
+    })
 
   const openFunMode = () => {
     if (!currentUser) { askUser(); return }
@@ -763,11 +814,17 @@ export default function PlanPage() {
     track('fun_open')
   }
 
-  const startFunMode = () => {
+  const startFunMode = async () => {
     setFunDayPicker(false)
     setFunDayIndex(0)
     setFunCardIndex(0)
     setFunDone(false)
+    setVotedDates([])
+    try {
+      setVoteEntries(await fetchRange(addDaysIso(todayStr, -RECENT_DAYS), endStr > todayStr ? endStr : todayStr))
+    } catch {
+      setVoteEntries(null) // offline: the week on screen still keeps planned dishes out
+    }
     setFunMode(true)
   }
 
@@ -788,7 +845,7 @@ export default function PlanPage() {
 
   const advanceFunCard = () => {
     const nextCard = funCardIndex + 1
-    if (nextCard < CARDS_PER_DAY) { setFunCardIndex(nextCard); return }
+    if (nextCard < getCardsForDate(ds(funDays[funDayIndex])).length) { setFunCardIndex(nextCard); return }
     const nextDay = funDayIndex + 1
     if (nextDay >= funDays.length) finishFunMode()
     else { setFunDayIndex(nextDay); setFunCardIndex(0) }
@@ -799,6 +856,9 @@ export default function PlanPage() {
     const dateStr = ds(funDays[funDayIndex])
     track('fun_vote', { yes })
     advanceFunCard()
+    setVotedDates(prev => prev.includes(dateStr) ? prev : [...prev, dateStr])
+    // The partner's votes for this day, for the line under the card
+    loadNominations({ background: true })
     if (!yes) return
     const post = fetch('/api/nominations', {
       method: 'POST',
@@ -807,6 +867,7 @@ export default function PlanPage() {
     })
       .then(r => r.ok ? r.json() : null)
       .then(data => {
+        loadNominations({ background: true })
         if (data?.match) {
           showToast(`❤️ Match: ${recipe.name} am ${fmt(parseISO(dateStr), 'EEEE')}!`)
           refresh()
@@ -1354,13 +1415,20 @@ export default function PlanPage() {
         const dateStr = ds(currentDay)
         const cards = getCardsForDate(dateStr)
         const recipe = cards[funCardIndex]
+        // After voting on a day: has the partner voted there too? (Only "Ja" is stored.)
+        const statusDate = votedDates.includes(dateStr) ? dateStr : votedDates[votedDates.length - 1]
+        const partnerYes = statusDate ? nominations.filter(n => n.date === statusDate && n.user_name !== currentUser).length : 0
+        const partnerStatus = !statusDate ? null
+          : `${statusDate === dateStr ? '' : `${fmt(parseISO(statusDate), 'EEEE')}: `}${partnerYes > 0
+            ? `${partner} hat schon abgestimmt (${partnerYes}× Ja)`
+            : `Von ${partner} noch kein Ja für diesen Abend`}`
 
         return (
           <Sheet onClose={closeFunMode} closeOnScrim={false} className={sheetPanel('max-w-sm')}>
             <div className="flex items-center justify-between pl-4 pr-2 py-2 border-b border-[#222] flex-shrink-0">
               <div>
                 <p className="text-xs text-ink-muted font-medium">
-                  Tag {funDayIndex + 1}/{emptyDays.length} · Karte {funCardIndex + 1}/{CARDS_PER_DAY}
+                  Tag {funDayIndex + 1}/{emptyDays.length} · Karte {Math.min(funCardIndex + 1, cards.length)}/{cards.length}
                 </p>
                 <SheetTitle className="text-sm font-semibold text-white">{fmt(currentDay, 'EEEE, d. MMMM')}</SheetTitle>
               </div>
@@ -1377,22 +1445,29 @@ export default function PlanPage() {
 
             {recipe ? (
               <>
-                {recipe.image_url ? (
-                  <div className="relative h-48 overflow-hidden mt-2">
-                    <Image src={recipe.image_url} alt="" fill className="object-cover" unoptimized />
-                    <div className="absolute inset-0 bg-gradient-to-t from-[#141414] via-transparent to-transparent" />
+                {/* Swipe right for Ja, left for Nein; the buttons below do the same */}
+                <SwipeCard key={`${dateStr}-${recipe.id}`} onVote={yes => funVote(recipe, yes)}>
+                  {recipe.image_url ? (
+                    <div className="relative h-48 overflow-hidden">
+                      <Image src={recipe.image_url} alt="" fill className="object-cover" unoptimized draggable={false} />
+                      <div className="absolute inset-0 bg-gradient-to-t from-[#141414] via-transparent to-transparent" />
+                    </div>
+                  ) : (
+                    <div className="h-28 bg-[#1a1a1a] flex items-center justify-center text-5xl" aria-hidden>🍽️</div>
+                  )}
+                  <div className="px-4 py-3">
+                    <p className="text-base font-semibold text-white leading-tight">{recipe.name}</p>
+                    <div className="flex items-center gap-3 mt-1 text-sm text-ink-muted">
+                      {(recipe.prep_time || recipe.cook_time) ? <span>⏱ {(recipe.prep_time || 0) + (recipe.cook_time || 0)} Min.</span> : null}
+                      {recipe.effort === 'quick' ? <span>⚡ schnell</span> : null}
+                      {recipe.rating ? <StarRating rating={recipe.rating} size={12} /> : null}
+                    </div>
                   </div>
-                ) : (
-                  <div className="h-28 mt-2 bg-[#1a1a1a] flex items-center justify-center text-5xl">🍽️</div>
+                </SwipeCard>
+
+                {partnerStatus && (
+                  <p role="status" className="px-4 pb-2 text-xs text-ink-muted">{partnerStatus}</p>
                 )}
-                <div className="px-4 py-3">
-                  <p className="text-base font-semibold text-white leading-tight">{recipe.name}</p>
-                  <div className="flex items-center gap-3 mt-1 text-sm text-ink-muted">
-                    {(recipe.prep_time || recipe.cook_time) ? <span>⏱ {(recipe.prep_time || 0) + (recipe.cook_time || 0)} Min.</span> : null}
-                    {recipe.effort === 'quick' ? <span>⚡ schnell</span> : null}
-                    {recipe.rating ? <StarRating rating={recipe.rating} size={12} /> : null}
-                  </div>
-                </div>
 
                 <div className="px-4 pb-4 grid grid-cols-2 gap-3">
                   <button onClick={() => funVote(recipe, false)}

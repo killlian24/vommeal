@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import {
   Check, Plus, Copy, RefreshCw, ChevronDown, ChevronRight, X, Package, Tags, Search,
-  MoreHorizontal, ListPlus,
+  MoreHorizontal, ListPlus, Trash2,
 } from 'lucide-react'
 import { format, startOfWeek, addDays, isToday } from 'date-fns'
 import { de } from 'date-fns/locale'
@@ -575,6 +575,16 @@ export default function ShoppingPage() {
                       <Package size={16} className="text-[#9a9a9a]" />
                       Vorrat verwalten
                     </button>
+                    {totalCount > 0 && (
+                      <button
+                        role="menuitem"
+                        onClick={() => { setMenuOpen(false); clearAll() }}
+                        className="w-full min-h-[44px] flex items-center gap-3 px-4 text-sm text-red-300 hover:bg-[#252525] border-t border-[#2a2a2a]"
+                      >
+                        <Trash2 size={16} className="text-red-300/80" />
+                        Alles löschen
+                      </button>
+                    )}
                   </div>
                 </>
               )}
@@ -889,20 +899,12 @@ export default function ShoppingPage() {
 
           {/* Clear actions */}
           {checkedCount > 0 && (
-            <div className="flex gap-2">
-              <button
-                onClick={clearChecked}
-                className="flex-1 min-h-[44px] rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm text-[#b5b5b5] hover:text-white transition-colors"
-              >
-                {plural(checkedCount, 'Erledigten', 'Erledigte')} entfernen
-              </button>
-              <button
-                onClick={clearAll}
-                className="px-4 min-h-[44px] rounded-lg bg-red-500/10 hover:bg-red-500/20 border border-red-500/25 text-sm text-red-300 transition-colors"
-              >
-                Alles löschen
-              </button>
-            </div>
+            <button
+              onClick={clearChecked}
+              className="w-full min-h-[44px] rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm text-[#b5b5b5] hover:text-white transition-colors"
+            >
+              {plural(checkedCount, 'Erledigten', 'Erledigte')} entfernen
+            </button>
           )}
         </div>
       )}

@@ -26,7 +26,7 @@ Kommt man zurück in die App (oder ist wieder online), laden Woche, Heute und Ei
 
   Alternativ lange auf eine Karte drücken und sie auf einen anderen Tag ziehen; ein einmaliger Tipp in der Woche weist darauf hin, sobald zwei Abende geplant sind. Alles lässt sich 6 Sekunden lang rückgängig machen; die Zuordnung zur Einkaufsliste bleibt erhalten.
 - **Anderes Gericht:** ersetzt das Gericht eines Abends, mit Rückgängig („Ersetzt: Linsen durch Pizza“). Wird dabei für heute „Auswärts essen“ oder „Bestellen“ gewählt, rutscht das bisherige Gericht automatisch auf morgen. Soll das alte Gericht an einen anderen Tag, führt **Stattdessen verschieben** zum Verschieben. „Tauschen“ heißt in Vommeal nur das Vertauschen zweier Tage.
-- **Abstimmen:** wie bei einer Dating-App: pro Tag drei Rezepte, jeder stimmt auf seinem Handy ab, gemeinsame Treffer werden automatisch geplant.
+- **Abstimmen:** wie bei einer Dating-App: pro Tag drei Rezepte, nach rechts wischen (oder **Ja**) heißt ja, nach links nein. Beide Handys sehen dieselben Karten, nach denselben Regeln wie die Vorschläge (nichts mit „Nicht nochmal“, nichts schon in der Woche Geplantes, nichts aus den letzten 21 Tagen, solange genug anderes da ist). Nach der eigenen Stimme zeigt Vommeal, ob der andere für den Abend schon abgestimmt hat; gemeinsame Treffer werden automatisch geplant.
 - **Einkaufen:** öffnet „Zutaten der Woche“ für die kommenden Abende der angezeigten Woche; der Einkaufswagen an einer Karte öffnet es nur für diesen Abend (ausführlicher unter [Einkauf](#einkauf)). Nichts landet ohne diesen Prüfschritt auf der Liste. **Woche leeren** unten entfernt alle Planungen der Woche.
 
 ### Heute
@@ -56,7 +56,7 @@ Kommt man zurück in die App (oder ist wieder online), laden Woche, Heute und Ei
   - Einzelne Zutaten abwählen („haben wir“); bei abgewählten Zutaten legt **In den Vorrat** sie in den Vorrat, dann werden sie nie mehr vorausgewählt. Salz, Pfeffer und Wasser werden nie vorgeschlagen.
   - **N auf die Liste** übernimmt die Auswahl, danach bietet Vommeal **Abgleichen** mit Home Assistant an.
 - **Abgleichen:** gleicht mit der Home-Assistant-Todo-Liste ab (z. B. Google Keep); ohne eingerichtetes Home Assistant erklärt der Knopf nur, was fehlt, mit **Einstellungen öffnen** (siehe [Einkaufsliste und Home Assistant](#einkaufsliste-und-home-assistant)).
-- Im Menü **⋯**: **Liste kopieren** (als Text zum Teilen) und **Vorrat verwalten**. Löschen und „Erledigte entfernen“ lassen sich rückgängig machen, „Alles löschen“ fragt nach.
+- Im Menü **⋯**: **Liste kopieren** (als Text zum Teilen), **Vorrat verwalten** und **Alles löschen** (fragt nach). Löschen und „Erledigte entfernen“ lassen sich rückgängig machen.
 - **Ohne Netz (z. B. im Supermarkt-Keller):** Das Handy merkt sich die zuletzt geladene Liste und zeigt sie mit „Offline · Stand 14:05“. Abhaken, Eintragen und Entfernen gehen weiter; die Änderungen warten auf dem Handy („2 Änderungen warten“) und werden gesendet, sobald wieder Verbindung da ist. Konnte die Liste nie geladen werden, zeigt Vommeal einen Fehler mit **Erneut laden** statt einer leeren Liste.
 - **App ohne Netz öffnen:** Die installierte App startet auch offline (Service Worker). Das klappt nur, wenn Vommeal über https erreichbar ist (z. B. per Tailscale mit HTTPS); über einfaches http im Heimnetz funktioniert alles, aber nur mit Verbindung.
 
