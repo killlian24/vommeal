@@ -23,14 +23,15 @@ describe('isWeeknight', () => {
 })
 
 describe('autofillCandidates', () => {
-  it('always drops rating 1', () => {
-    expect(autofillCandidates([r('a', 1), r('b', 1), r('c')], 5).map(x => x.id)).toEqual(['c'])
+  it('always drops recipes marked "nicht nochmal"', () => {
+    const recipes = [{ ...r('a', 5), never_again: true }, { ...r('b'), never_again: true }, r('c')]
+    expect(autofillCandidates(recipes, 5).map(x => x.id)).toEqual(['c'])
   })
 
-  it('drops rating 2 only while enough others remain', () => {
-    const recipes = [r('a', 2), r('b', 5), r('c'), r('d', 1)]
+  it('drops rating 1 and 2 only while enough others remain', () => {
+    const recipes = [r('a', 2), r('b', 5), r('c'), r('d', 1), { ...r('e'), never_again: true }]
     expect(autofillCandidates(recipes, 2).map(x => x.id)).toEqual(['b', 'c'])
-    expect(autofillCandidates(recipes, 3).map(x => x.id)).toEqual(['a', 'b', 'c'])
+    expect(autofillCandidates(recipes, 3).map(x => x.id)).toEqual(['a', 'b', 'c', 'd'])
   })
 })
 

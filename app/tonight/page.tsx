@@ -16,7 +16,7 @@ import { inDinnerCategory, pickSuggestions as pickFrom } from '@/lib/suggest'
 type Effort = 'quick' | 'involved' | null
 type Recipe = {
   id: string; name: string; image_url: string; prep_time: number; cook_time: number
-  rating: number | null; effort?: Effort; tags?: string[]
+  rating: number | null; effort?: Effort; tags?: string[]; never_again?: boolean
 }
 type MealEntry = {
   id: string; date: string; recipe_id: string | null; custom_meal_name: string | null
@@ -44,6 +44,10 @@ function wasPrompted(entryId: string): boolean {
 
 function markPrompted(entryId: string) {
   try { localStorage.setItem(PROMPTED_KEY(entryId), '1') } catch { /* storage unavailable */ }
+}
+
+function unmarkPrompted(entryId: string) {
+  try { localStorage.removeItem(PROMPTED_KEY(entryId)) } catch { /* storage unavailable */ }
 }
 
 // Same rules as the daily notification (lib/suggest.ts), for the phone's local today.
@@ -274,17 +278,35 @@ export default function TonightPage() {
       track('rating_prompt', { choice: 'skip' })
       return
     }
-    const rating = choice === 'never' ? 1 : stars!
-    track('rating_prompt', { choice, stars: rating, recipe_id: entry.recipe_id })
-    showToast(choice === 'never' ? 'Alles klar, kommt nicht mehr vor' : 'Danke fürs Bewerten!')
-    setRecipes(rs => rs.map(r => (r.id === entry.recipe_id ? { ...r, rating } : r)))
-    try {
-      await fetch(`/api/recipes/${entry.recipe_id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rating }),
-      })
-    } catch { /* the local rating is best effort; the prompt will not reappear */ }
+    // One star is only a rating; "Nicht nochmal" is the explicit block.
+    const recipe = recipes.find(r => r.id === entry.recipe_id)
+    const patch = choice === 'never' ? { never_again: true } : { rating: stars! }
+    const undoPatch = choice === 'never' ? { never_again: !!recipe?.never_again } : { rating: recipe?.rating ?? null }
+    const apply = (p: Partial<Recipe>) => setRecipes(rs => rs.map(r => (r.id === entry.recipe_id ? { ...r, ...p } : r)))
+    const askAgain = () => { unmarkPrompted(entry.id); setRatePrompt(entry) }
+    const send = (body: Partial<Recipe>) => apiCall(`/api/recipes/${entry.recipe_id}`, {
+      method: 'PATCH', body, fallback: 'Bewertung wurde nicht gespeichert',
+    })
+
+    apply(patch)
+    const res = await send(patch)
+    if (!res.ok) { apply(undoPatch); askAgain(); showToast(res.error); return }
+    track('rating_prompt', { choice, stars: choice === 'stars' ? stars : null, recipe_id: entry.recipe_id })
+    showToast(choice === 'never' ? 'Alles klar, kommt nicht mehr vor' : 'Danke fürs Bewerten!', {
+      duration: 6000,
+      action: {
+        label: 'Rückgängig',
+        onClick: async () => {
+          if (toastTimer.current) clearTimeout(toastTimer.current)
+          setToast(null)
+          const r = await send(undoPatch)
+          if (!r.ok) { showToast(r.error); return }
+          apply(undoPatch)
+          askAgain()
+          showToast('Zurückgenommen')
+        },
+      },
+    })
   }
 
   const today = format(new Date(), ISO)

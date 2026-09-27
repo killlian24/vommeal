@@ -21,6 +21,7 @@ type Recipe = {
   mealie_id: string | null; mealie_slug: string | null
   rating: number | null
   effort?: Effort
+  never_again?: boolean
 }
 
 const EFFORT_OPTIONS: { value: Effort; label: string }[] = [
@@ -82,6 +83,24 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
       return
     }
     if (res.data?.mealie_error) setMealieError(res.data.mealie_error)
+  }
+
+  // "Nicht nochmal" keeps the recipe out of suggestions and autofill; the
+  // stars stay a plain rating.
+  const setNeverAgain = async (neverAgain: boolean) => {
+    setRecipe(r => ({ ...r, never_again: neverAgain }))
+    setRatingError('')
+    const res = await apiCall(`/api/recipes/${recipe.id}`, {
+      method: 'PATCH',
+      body: { never_again: neverAgain },
+      fallback: 'Wurde nicht gespeichert',
+    })
+    if (!res.ok) {
+      setRecipe(r => ({ ...r, never_again: !neverAgain }))
+      setRatingError(res.error)
+      return
+    }
+    track('never_again_set', { recipe_id: recipe.id, never_again: neverAgain })
   }
 
   const save = async () => {
@@ -346,8 +365,16 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
               editable
               onChange={rate}
             />
-            {recipe.rating === 1 && (
-              <span className="text-xs text-red-300 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded-full">Nicht nochmal</span>
+            {recipe.never_again ? (
+              <button type="button" onClick={() => setNeverAgain(false)} aria-label="Wieder vorschlagen"
+                className="min-h-[32px] flex items-center gap-1 text-xs text-red-300 bg-red-500/10 border border-red-500/20 px-2.5 rounded-full hover:bg-red-500/20 transition-colors">
+                Nicht nochmal <X size={12} aria-hidden />
+              </button>
+            ) : (
+              <button type="button" onClick={() => setNeverAgain(true)}
+                className="min-h-[32px] text-xs text-ink-hint hover:text-red-300 px-1 transition-colors">
+                Nicht mehr vorschlagen
+              </button>
             )}
           </>
         )}

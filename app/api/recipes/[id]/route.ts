@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getRecipeById, upsertRecipe, deleteRecipe, updateRecipeRating, updateRecipeEffort } from '@/lib/db'
+import { getRecipeById, upsertRecipe, deleteRecipe, updateRecipeRating, updateRecipeEffort, updateRecipeNeverAgain } from '@/lib/db'
 import { updateMealieRating, deleteMealieRecipe } from '@/lib/mealie'
 import { IMAGE_CACHE_DIR } from '@/lib/images'
 import fs from 'fs'
 import path from 'path'
-import { errorResponse, readJsonObject, parseRecipeInput, optionalRating, optionalEffort } from '@/lib/validate'
+import { errorResponse, readJsonObject, parseRecipeInput, optionalRating, optionalEffort, optionalBoolean } from '@/lib/validate'
 
 export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -44,10 +44,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     // Validate everything before writing anything.
     const effort = 'effort' in body ? optionalEffort(body.effort) : undefined
     const rating = 'rating' in body ? optionalRating(body.rating) : undefined
+    const neverAgain = 'never_again' in body ? optionalBoolean(body.never_again, 'never_again') : undefined
 
     if (effort !== undefined) updateRecipeEffort(id, effort)
+    // "Nicht nochmal" is local only and independent of the rating.
+    if (neverAgain !== undefined) updateRecipeNeverAgain(id, neverAgain)
 
-    // Rating 1 means "nicht nochmal" (autofill never picks it again).
     if (rating !== undefined) {
       updateRecipeRating(id, rating)
       if (recipe.mealie_slug) {

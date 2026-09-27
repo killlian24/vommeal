@@ -127,6 +127,9 @@ function migrate(db: Database.Database) {
   try { db.exec('ALTER TABLE recipes ADD COLUMN rating INTEGER') } catch { /* already exists */ }
   // Local-only effort flag ('quick' | 'involved' | NULL); never touched by Mealie sync.
   try { db.exec('ALTER TABLE recipes ADD COLUMN effort TEXT') } catch { /* already exists */ }
+  // Local-only "Nicht nochmal" flag: keeps a recipe out of suggestions and
+  // autofill. Separate from the rating, so one star is just a rating.
+  try { db.exec('ALTER TABLE recipes ADD COLUMN never_again INTEGER NOT NULL DEFAULT 0') } catch { /* already exists */ }
   try { db.exec("ALTER TABLE shopping_list ADD COLUMN recipe_names TEXT DEFAULT '[]'") } catch { /* already exists */ }
   try { db.exec("ALTER TABLE shopping_list ADD COLUMN meal_plan_ids TEXT DEFAULT '[]'") } catch { /* already exists */ }
   try { db.exec('ALTER TABLE shopping_list ADD COLUMN ha_uid TEXT') } catch { /* already exists */ }
@@ -154,6 +157,12 @@ function migrate(db: Database.Database) {
   // One-time: the suggest/approve flow is gone, every plan entry is approved.
   runOnce(db, 'migration_approve_all_v1', () => {
     db.prepare("UPDATE meal_plan SET status = 'approved' WHERE status <> 'approved'").run()
+  })
+
+  // One-time: rating 1 used to mean "nicht nochmal". Keep those recipes
+  // blocked through the explicit flag; from now on a star is only a rating.
+  runOnce(db, 'migration_never_again_v1', () => {
+    db.prepare('UPDATE recipes SET never_again = 1 WHERE rating = 1').run()
   })
 
   // One-time: shopping items remember every meal/recipe they came from
@@ -277,6 +286,8 @@ export type Recipe = {
   source: 'local' | 'mealie'
   rating: number | null
   effort: RecipeEffort | null
+  /** "Nicht nochmal": never suggested or autofilled. Local only. */
+  never_again: boolean
   created_at: string
   updated_at: string
 }
@@ -318,6 +329,7 @@ function parseRecipe(row: Record<string, unknown>): Recipe {
     instructions: JSON.parse(row.instructions as string || '[]'),
     image_url: publicImageUrl(row.id as string, row.image_url),
     effort: parseEffort(row.effort),
+    never_again: !!row.never_again,
   }
 }
 
@@ -387,6 +399,10 @@ export function upsertRecipe(recipe: Partial<Recipe> & { id: string; name: strin
 
 export function updateRecipeRating(id: string, rating: number | null) {
   getDb().prepare("UPDATE recipes SET rating = ?, updated_at = datetime('now') WHERE id = ?").run(rating, id)
+}
+
+export function updateRecipeNeverAgain(id: string, neverAgain: boolean) {
+  getDb().prepare("UPDATE recipes SET never_again = ?, updated_at = datetime('now') WHERE id = ?").run(neverAgain ? 1 : 0, id)
 }
 
 export function updateRecipeEffort(id: string, effort: RecipeEffort | null) {
@@ -474,6 +490,7 @@ function joinedRecipe(row: Record<string, unknown>): Recipe {
     source: row.recipe_source as 'local' | 'mealie',
     rating: row.recipe_rating as number | null,
     effort: parseEffort(row.recipe_effort),
+    never_again: !!row.recipe_never_again,
   } as Recipe
 }
 
@@ -483,7 +500,7 @@ export function getMealPlanRange(startDate: string, endDate: string): MealPlanEn
     SELECT mp.*, r.name as recipe_name, r.image_url as recipe_image,
            r.tags as recipe_tags, r.prep_time, r.cook_time, r.servings as recipe_servings,
            r.mealie_id, r.mealie_slug, r.source as recipe_source, r.rating as recipe_rating,
-           r.effort as recipe_effort
+           r.effort as recipe_effort, r.never_again as recipe_never_again
     FROM meal_plan mp
     LEFT JOIN recipes r ON mp.recipe_id = r.id
     WHERE mp.date BETWEEN ? AND ? AND mp.meal_type = 'dinner'
@@ -722,7 +739,7 @@ export function getNominationsForRange(startDate: string, endDate: string): Nomi
     SELECT n.*, r.name as recipe_name, r.image_url as recipe_image,
            r.tags as recipe_tags, r.prep_time, r.cook_time, r.servings as recipe_servings,
            r.mealie_id, r.mealie_slug, r.source as recipe_source, r.rating as recipe_rating,
-           r.effort as recipe_effort
+           r.effort as recipe_effort, r.never_again as recipe_never_again
     FROM nominations n
     JOIN recipes r ON n.recipe_id = r.id
     WHERE n.date BETWEEN ? AND ?

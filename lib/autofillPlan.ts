@@ -6,6 +6,8 @@ export type AutofillRecipe = {
   id: string
   rating: number | null
   effort: 'quick' | 'involved' | null
+  /** "Nicht nochmal": never autofilled. */
+  never_again?: boolean
 }
 
 /** 0 = Sunday … 6 = Saturday for a `YYYY-MM-DD` string (calendar day, no timezone shift). */
@@ -22,11 +24,11 @@ export function isWeeknight(date: string): boolean {
 
 /**
  * Candidate recipes for autofill:
- * - rating 1 ("nicht nochmal") is always excluded,
- * - rating 2 is excluded as long as enough other recipes remain.
+ * - "nicht nochmal" (never_again) is always excluded,
+ * - rating 1 and 2 are excluded as long as enough other recipes remain.
  */
 export function autofillCandidates<T extends AutofillRecipe>(recipes: T[], slotsNeeded: number): T[] {
-  const allowed = recipes.filter(r => r.rating !== 1)
+  const allowed = recipes.filter(r => !r.never_again)
   const good = allowed.filter(r => r.rating === null || r.rating > 2)
   return good.length < allowed.length && good.length >= slotsNeeded ? good : allowed
 }

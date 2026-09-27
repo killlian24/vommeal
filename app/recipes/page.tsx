@@ -14,7 +14,7 @@ type Recipe = {
   id: string; name: string; description: string; tags: string[]
   servings: number; prep_time: number; cook_time: number
   image_url: string; source: 'local' | 'mealie'; mealie_slug: string | null
-  rating: number | null; effort?: Effort
+  rating: number | null; effort?: Effort; never_again?: boolean
 }
 
 type EffortFilter = 'all' | 'quick' | 'involved'
@@ -395,7 +395,7 @@ export default function RecipesPage() {
               <div className="p-3">
                 <h3 className="text-sm font-semibold text-white leading-tight line-clamp-2 mb-1.5">{recipe.name}</h3>
                 <div className="flex flex-wrap items-center gap-2 text-[11px] text-ink-hint">
-                  {recipe.rating === 1 ? (
+                  {recipe.never_again ? (
                     <span className="text-red-300/80">Nicht nochmal</span>
                   ) : recipe.rating ? (
                     <StarRating rating={recipe.rating} size={12} />
