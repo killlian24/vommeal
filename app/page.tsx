@@ -6,6 +6,7 @@ import { de } from 'date-fns/locale'
 import {
   ChevronLeft, ChevronRight, ChevronDown, Plus, X, Search, ShoppingCart,
   Zap, Vote, Heart, XCircle, ArrowLeftRight, ArrowRight, CalendarClock, StickyNote,
+  MoreHorizontal, BookOpen, Trash2,
 } from 'lucide-react'
 import Image from 'next/image'
 import Link from 'next/link'
@@ -185,6 +186,8 @@ export default function PlanPage() {
   const [nextDayFree, setNextDayFree] = useState(false)
   const [addLeftovers, setAddLeftovers] = useState(false)
   const [moveFor, setMoveFor] = useState<MealEntry | null>(null)
+  // Action sheet of a planned card (tap on the card or its ⋯)
+  const [actionsFor, setActionsFor] = useState<MealEntry | null>(null)
   const [moving, setMoving] = useState(false)
   const [saving, setSaving] = useState(false)
   const { show: showToast, error: showError, hide: hideToast } = useToast()
@@ -900,8 +903,10 @@ export default function PlanPage() {
     const n = normName(r.name)
     return n === query ? 0 : n.startsWith(query) ? 1 : 2
   }
+  // The dish being replaced is not offered again
+  const replacedRecipeId = picker?.replaceId ? entries.find(e => e.id === picker.replaceId)?.recipe_id : null
   const filteredRecipes = recipes
-    .filter(r => normName(r.name).includes(query))
+    .filter(r => r.id !== replacedRecipeId && normName(r.name).includes(query))
     .sort((a, b) => matchRank(a) - matchRank(b))
 
   const title = isCurrentWeek ? 'Diese Woche' : isNextWeek ? 'Nächste Woche' : rangeLabel(weekStart, addDays(weekStart, 6))
@@ -1067,16 +1072,20 @@ export default function PlanPage() {
 
           if (entry) {
             const lifted = drag.dragId === entry.id
+            const hasThumb = !!entry.recipe?.image_url || !!quickMealEmoji(entry.custom_meal_name)
+            // A tap opens the actions, a long press starts dragging (useLongPressDrag
+            // swallows the click that ends a drag); the dish name opens the recipe.
             return (
               <div key={dateStr} data-drop-date={dateStr} {...drag.bind(entry.id, dateStr, !past)}
-                className={`relative rounded-xl border overflow-hidden select-none [-webkit-touch-callout:none] ${
+                onClick={() => setActionsFor(entry)}
+                className={`relative rounded-xl border overflow-hidden select-none cursor-pointer [-webkit-touch-callout:none] ${
                   dropOver ? 'border-primary bg-primary/10 ring-2 ring-primary/60'
-                    : today ? 'border-primary/50 bg-[#141414]' : 'border-[#232323] bg-[#141414]'
+                    : today ? 'border-primary/50 bg-[#141414] hover:bg-[#171717]' : 'border-[#232323] bg-[#141414] hover:bg-[#171717]'
                 } ${lifted ? 'shadow-2xl shadow-black/80 ring-2 ring-primary/70 cursor-grabbing' : ''}`}>
                 {dropOver && <span className={dropBadge}>tauschen</span>}
-                <div className="flex items-center gap-3 p-2.5 pb-1">
-                  <MealThumb entry={entry} size="w-14 h-14" />
-                  <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-3 py-2 pl-2.5 pr-1">
+                  {hasThumb && <MealThumb entry={entry} size="w-14 h-14" />}
+                  <div className="flex-1 min-w-0 py-0.5">
                     <p className={`text-xs font-semibold ${today ? 'text-primary' : 'text-ink-muted'}`}>
                       {dayLabel(dateStr, todayStr)}
                       {marks[entry.id] && (
@@ -1087,41 +1096,26 @@ export default function PlanPage() {
                       )}
                     </p>
                     {entry.recipe_id ? (
-                      <Link href={`/recipes/${entry.recipe_id}`} draggable={false}
+                      <Link href={`/recipes/${entry.recipe_id}`} draggable={false} onClick={e => e.stopPropagation()}
                         className="block text-[15px] font-semibold text-white leading-snug line-clamp-2 hover:text-primary transition-colors">
                         {mealName(entry)}
                       </Link>
                     ) : (
                       <p className="text-[15px] font-semibold text-white leading-snug line-clamp-2">{mealName(entry)}</p>
                     )}
-                    {entry.recipe?.rating ? <StarRating rating={entry.recipe.rating} size={12} /> : null}
+                    {(entry.suggested_by || entry.recipe?.rating) && (
+                      <p className="flex items-center gap-1.5 mt-1 text-xs text-ink-hint min-w-0">
+                        {entry.suggested_by && <Avatar name={entry.suggested_by} users={users} />}
+                        {/* Too narrow for the name: the avatar says it (aria-label) */}
+                        {entry.suggested_by && <span className="hidden min-[360px]:inline truncate">{entry.suggested_by}</span>}
+                        {entry.recipe?.rating ? <StarRating rating={entry.recipe.rating} size={12} /> : null}
+                      </p>
+                    )}
                   </div>
-                </div>
-                <div className="flex items-center gap-1 pl-2.5 pr-1 pb-1">
-                  {entry.suggested_by ? (
-                    <span className="flex items-center gap-1.5 text-xs text-ink-hint min-w-0 flex-1">
-                      <Avatar name={entry.suggested_by} users={users} />
-                      <span className="truncate">{entry.suggested_by}</span>
-                    </span>
-                  ) : <span className="flex-1" />}
-                  {entry.recipe_id && (
-                    <button onClick={() => openIngredients(dateStr, dateStr, 'card')}
-                      aria-label={`Zutaten für ${mealName(entry)} einkaufen`} title="Zutaten einkaufen"
-                      className={`${iconBtn} text-ink-muted hover:text-primary hover:bg-[#1c1c1c] disabled:opacity-50`}>
-                      <ShoppingCart size={16} />
-                    </button>
-                  )}
-                  <button onClick={() => setMoveFor(entry)} aria-label={`${mealName(entry)} verschieben`} title="Verschieben"
-                    className={`${iconBtn} text-ink-muted hover:text-white hover:bg-[#1c1c1c]`}>
-                    <CalendarClock size={17} />
-                  </button>
-                  <button onClick={() => openPicker(dateStr, entry.id)}
-                    className="min-h-[40px] flex items-center gap-1.5 px-2.5 rounded-lg text-sm text-ink-soft hover:text-white hover:bg-[#1c1c1c] transition-all">
-                    <ArrowLeftRight size={15} /> Anderes Gericht
-                  </button>
-                  <button onClick={() => removeEntry(entry.id)} aria-label={`${mealName(entry)} entfernen`}
-                    className={`${iconBtn} text-ink-muted hover:text-red-400 hover:bg-[#1c1c1c]`}>
-                    <X size={18} />
+                  <button type="button" onClick={e => { e.stopPropagation(); setActionsFor(entry) }}
+                    aria-label={`Aktionen für ${mealName(entry)}`} aria-haspopup="dialog"
+                    className={`${iconBtn} flex-shrink-0 self-start text-ink-muted hover:text-white hover:bg-[#1c1c1c]`}>
+                    <MoreHorizontal size={18} />
                   </button>
                 </div>
               </div>
@@ -1221,15 +1215,13 @@ export default function PlanPage() {
               const replaced = entries.find(e => e.id === picker.replaceId)
               if (!replaced) return null
               return (
-                <div className="flex items-center gap-3 min-h-[44px] px-3 py-1.5 rounded-xl bg-[#1a1a1a] border border-[#262626]">
-                  <span className="flex-1 min-w-0 text-sm text-ink-soft">
-                    Statt {mealName(replaced)}
-                    {picker.date === todayStr && (
-                      <span className="block text-xs text-ink-hint">Bei Auswärts essen oder Bestellen rutscht es auf morgen</span>
-                    )}
-                  </span>
+                <div className="px-3 pt-2 pb-0.5 rounded-xl bg-[#1a1a1a] border border-[#262626]">
+                  <p className="text-sm text-ink-soft">Statt {mealName(replaced)}</p>
+                  {picker.date === todayStr && (
+                    <p className="text-xs text-ink-hint">Bei Auswärts essen oder Bestellen rutscht es auf morgen.</p>
+                  )}
                   <button type="button" onClick={() => { closePicker(); setMoveFor(replaced) }}
-                    className="flex-shrink-0 min-h-[44px] flex items-center gap-1.5 px-2 text-sm font-medium text-primary hover:text-primary-hover">
+                    className="-ml-1 min-h-[44px] flex items-center gap-1.5 px-1 text-sm font-medium text-primary hover:text-primary-hover">
                     <CalendarClock size={15} /> Stattdessen verschieben
                   </button>
                 </div>
@@ -1318,6 +1310,40 @@ export default function PlanPage() {
           </div>
         </Sheet>
       )}
+
+      {/* Actions of a planned evening */}
+      {actionsFor && (() => {
+        const e = actionsFor
+        const item = 'w-full min-h-[52px] flex items-center gap-3 px-4 text-left text-[15px] transition-colors hover:bg-[#1c1c1c]'
+        const then = (fn: () => void) => () => { setActionsFor(null); fn() }
+        return (
+          <Sheet onClose={() => setActionsFor(null)} className={sheetPanel('max-w-sm')}>
+            <SheetHeader title={`${relativeWeekday(e.date, todayStr)} · ${mealName(e)}`} />
+            <div className="py-1.5 overflow-y-auto overscroll-contain">
+              {e.recipe_id && (
+                <Link href={`/recipes/${e.recipe_id}`} onClick={() => setActionsFor(null)} className={`${item} text-white`}>
+                  <BookOpen size={18} className="text-ink-muted" /> Rezept ansehen
+                </Link>
+              )}
+              <button type="button" onClick={then(() => openPicker(e.date, e.id))} className={`${item} text-white`}>
+                <ArrowLeftRight size={18} className="text-ink-muted" /> Anderes Gericht
+              </button>
+              <button type="button" onClick={then(() => setMoveFor(e))} className={`${item} text-white`}>
+                <CalendarClock size={18} className="text-ink-muted" /> Verschieben
+              </button>
+              {e.recipe_id && (
+                <button type="button" onClick={then(() => openIngredients(e.date, e.date, 'card'))} className={`${item} text-white`}>
+                  <ShoppingCart size={18} className="text-ink-muted" /> Zutaten einkaufen
+                </button>
+              )}
+              <div className="my-1.5 border-t border-[#222]" />
+              <button type="button" onClick={then(() => removeEntry(e.id))} className={`${item} text-red-300`}>
+                <Trash2 size={18} /> Entfernen
+              </button>
+            </div>
+          </Sheet>
+        )
+      })()}
 
       {/* Zutaten der Woche, prefiltered to the week on screen or one evening */}
       {ingredients && (
