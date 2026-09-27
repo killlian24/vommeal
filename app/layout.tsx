@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import Navigation from '@/components/Navigation'
 import { UserProvider } from '@/components/UserProvider'
+import { ServiceWorker } from '@/components/ServiceWorker'
 
 export const metadata: Metadata = {
   title: 'Vommeal',
@@ -46,6 +47,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </main>
           </div>
         </UserProvider>
+        <ServiceWorker />
       </body>
     </html>
   )
