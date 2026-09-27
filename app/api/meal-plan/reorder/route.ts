@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { reorderMealPlan } from '@/lib/db'
 import {
-  errorResponse, readJsonObject, requireIsoDate, requireString, optionalObjectArray, ValidationError, LIMITS,
+  errorResponse, readJsonObject, requireIsoDate, requireString, optionalString, optionalObjectArray, ValidationError, LIMITS,
 } from '@/lib/validate'
 
 const MAX_MOVES = 60
 
-/** POST {moves: [{id, date}]}: set several dates at once (used for undo). */
+/** POST {moves: [{id, date}], by?}: set several dates at once (used for undo). */
 export async function POST(req: NextRequest) {
   try {
     const body = await readJsonObject(req)
@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
       id: requireString(item.id, `moves[${i}].id`, LIMITS.id),
       date: requireIsoDate(item.date, `moves[${i}].date`),
     }))
-    const result = reorderMealPlan(targets)
+    const result = reorderMealPlan(targets, optionalString(body.by, 'by', LIMITS.userName))
     if (!result.ok) throw new ValidationError(result.error)
     return NextResponse.json({ moves: result.moves })
   } catch (e) { return errorResponse(e) }

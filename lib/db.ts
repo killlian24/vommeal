@@ -124,6 +124,13 @@ function migrate(db: Database.Database) {
   for (const col of ['status TEXT NOT NULL DEFAULT \'approved\'', 'suggested_by TEXT NOT NULL DEFAULT \'\'']) {
     try { db.exec(`ALTER TABLE meal_plan ADD COLUMN ${col}`) } catch { /* already exists */ }
   }
+  // When and by whom an evening last changed (planned, replaced, moved), so
+  // the partner's phone can mark it as new. created_at stays on replace.
+  try { db.exec('ALTER TABLE meal_plan ADD COLUMN updated_at TEXT') } catch { /* already exists */ }
+  try { db.exec("ALTER TABLE meal_plan ADD COLUMN updated_by TEXT NOT NULL DEFAULT ''") } catch { /* already exists */ }
+  try {
+    db.exec("UPDATE meal_plan SET updated_at = COALESCE(created_at, datetime('now')), updated_by = suggested_by WHERE updated_at IS NULL")
+  } catch { /* best-effort backfill */ }
   try { db.exec('ALTER TABLE recipes ADD COLUMN rating INTEGER') } catch { /* already exists */ }
   // Local-only effort flag ('quick' | 'involved' | NULL); never touched by Mealie sync.
   try { db.exec('ALTER TABLE recipes ADD COLUMN effort TEXT') } catch { /* already exists */ }
@@ -471,8 +478,15 @@ export type MealPlanEntry = {
   status: 'suggested' | 'approved'
   suggested_by: string
   created_at: string
+  /** Last plan, replace or move ("YYYY-MM-DD HH:MM:SS.SSS", UTC). */
+  updated_at?: string
+  /** Who made that change; '' when unknown (e.g. a move from an older client). */
+  updated_by?: string
   recipe?: Recipe
 }
+
+/** SQLite expression for "now" with milliseconds, same format as datetime('now') plus ".SSS". */
+const NOW_MS = "strftime('%Y-%m-%d %H:%M:%f', 'now')"
 
 /** Recipe summary from a `recipe_*` column join (meal plan, nominations). */
 function joinedRecipe(row: Record<string, unknown>): Recipe {
@@ -518,11 +532,15 @@ export function getMealPlanRange(startDate: string, endDate: string): MealPlanEn
     status: 'approved' as const,
     suggested_by: row.suggested_by as string || '',
     created_at: row.created_at as string,
+    updated_at: (row.updated_at as string | null) || (row.created_at as string),
+    updated_by: (row.updated_by as string | null) ?? '',
     recipe: row.recipe_id ? joinedRecipe(row) : undefined,
   }))
 }
 
-export function addMealPlanEntry(entry: Omit<MealPlanEntry, 'created_at' | 'recipe'>): MealPlanEntry {
+type NewMealPlanEntry = Omit<MealPlanEntry, 'created_at' | 'updated_at' | 'updated_by' | 'recipe'>
+
+export function addMealPlanEntry(entry: NewMealPlanEntry): MealPlanEntry {
   const db = getDb()
   db.transaction(() => {
     const existing = db.prepare(`
@@ -536,28 +554,30 @@ export function addMealPlanEntry(entry: Omit<MealPlanEntry, 'created_at' | 'reci
       db.prepare(`
         UPDATE meal_plan SET
           id = ?, recipe_id = ?, custom_meal_name = ?, servings = ?,
-          notes = ?, status = ?, suggested_by = ?
+          notes = ?, status = ?, suggested_by = ?,
+          updated_at = ${NOW_MS}, updated_by = ?
         WHERE id = ?
       `).run(
         entry.id, entry.recipe_id ?? null, entry.custom_meal_name ?? null,
         entry.servings, entry.notes ?? '', 'approved',
-        entry.suggested_by ?? '', existing.id
+        entry.suggested_by ?? '', entry.suggested_by ?? '', existing.id
       )
     } else {
       db.prepare(`
-        INSERT INTO meal_plan (id, date, meal_type, recipe_id, custom_meal_name, servings, notes, status, suggested_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO meal_plan (id, date, meal_type, recipe_id, custom_meal_name, servings, notes, status, suggested_by, created_at, updated_at, updated_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ${NOW_MS}, ${NOW_MS}, ?)
       `).run(
         entry.id, entry.date, 'dinner',
         entry.recipe_id ?? null, entry.custom_meal_name ?? null,
         entry.servings, entry.notes ?? '',
-        'approved', entry.suggested_by ?? ''
+        'approved', entry.suggested_by ?? '', entry.suggested_by ?? ''
       )
     }
   })()
   mealPlanChanged()
   // Approval is abolished: every stored entry is approved.
-  return { ...entry, status: 'approved', created_at: new Date().toISOString() }
+  const now = new Date().toISOString()
+  return { ...entry, status: 'approved', created_at: now, updated_at: now, updated_by: entry.suggested_by ?? '' }
 }
 
 /**
@@ -589,7 +609,7 @@ function currentEntryOn(date: string): MealPlanEntry | null {
  * A free evening is never a conflict: nothing can be lost there.
  */
 export function addMealPlanEntryIfExpected(
-  entry: Omit<MealPlanEntry, 'created_at' | 'recipe'>,
+  entry: NewMealPlanEntry,
   expect: PlanExpectation = {},
 ): GuardedPlanResult {
   const db = getDb()
@@ -614,7 +634,8 @@ export function updateMealPlanEntry(id: string, data: Partial<MealPlanEntry>) {
         recipe_id = COALESCE(?, recipe_id),
         custom_meal_name = COALESCE(?, custom_meal_name),
         servings = COALESCE(?, servings),
-        notes = COALESCE(?, notes)
+        notes = COALESCE(?, notes),
+        updated_at = ${NOW_MS}
       WHERE id = ?
     `).run(data.recipe_id ?? null, data.custom_meal_name ?? null, data.servings ?? null, data.notes ?? null, id)
   }
@@ -643,15 +664,15 @@ export function deleteMealPlanRange(startDate: string, endDate: string): MealPla
 // --- Moving planned evenings ---
 // Entries only ever change their date: id, created_at and suggested_by stay,
 // so shopping items that reference the entry (meal_plan_id / meal_plan_ids)
-// keep pointing at the same dinner.
+// keep pointing at the same dinner. updated_at / updated_by record the move.
 
 export type PlanChangeResult =
   | { ok: true; moves: PlanMove[]; filled: MealPlanEntry | null }
   | { ok: false; error: string }
 
-function applyMealPlanMoves(db: Database.Database, moves: PlanMove[]) {
-  const update = db.prepare('UPDATE meal_plan SET date = ? WHERE id = ?')
-  for (const m of moves) update.run(m.to, m.id)
+function applyMealPlanMoves(db: Database.Database, moves: PlanMove[], by = '') {
+  const update = db.prepare(`UPDATE meal_plan SET date = ?, updated_at = ${NOW_MS}, updated_by = ? WHERE id = ?`)
+  for (const m of moves) update.run(m.to, by, m.id)
 }
 
 /**
@@ -663,6 +684,7 @@ export function shiftMealPlan(
   from: string,
   days: 1 | -1,
   fill?: { id: string; name: string; suggested_by: string } | null,
+  by = fill?.suggested_by ?? '',
 ): PlanChangeResult {
   const db = getDb()
   let result: PlanChangeResult = { ok: false, error: 'Unbekannter Fehler' }
@@ -672,7 +694,7 @@ export function shiftMealPlan(
     ).all(addDaysIso(from, -1)) as PlanSlot[]
     const plan = planShift(slots, from, days)
     if (!plan.ok) { result = plan; return }
-    applyMealPlanMoves(db, plan.moves)
+    applyMealPlanMoves(db, plan.moves, by)
     let filled: MealPlanEntry | null = null
     if (fill && days === 1) {
       filled = addMealPlanEntry({
@@ -688,7 +710,7 @@ export function shiftMealPlan(
 }
 
 /** Move one entry to `to`; an entry already there swaps places. Atomic. */
-export function moveMealPlanEntry(id: string, to: string): PlanChangeResult {
+export function moveMealPlanEntry(id: string, to: string, by = ''): PlanChangeResult {
   const db = getDb()
   let result: PlanChangeResult = { ok: false, error: 'Unbekannter Fehler' }
   db.transaction(() => {
@@ -697,7 +719,7 @@ export function moveMealPlanEntry(id: string, to: string): PlanChangeResult {
     ).all(id, to) as PlanSlot[]
     const plan = planMove(slots, id, to)
     if (!plan.ok) { result = plan; return }
-    applyMealPlanMoves(db, plan.moves)
+    applyMealPlanMoves(db, plan.moves, by)
     result = { ok: true, moves: plan.moves, filled: null }
   })()
   if (result.ok) mealPlanChanged()
@@ -705,7 +727,7 @@ export function moveMealPlanEntry(id: string, to: string): PlanChangeResult {
 }
 
 /** Set the dates of several entries at once (undo). Never leaves two entries on one date. */
-export function reorderMealPlan(targets: { id: string; date: string }[]): PlanChangeResult {
+export function reorderMealPlan(targets: { id: string; date: string }[], by = ''): PlanChangeResult {
   const db = getDb()
   let result: PlanChangeResult = { ok: false, error: 'Unbekannter Fehler' }
   db.transaction(() => {
@@ -717,7 +739,7 @@ export function reorderMealPlan(targets: { id: string; date: string }[]): PlanCh
     ).all(...ids, ...dates) as PlanSlot[]
     const plan = planReorder(slots, targets)
     if (!plan.ok) { result = plan; return }
-    applyMealPlanMoves(db, plan.moves)
+    applyMealPlanMoves(db, plan.moves, by)
     result = { ok: true, moves: plan.moves, filled: null }
   })()
   if (result.ok) mealPlanChanged()

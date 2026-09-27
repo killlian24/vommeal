@@ -9,7 +9,10 @@ import { randomUUID } from 'crypto'
 export async function GET(req: NextRequest) {
   try {
     const { start, end } = requireDateRange(new URL(req.url).searchParams)
-    return NextResponse.json(getMealPlanRange(start, end))
+    // Server clock before the read: clients keep it as "last seen" and compare
+    // updated_at against it, so the phone's own clock does not matter.
+    const serverTime = new Date().toISOString()
+    return NextResponse.json(getMealPlanRange(start, end), { headers: { 'X-Server-Time': serverTime } })
   } catch (e) { return errorResponse(e) }
 }
 
