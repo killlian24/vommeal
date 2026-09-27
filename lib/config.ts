@@ -130,6 +130,8 @@ export const SETTING_DEFAULTS = {
   app_public_url: '',
   timezone: DEFAULT_TIMEZONE,
   mealie_nightly_sync: '1',
+  /** Push the week's dinners to Home Assistant as sensors (lib/haDashboard.ts). */
+  ha_dashboard_enabled: '1',
   /** JSON object: notify service id → profile name (user1_name / user2_name). */
   notify_people: '{}',
   /** Custom notification texts (lib/notifyTemplates.ts); '' = built-in default. */
@@ -195,6 +197,7 @@ export function normalizeSettingValue(key: DefaultedSettingKey, raw: string, ctx
     case 'notify_weekly_enabled':
     case 'notify_daily_enabled':
     case 'mealie_nightly_sync':
+    case 'ha_dashboard_enabled':
       if (value !== '0' && value !== '1') throw new Error(`${key} muss '0' oder '1' sein`)
       return value
     case 'notify_weekly_day':

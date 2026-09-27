@@ -17,6 +17,10 @@ import type { Builder } from './notifyJobs'
  * so dev servers never send notifications. VOMMEAL_SCHEDULER === '0' turns
  * it off in production too.
  *
+ * Every tick also keeps the Home Assistant sensors with the week's dinners
+ * up to date (lib/haDashboard.ts): pushed when something changed and at least
+ * every 30 minutes, since HA forgets them on restart.
+ *
  * Daily backups keep their own timer (lib/backup.ts, scheduleBackups).
  */
 
@@ -156,6 +160,11 @@ export async function tick(date = new Date()) {
       .catch(e => console.error(`[scheduler] ${job.name} failed: ${String(e)}`))
       .finally(() => runningJobs.delete(job.name))
   }
+
+  // Home Assistant dashboard sensors: cheap check, pushes only when needed.
+  import('./haDashboard')
+    .then(({ dashboardTick }) => dashboardTick(date))
+    .catch(e => console.error(`[scheduler] HA dashboard: ${String(e)}`))
 }
 
 export function schedulerEnabled(env: Record<string, string | undefined> = process.env): boolean {
@@ -175,6 +184,10 @@ export function startScheduler() {
     return
   }
   globalState.__vommealScheduler = true
+  // Plan changes push the HA dashboard sensors right away (debounced).
+  import('./haDashboard')
+    .then(({ startDashboardSync }) => startDashboardSync())
+    .catch(e => console.error(`[scheduler] HA dashboard: ${String(e)}`))
   const safeTick = () => { tick().catch(e => console.error(`[scheduler] tick failed: ${String(e)}`)) }
   setTimeout(safeTick, FIRST_TICK_MS).unref()
   setInterval(safeTick, TICK_MS).unref()

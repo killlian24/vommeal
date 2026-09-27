@@ -15,6 +15,7 @@ import {
 import { NotificationsSection, parseServiceList } from '@/components/settings/NotificationsSection'
 import type { NotifySettings, NotifyTextDefaults } from '@/components/settings/NotificationsSection'
 import { UsageSection } from '@/components/settings/UsageSection'
+import { HaDashboardSection } from '@/components/settings/HaDashboardSection'
 
 type Settings = {
   mealie_url: string; mealie_token: string; has_token: boolean
@@ -22,6 +23,7 @@ type Settings = {
   ha_url: string; ha_token: string; has_ha_token: boolean; ha_entity: string
   dinner_category: string; category_order: string; custom_category_keywords: string
   mealie_nightly_sync?: string
+  ha_dashboard_enabled?: string
   timezone?: string
   notify_text_defaults?: NotifyTextDefaults
   env?: {
@@ -580,6 +582,24 @@ export default function SettingsPage() {
             authedFetch={authedFetch}
             softFetch={softFetch}
             onSaved={values => setSettings(s => ({ ...s, ...values }))}
+          />
+        ) : (
+          <p className="text-sm text-[#a8a8a8]">Wird geladen …</p>
+        )}
+      </Section>
+
+      {/* Home Assistant Dashboard */}
+      <Section
+        id="ha-dashboard" icon="📺" title="Home Assistant Dashboard" open={open.has('ha-dashboard')} onToggle={toggle}
+        meta={loaded && haConfigured && settings.ha_dashboard_enabled !== '0' && <span className="text-xs text-green-400">✓ An</span>}
+      >
+        {loaded ? (
+          <HaDashboardSection
+            enabled={settings.ha_dashboard_enabled !== '0'}
+            haConfigured={haConfigured}
+            appUrl={settings.app_public_url ?? ''}
+            authedFetch={authedFetch}
+            onSaved={value => setSettings(s => ({ ...s, ha_dashboard_enabled: value ? '1' : '0' }))}
           />
         ) : (
           <p className="text-sm text-[#a8a8a8]">Wird geladen …</p>

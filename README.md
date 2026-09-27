@@ -167,6 +167,57 @@ Tag, Uhrzeit und Zeitzone (Standard `Europe/Copenhagen`) lassen sich in den Eins
 
 ---
 
+## Home Assistant Dashboard
+
+Vommeal zeigt den Wochenplan in Home Assistant an, ohne dass dort etwas eingerichtet werden muss. Voraussetzung sind nur HA-Adresse und Token (**Einstellungen → Home Assistant**); die To-do-Liste wird dafür nicht gebraucht. Ein- und ausschalten unter **Einstellungen → Home Assistant Dashboard → Wochenplan an Home Assistant senden** (Standard: an).
+
+### Sensoren
+
+Vommeal schreibt drei Entitäten über die REST-API von Home Assistant (`POST /api/states/<entity_id>`):
+
+| Entität | Zustand | Wichtige Attribute |
+| --- | --- | --- |
+| `sensor.vommeal_heute` | Gericht heute, sonst „Nichts geplant“ | `datum`, `wochentag`, `geplant_von`, `rezept_url`, `entity_picture` (Rezeptfoto) |
+| `sensor.vommeal_morgen` | Gericht morgen, sonst „Nichts geplant“ | wie oben |
+| `sensor.vommeal_woche` | geplante Abende dieser Woche, z. B. `5/7` | `frei` (freie Abende bis Sonntag), `tage` und `naechste_woche` (je Mo–So: `datum`, `tag`, `gericht`, `von`, `bild`, `heute`, `vorbei`), `markdown`, `markdown_naechste_woche` |
+
+`markdown` ist ein fertiger Text für eine Markdown-Karte: eine Zeile pro Tag, heute mit 👉 und fett, vergangene Tage durchgestrichen, freie Abende als „—“, „Reste“, „Auswärts essen“ usw. mit ihrem Emoji. `rezept_url`, `entity_picture`, `bild` und die Links im Markdown gibt es nur, wenn unter **Benachrichtigungen → App-Adresse** eingetragen ist, wie ihr Vommeal öffnet. Die Bilder lädt das Handy bzw. der Browser direkt von Vommeal, das Gerät muss diese Adresse also erreichen (zu Hause oder über Tailscale). Wird Home Assistant über `https` geöffnet und Vommeal über `http`, blockiert der Browser die Bilder.
+
+Wann gesendet wird: sobald sich der Plan ändert (nach ca. 2 Sekunden), beim Start des Containers und sonst alle 30 Minuten. Das regelmäßige Senden ist nötig, weil Home Assistant so angelegte Sensoren bei einem Neustart vergisst. **Jetzt senden** in den Einstellungen schickt sofort. Im Container-Log steht pro Übertragung eine Zeile `[ha-dashboard] sent 3 sensors (…)` bzw. `[ha-dashboard] push failed: …`. Nach dem Ausschalten bleiben die Sensoren bis zum nächsten HA-Neustart mit dem letzten Stand stehen.
+
+### Karte fürs Dashboard
+
+Dashboard → ✏️ Bearbeiten → Karte hinzufügen → ganz unten „Manuell“ → einfügen (der Text steht auch zum Kopieren in den Einstellungen):
+
+```yaml
+type: vertical-stack
+cards:
+  - type: tile
+    entity: sensor.vommeal_heute
+    name: Heute
+    show_entity_picture: true
+  - type: tile
+    entity: sensor.vommeal_morgen
+    name: Morgen
+    show_entity_picture: true
+  - type: markdown
+    title: Diese Woche
+    content: "{{ state_attr('sensor.vommeal_woche', 'markdown') or 'Noch keine Daten von Vommeal' }}"
+```
+
+Die Kacheln (`tile`) zeigen das Rezeptfoto als rundes Bild und fallen ohne Foto auf das Besteck-Symbol zurück. Eine `picture-entity`-Karte wäre an Abenden ohne Foto (Reste, Auswärts essen, Rezepte ohne Bild) nur eine leere Fläche. Wer trotzdem ein großes Foto möchte, kann eine zusätzliche Karte `type: picture-entity` mit `entity: sensor.vommeal_heute` ergänzen. Für die nächste Woche eine zweite Markdown-Karte mit `markdown_naechste_woche` anlegen.
+
+### Kalender
+
+Unter `/api/calendar.ics` gibt es alle geplanten Abende als Kalender-Abo (iCalendar): ein ganztägiger Termin pro Abend, 14 Tage zurück und 42 Tage voraus, mit „Geplant von …“ und dem Rezept-Link (wenn die App-Adresse eingetragen ist). Die fertige Adresse steht unter **Einstellungen → Home Assistant Dashboard → Kalender**, z. B. `http://nas.tailXXXX.ts.net:3333/api/calendar.ics`.
+
+- **Home Assistant:** Einstellungen → Geräte & Dienste → Integration hinzufügen → **Remote Calendar** → diese Adresse einfügen. Danach gibt es eine Kalender-Entität, die auch im Kalender-Dashboard erscheint.
+- **iPhone:** Einstellungen → Kalender → Accounts → Account hinzufügen → Andere → **Kalenderabo hinzufügen** → diese Adresse einfügen.
+
+Das Gerät bzw. Home Assistant muss die Adresse erreichen: zu Hause im WLAN oder unterwegs über Tailscale. Kalender-Apps holen das Abo in eigenen Abständen (Vommeal empfiehlt stündlich); Änderungen erscheinen dort also nicht sofort.
+
+---
+
 ## Rezept per Link importieren
 
 Vommeal lässt Mealie die Rezeptseite auslesen, legt das Rezept in Mealie an und übernimmt es sofort in Vommeal (Mealie muss dafür eingerichtet sein).

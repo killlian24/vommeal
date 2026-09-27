@@ -98,5 +98,11 @@ export async function POST(req: NextRequest) {
     const { refreshHaEvents } = await import('@/lib/haEvents')
     refreshHaEvents()
   }
+  // Home Assistant dashboard sensors: send soon with the new settings
+  // (only does something while the scheduler runs).
+  if (['ha_dashboard_enabled', 'app_public_url', 'timezone'].some(key => body[key] !== undefined) || haUrl !== undefined || haToken !== undefined) {
+    const { requestDashboardPush } = await import('@/lib/haDashboard')
+    requestDashboardPush()
+  }
   return NextResponse.json({ ok: true })
 }

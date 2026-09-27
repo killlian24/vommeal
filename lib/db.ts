@@ -381,6 +381,7 @@ export function upsertRecipe(recipe: Partial<Recipe> & { id: string; name: strin
       recipe.source ?? 'local', recipe.rating ?? null, effort
     )
   }
+  mealPlanChanged()
   return getRecipeById(recipe.id)!
 }
 
@@ -412,6 +413,34 @@ export function deleteRecipe(id: string) {
     `).run(id, id)
     db.prepare('DELETE FROM recipes WHERE id = ?').run(id)
   })()
+  mealPlanChanged()
+}
+
+// --- Change listeners ---
+// Called after anything that changes what a planned evening shows (plan
+// entries, recipe names/images). lib/haDashboard.ts listens to push the Home
+// Assistant sensors right away. Kept on globalThis because route handlers and
+// the scheduler may load separate module instances. Listeners never throw
+// into the caller.
+
+type PlanChangeListener = () => void
+const listenerStore = globalThis as typeof globalThis & { __vommealPlanListeners?: Set<PlanChangeListener> }
+
+function planListeners(): Set<PlanChangeListener> {
+  listenerStore.__vommealPlanListeners ??= new Set()
+  return listenerStore.__vommealPlanListeners
+}
+
+/** Register a listener for plan changes; returns the function that removes it again. */
+export function onMealPlanChange(fn: PlanChangeListener): () => void {
+  planListeners().add(fn)
+  return () => { planListeners().delete(fn) }
+}
+
+function mealPlanChanged() {
+  for (const fn of Array.from(planListeners())) {
+    try { fn() } catch (e) { console.error(`[db] plan change listener failed: ${String(e)}`) }
+  }
 }
 
 // --- Meal Plan ---
@@ -509,6 +538,7 @@ export function addMealPlanEntry(entry: Omit<MealPlanEntry, 'created_at' | 'reci
       )
     }
   })()
+  mealPlanChanged()
   // Approval is abolished: every stored entry is approved.
   return { ...entry, status: 'approved', created_at: new Date().toISOString() }
 }
@@ -529,14 +559,17 @@ export function updateMealPlanEntry(id: string, data: Partial<MealPlanEntry>) {
       WHERE id = ?
     `).run(data.recipe_id ?? null, data.custom_meal_name ?? null, data.servings ?? null, data.notes ?? null, id)
   }
+  mealPlanChanged()
 }
 
 export function deleteMealPlanEntry(id: string) {
   getDb().prepare('DELETE FROM meal_plan WHERE id = ?').run(id)
+  mealPlanChanged()
 }
 
 export function deleteMealPlanRange(startDate: string, endDate: string) {
   getDb().prepare('DELETE FROM meal_plan WHERE date BETWEEN ? AND ?').run(startDate, endDate)
+  mealPlanChanged()
 }
 
 // --- Moving planned evenings ---
@@ -582,6 +615,7 @@ export function shiftMealPlan(
     }
     result = { ok: true, moves: plan.moves, filled }
   })()
+  if (result.ok) mealPlanChanged()
   return result
 }
 
@@ -598,6 +632,7 @@ export function moveMealPlanEntry(id: string, to: string): PlanChangeResult {
     applyMealPlanMoves(db, plan.moves)
     result = { ok: true, moves: plan.moves, filled: null }
   })()
+  if (result.ok) mealPlanChanged()
   return result
 }
 
@@ -617,6 +652,7 @@ export function reorderMealPlan(targets: { id: string; date: string }[]): PlanCh
     applyMealPlanMoves(db, plan.moves)
     result = { ok: true, moves: plan.moves, filled: null }
   })()
+  if (result.ok) mealPlanChanged()
   return result
 }
 
