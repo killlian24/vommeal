@@ -37,7 +37,7 @@ describe('other formats', () => {
   it('rangeLabel uses "bis" and no dashes', () => {
     expect(rangeLabel('2026-09-21', '2026-09-27')).toBe('21. bis 27. Sep.')
     expect(rangeLabel('2026-09-28', '2026-10-04')).toBe('28. Sep. bis 4. Okt.')
-    expect(rangeLabel('2026-09-28', '2026-10-04')).not.toMatch(/[–—]/)
+    expect(rangeLabel('2026-09-28', '2026-10-04')).not.toMatch(/[\u2013\u2014]/)
     expect(dayMonth('2026-03-02')).toBe('2. März')
   })
 
