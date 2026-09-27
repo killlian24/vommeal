@@ -10,6 +10,7 @@ import { StarRating } from '@/components/StarRating'
 import { QUICK_MEALS, EATING_OUT, quickMealEmoji } from '@/lib/quickMeals'
 import { shiftPlan, undoPlanChange } from '@/lib/planApi'
 import { track } from '@/lib/track'
+import { apiCall } from '@/lib/apiCall'
 import { inDinnerCategory, pickSuggestions as pickFrom } from '@/lib/suggest'
 
 type Effort = 'quick' | 'involved' | null
@@ -19,7 +20,7 @@ type Recipe = {
 }
 type MealEntry = {
   id: string; date: string; recipe_id: string | null; custom_meal_name: string | null
-  servings: number; recipe?: Recipe
+  servings: number; suggested_by?: string; recipe?: Recipe
 }
 
 const ISO = 'yyyy-MM-dd'
@@ -167,27 +168,49 @@ export default function TonightPage() {
     setAddingDate(null)
   }
 
-  const planToday = async (payload: { recipe_id: string } | { custom_meal_name: string }, key: string) => {
+  // Suggestions only show while tonight is free, so the request expects a
+  // free evening; a 409 means the partner planned something in the meantime.
+  const planToday = async (
+    payload: { recipe_id: string } | { custom_meal_name: string },
+    key: string,
+    replaceId?: string,
+  ): Promise<boolean> => {
     setPlanning(key)
     try {
-      const res = await fetch('/api/meal-plan', {
+      const res = await apiCall<MealEntry>('/api/meal-plan', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           date: format(new Date(), ISO),
           meal_type: 'dinner',
           servings: 2,
           suggested_by: currentUser,
           ...payload,
-        }),
+          ...(replaceId ? { replace_id: replaceId } : { expect_empty: true }),
+        },
+        fallback: 'Konnte nicht gespeichert werden',
       })
-      if (!res.ok) throw new Error()
-      await loadEntries()
+      const current = res.status === 409 ? (res.data as { current?: MealEntry } | null)?.current : undefined
+      if (current) {
+        await loadEntries().catch(() => {})
+        const who = current.suggested_by && current.suggested_by !== currentUser ? `${current.suggested_by} hat` : 'Es ist'
+        const name = current.recipe?.name || current.custom_meal_name || 'etwas anderes'
+        showToast(`${who} inzwischen ${name} geplant`, {
+          duration: 8000,
+          action: {
+            label: 'Trotzdem ersetzen',
+            onClick: () => {
+              if (toastTimer.current) clearTimeout(toastTimer.current)
+              setToast(null)
+              planToday(payload, key, current.id)
+            },
+          },
+        })
+        return false
+      }
+      if (!res.ok) { showToast(res.error); return false }
+      await loadEntries().catch(() => {})
       window.scrollTo({ top: 0, behavior: 'smooth' })
       return true
-    } catch {
-      showToast('Konnte nicht gespeichert werden')
-      return false
     } finally {
       setPlanning(null)
     }

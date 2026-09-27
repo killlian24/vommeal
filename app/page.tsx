@@ -15,6 +15,7 @@ import { track } from '@/lib/track'
 import { QUICK_MEALS, EATING_OUT, quickMealEmoji } from '@/lib/quickMeals'
 import { planMove, applyMoves, type PlanMove } from '@/lib/planMoves'
 import { shiftPlan, movePlanEntry, undoPlanChange } from '@/lib/planApi'
+import { apiCall, NETWORK_ERROR } from '@/lib/apiCall'
 import { useLongPressDrag, type DragDrop } from '@/lib/useLongPressDrag'
 import { MoveSheet } from '@/components/MoveSheet'
 
@@ -341,12 +342,45 @@ export default function PlanPage() {
 
   const closePicker = () => { setPicker(null); setSearch(''); setCustomName(''); setAddLeftovers(false) }
 
+  // Plans send what they expect on that evening (`expect_empty` or
+  // `replace_id`); the server answers 409 with the current entry instead of
+  // overwriting what the partner planned in the meantime.
   const postEntry = (body: Record<string, unknown>) =>
-    fetch('/api/meal-plan', {
+    apiCall<MealEntry>('/api/meal-plan', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ meal_type: 'dinner', servings: SERVINGS, status: 'approved', suggested_by: currentUser, ...body }),
+      body: { meal_type: 'dinner', servings: SERVINGS, status: 'approved', suggested_by: currentUser, ...body },
+      fallback: 'Konnte nicht gespeichert werden',
     })
+
+  const conflictEntry = (res: { status: number; data: unknown }): MealEntry | null =>
+    res.status === 409 ? ((res.data as { current?: MealEntry } | null)?.current ?? null) : null
+
+  // "Susi hat inzwischen Shakshuka geplant"
+  const conflictText = (current: MealEntry) =>
+    current.suggested_by && current.suggested_by !== currentUser
+      ? `${current.suggested_by} hat inzwischen ${mealName(current)} geplant`
+      : `Inzwischen ist ${mealName(current)} geplant`
+
+  // After a 409: show the fresh state and offer to replace it anyway.
+  const offerReplace = (current: MealEntry, body: Record<string, unknown>, label: string) => {
+    refresh()
+    showToast(conflictText(current), {
+      duration: 8000,
+      action: {
+        label: 'Trotzdem ersetzen',
+        onClick: async () => {
+          hideToast()
+          const res = await postEntry({ ...body, replace_id: current.id })
+          const again = conflictEntry(res)
+          if (again) { offerReplace(again, body, label); return }
+          if (!res.ok) { showToast(res.error); return }
+          track('plan_replace')
+          refresh()
+          showToast(`${fmt(parseISO(String(body.date)), 'EEEE')}: ${label}`)
+        },
+      },
+    })
+  }
 
   const planMeal = async (opts: { recipeId?: string; name?: string; quick?: boolean; label?: string }) => {
     if (!picker || saving) return
@@ -356,26 +390,28 @@ export default function PlanPage() {
     const replaced = replaceId ? entries.find(e => e.id === replaceId) : undefined
     const keep = !!replaced && (keepOld ?? (date === todayStr && !!opts.quick && KEEP_OLD_BY_DEFAULT.includes(name)))
     if (replaced && keep) { await replaceKeepingOld(replaced, opts, name); return }
-    setSaving(true)
-    const res = await postEntry({ date, recipe_id: opts.recipeId || null, custom_meal_name: opts.recipeId ? null : name })
-    if (!res.ok) {
-      setSaving(false)
-      showToast('Konnte nicht gespeichert werden')
-      return
-    }
-    track(replaceId ? 'plan_replace' : 'plan_add', replaceId ? {} : { quick: !!opts.quick })
-
-    let leftovers = false
-    if (addLeftovers && nextDayFree && !opts.quick && !keep) {
-      const next = ds(addDays(parseISO(date), 1))
-      const r = await postEntry({ date: next, recipe_id: null, custom_meal_name: LEFTOVERS })
-      if (r.ok) { leftovers = true; track('plan_leftovers') }
-    }
-    setSaving(false)
-    closePicker()
-    refresh()
     const label = opts.label || (opts.recipeId ? recipes.find(r => r.id === opts.recipeId)?.name || 'Rezept' : name)
-    showToast(leftovers ? `${label} + Reste morgen` : `${fmt(parseISO(date), 'EEEE')}: ${label}`)
+    const body = { date, recipe_id: opts.recipeId || null, custom_meal_name: opts.recipeId ? null : name }
+    setSaving(true)
+    try {
+      const res = await postEntry({ ...body, ...(replaceId ? { replace_id: replaceId } : { expect_empty: true }) })
+      const current = conflictEntry(res)
+      if (current) { closePicker(); offerReplace(current, body, label); return }
+      if (!res.ok) { showToast(res.error); return }
+      track(replaceId ? 'plan_replace' : 'plan_add', replaceId ? {} : { quick: !!opts.quick })
+
+      let leftovers = false
+      if (addLeftovers && nextDayFree && !opts.quick && !keep) {
+        const next = ds(addDays(parseISO(date), 1))
+        const r = await postEntry({ date: next, recipe_id: null, custom_meal_name: LEFTOVERS, expect_empty: true })
+        if (r.ok) { leftovers = true; track('plan_leftovers') }
+      }
+      closePicker()
+      refresh()
+      showToast(leftovers ? `${label} + Reste morgen` : `${fmt(parseISO(date), 'EEEE')}: ${label}`)
+    } finally {
+      setSaving(false)
+    }
   }
 
   // Replace, but keep the old dish: it (and the evenings right after it) move
@@ -387,12 +423,14 @@ export default function PlanPage() {
       const res = await shiftPlan({ from: date, days: 1, fill: opts.quick ? name : null, suggested_by: currentUser })
       let createdId = res.filled?.id ?? null
       if (!opts.quick) {
-        const r = await postEntry({ date, recipe_id: opts.recipeId || null, custom_meal_name: opts.recipeId ? null : name })
+        // The shift just freed this evening; anything there now came from elsewhere.
+        const r = await postEntry({ date, recipe_id: opts.recipeId || null, custom_meal_name: opts.recipeId ? null : name, expect_empty: true })
         if (!r.ok) {
           await undoPlanChange(res.moves).catch(() => {})
-          throw new Error('Konnte nicht gespeichert werden')
+          const current = conflictEntry(r)
+          throw new Error(current ? conflictText(current) : r.error)
         }
-        createdId = (await r.json()).id ?? null
+        createdId = r.data.id ?? null
       }
       track('plan_replace')
       track('plan_shift', { days: 1, filled: true, via: 'picker' })
@@ -439,8 +477,15 @@ export default function PlanPage() {
     const removed = entries.find(e => e.id === id)
     if (!removed) return
     setEntries(prev => prev.filter(e => e.id !== id))
-    const res = await fetch(`/api/meal-plan/${id}`, { method: 'DELETE' })
-    if (!res.ok) { loadEntries(); showToast('Konnte nicht entfernt werden'); return }
+    const res = await apiCall(`/api/meal-plan/${id}`, { method: 'DELETE', fallback: 'Konnte nicht entfernt werden' })
+    if (!res.ok) {
+      // 404: the partner removed or replaced it already; show the fresh state.
+      if (res.status === 404) { refresh(); showToast('Wurde inzwischen geändert'); return }
+      // Put back only this card, other changes since then stay.
+      setEntries(prev => prev.some(e => e.id === id) ? prev : [...prev, removed].sort((a, b) => a.date.localeCompare(b.date)))
+      showToast(res.status === 0 ? `${NETWORK_ERROR}, ${mealName(removed)} bleibt` : res.error)
+      return
+    }
     track('plan_remove')
     if (removed.date === todayStr) setTodayEntry(null)
     showToast(`${mealName(removed)} entfernt`, {
@@ -449,18 +494,17 @@ export default function PlanPage() {
         label: 'Rückgängig',
         onClick: async () => {
           hideToast()
-          const r = await fetch('/api/meal-plan', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: removed.id, date: removed.date, meal_type: removed.meal_type,
-              recipe_id: removed.recipe_id, custom_meal_name: removed.custom_meal_name,
-              servings: removed.servings || SERVINGS, notes: removed.notes,
-              status: 'approved', suggested_by: removed.suggested_by,
-            }),
+          // Only onto a still free evening: never overwrite a newer plan.
+          const r = await postEntry({
+            id: removed.id, date: removed.date,
+            recipe_id: removed.recipe_id, custom_meal_name: removed.custom_meal_name,
+            servings: removed.servings || SERVINGS, notes: removed.notes,
+            suggested_by: removed.suggested_by, expect_empty: true,
           })
+          const current = conflictEntry(r)
           if (r.ok) { refresh(); showToast('Wiederhergestellt') }
-          else { showToast('Konnte nicht wiederhergestellt werden') }
+          else if (current) { refresh(); showToast(`Nicht wiederhergestellt: ${conflictText(current)}`, { duration: 4000 }) }
+          else { showToast(r.status === 0 ? r.error : 'Konnte nicht wiederhergestellt werden') }
         },
       },
     })
@@ -556,9 +600,11 @@ export default function PlanPage() {
           label: 'Rückgängig',
           onClick: async () => {
             hideToast()
-            await Promise.all(added.map(e => fetch(`/api/meal-plan/${e.id}`, { method: 'DELETE' })))
+            // 404 = already removed or replaced by the partner: nothing to undo there.
+            const results = await Promise.all(added.map(e => apiCall(`/api/meal-plan/${e.id}`, { method: 'DELETE' })))
             refresh()
-            showToast('Zurückgenommen')
+            const failed = results.find(r => !r.ok && r.status !== 404)
+            showToast(failed ? (failed.status === 0 ? failed.error : 'Konnte nicht zurückgenommen werden') : 'Zurückgenommen')
           },
         } : undefined,
       })

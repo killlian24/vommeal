@@ -32,7 +32,8 @@ export function movePlanEntry(id: string, to: string) {
 export async function undoPlanChange(moves: PlanMove[], createdId?: string | null) {
   if (createdId) {
     const res = await fetch(`/api/meal-plan/${createdId}`, { method: 'DELETE' })
-    if (!res.ok) throw new Error('Konnte nicht zurückgenommen werden')
+    // 404: that evening was already removed or replaced, nothing left to take back.
+    if (!res.ok && res.status !== 404) throw new Error('Konnte nicht zurückgenommen werden')
   }
   if (moves.length > 0) {
     await post('/api/meal-plan/reorder', { moves: moves.map(m => ({ id: m.id, date: m.from })) })

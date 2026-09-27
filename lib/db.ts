@@ -543,6 +543,48 @@ export function addMealPlanEntry(entry: Omit<MealPlanEntry, 'created_at' | 'reci
   return { ...entry, status: 'approved', created_at: new Date().toISOString() }
 }
 
+/**
+ * What the client saw when it decided to plan: a free evening (`expectEmpty`)
+ * or a known entry it wants to replace (`replaceId`). Stale screens must not
+ * silently overwrite what the partner planned in the meantime.
+ */
+export type PlanExpectation = { expectEmpty?: boolean; replaceId?: string | null }
+
+export type GuardedPlanResult =
+  | { ok: true; entry: MealPlanEntry }
+  | { ok: false; current: MealPlanEntry }
+
+/** The entry addMealPlanEntry would overwrite on `date`, if any. */
+function currentEntryOn(date: string): MealPlanEntry | null {
+  const row = getDb().prepare(`
+    SELECT id FROM meal_plan
+    WHERE date = ? AND meal_type = 'dinner'
+    ORDER BY created_at DESC, rowid DESC
+    LIMIT 1
+  `).get(date) as { id: string } | undefined
+  if (!row) return null
+  return getMealPlanRange(date, date).find(e => e.id === row.id) ?? null
+}
+
+/**
+ * addMealPlanEntry with an optimistic-concurrency check. Without an
+ * expectation it behaves exactly like addMealPlanEntry (last write wins).
+ * A free evening is never a conflict: nothing can be lost there.
+ */
+export function addMealPlanEntryIfExpected(
+  entry: Omit<MealPlanEntry, 'created_at' | 'recipe'>,
+  expect: PlanExpectation = {},
+): GuardedPlanResult {
+  const db = getDb()
+  let result: GuardedPlanResult | null = null
+  db.transaction(() => {
+    const current = currentEntryOn(entry.date)
+    const allowed = !current || (expect.replaceId ? current.id === expect.replaceId : !expect.expectEmpty)
+    result = allowed ? { ok: true, entry: addMealPlanEntry(entry) } : { ok: false, current: current! }
+  })()
+  return result!
+}
+
 export function updateMealPlanEntry(id: string, data: Partial<MealPlanEntry>) {
   const db = getDb()
   if (data.status !== undefined) {
@@ -562,9 +604,11 @@ export function updateMealPlanEntry(id: string, data: Partial<MealPlanEntry>) {
   mealPlanChanged()
 }
 
-export function deleteMealPlanEntry(id: string) {
-  getDb().prepare('DELETE FROM meal_plan WHERE id = ?').run(id)
-  mealPlanChanged()
+/** Returns false when no entry had this id (already removed or replaced). */
+export function deleteMealPlanEntry(id: string): boolean {
+  const { changes } = getDb().prepare('DELETE FROM meal_plan WHERE id = ?').run(id)
+  if (changes > 0) mealPlanChanged()
+  return changes > 0
 }
 
 export function deleteMealPlanRange(startDate: string, endDate: string) {
