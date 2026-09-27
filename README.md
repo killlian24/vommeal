@@ -10,11 +10,13 @@ Essensplaner als Web-App (PWA) für zwei: Wochenplan, Rezepte aus Mealie, Einkau
 
 ## Was Vommeal kann
 
-Vommeal ist fürs Handy gebaut: auf dem Startbildschirm installieren, unten gibt es die Bereiche **Heute**, **Woche**, **Rezepte**, **Einkauf** und **Einstellungen**. Beim ersten Öffnen fragt Vommeal „Wer bist du?“; die Auswahl gilt pro Gerät (ein Lesezeichen auf `/#name` überspringt die Frage).
+Vommeal ist fürs Handy gebaut: auf dem Startbildschirm installieren, unten gibt es die Bereiche **Heute**, **Woche**, **Rezepte**, **Einkauf** und **Einstellungen**. Beim ersten Öffnen fragt Vommeal auf jeder Seite „Wer bist du?“, bevor etwas gespeichert wird; die Auswahl gilt pro Gerät. Wer das Handy benutzt, steht unter **Einstellungen → Profile** („Dieses Handy gehört: Kilian“) und lässt sich dort mit **Ändern** und einer Rückfrage wechseln (ein Lesezeichen auf `/#name` überspringt die Frage auf einem neuen Gerät).
+
+Kommt man zurück in die App (oder ist wieder online), laden Woche, Heute und Einkauf im Hintergrund neu, ohne dass offene Fenster zugehen. Die Einkaufsliste holt sich zusätzlich alle 20 Sekunden die Änderungen des anderen.
 
 ### Woche
 
-- **Planen ohne Bestätigen:** Jeder plant einfach, jede Karte zeigt, wer geplant hat. Wurde seit dem letzten Besuch etwas vom anderen geplant, erscheint ein kurzer Hinweis („Susi hat 3 Abende geplant“).
+- **Planen ohne Bestätigen:** Jeder plant einfach, jede Karte zeigt, wer geplant hat. Hat der andere seit dem letzten Blick auf dieses Handy Abende geplant, ersetzt oder verschoben, erscheint ein kurzer Hinweis („Susi hat 3 Abende geplant“) und die Karten tragen ein kleines **neu**, bis man die Woche gesehen hat (höchstens 24 Stunden).
 - **Aktuelle und nächste Woche:** Von Freitag bis Sonntag öffnet die Woche automatisch die nächste Woche, oben bleibt „Heute: …“ sichtbar. Vergangene Tage sind unter „Vorbei“ eingeklappt, ab Donnerstag gibt es die Karte „Nächste Woche planen“.
 - **Abend planen:** Antippen öffnet die Auswahl mit Rezeptsuche, den Schnelloptionen **Reste**, **Auswärts essen**, **Bestellen** und **Frei** sowie einem Feld für ein neues Gericht. Ein neues Gericht („Schnitzel“) wird mit **Als Rezept anlegen & planen** direkt in Mealie angelegt (in der Abendessen-Kategorie) oder mit **Nur Notiz** nur für diesen Abend eingetragen. **Reste für morgen einplanen** trägt gleich für den nächsten Abend „Reste“ ein.
 - **Freie Abende füllen:** Der große Knopf füllt alle freien Abende ab heute automatisch (nichts mit „Nicht nochmal“, schlecht bewertete nur wenn nötig, nichts aus den letzten 14 Tagen, montags bis donnerstags bevorzugt schnelle Rezepte). Rückgängig ist möglich.
@@ -30,7 +32,7 @@ Vommeal ist fürs Handy gebaut: auf dem Startbildschirm installieren, unten gibt
 
 ### Heute
 
-- Zeigt das heutige Gericht mit **Rezept öffnen** und **Zutaten auf die Einkaufsliste**, darunter die nächsten Tage.
+- Zeigt das heutige Gericht mit **Rezept öffnen** und **Zutaten auf die Einkaufsliste**, darunter die nächsten Tage. Hat der andere das heutige Gericht geplant oder geändert, gibt es einen Hinweis und ein **neu** an der Karte.
 - **Heute doch nicht – auf morgen schieben:** schiebt heute und die folgenden Tage einen Tag nach hinten und trägt für heute wahlweise „Auswärts essen“ ein oder lässt den Abend frei.
 - Ist nichts geplant: drei Vorschläge mit **Heute kochen** (nach denselben Regeln wie die Erinnerung), **Andere Vorschläge** und die Schnelloptionen.
 - **Wie war's?** fragt am Tag danach einmal nach Sternen. **Nicht nochmal** (1 Stern) sorgt dafür, dass das Rezept nicht mehr vorgeschlagen oder automatisch geplant wird. Bewertungen gehen auch an Mealie.
@@ -55,6 +57,8 @@ Vommeal ist fürs Handy gebaut: auf dem Startbildschirm installieren, unten gibt
   - **N auf die Liste** übernimmt die Auswahl, danach bietet Vommeal **An Keep senden** an.
 - **Keep:** gleicht mit der Home-Assistant-Todo-Liste ab (siehe [Einkaufsliste und Home Assistant](#einkaufsliste-und-home-assistant)).
 - Im Menü **⋯**: **Heute-Zutaten**, **Liste kopieren** (als Text zum Teilen) und **Vorrat verwalten**. Löschen und „Erledigte entfernen“ lassen sich rückgängig machen, „Alles löschen“ fragt nach.
+- **Ohne Netz (z. B. im Supermarkt-Keller):** Das Handy merkt sich die zuletzt geladene Liste und zeigt sie mit „Offline · Stand 14:05“. Abhaken, Eintragen und Entfernen gehen weiter; die Änderungen warten auf dem Handy („2 Änderungen warten“) und werden gesendet, sobald wieder Verbindung da ist. Konnte die Liste nie geladen werden, zeigt Vommeal einen Fehler mit **Erneut laden** statt einer leeren Liste.
+- **App ohne Netz öffnen:** Die installierte App startet auch offline (Service Worker). Das klappt nur, wenn Vommeal über https erreichbar ist (z. B. per Tailscale mit HTTPS); über einfaches http im Heimnetz funktioniert alles, aber nur mit Verbindung.
 
 ### Einstellungen und Nutzung
 
@@ -121,7 +125,7 @@ Port `3333` und das Docker-Netz `172.26.0.0/24` stehen fest in der `docker-compo
 
 `http://<nas-ip>:3333/settings` öffnen:
 
-- **Profile:** eure beiden Namen (welche Person ein Gerät benutzt, merkt sich jedes Handy selbst)
+- **Profile:** eure beiden Namen. Welche Person ein Gerät benutzt, merkt sich jedes Handy selbst; darüber steht „Dieses Handy gehört: …“ mit **Ändern** und der Tipp zum Lesezeichen auf `/#name`.
 - **Mealie-URL und API-Token:** für den Rezept-Sync. Den Token erstellt man in Mealie unter Profil → API Tokens.
 - **Home Assistant:** URL, Long-Lived Access Token und Todo-Entität der Einkaufsliste (z. B. `todo.einkaufsliste`)
 - **Abendessen-Kategorie:** Mealie-Kategorie, auf die die Rezepte gefiltert werden (z. B. `Abendessen`). In Vommeal angelegte oder per Link importierte Rezepte bekommen diese Kategorie automatisch, sonst würde der nächste Abgleich sie wieder entfernen.
