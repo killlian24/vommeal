@@ -12,6 +12,8 @@ import { useToast } from '@/components/Toast'
 import { todayIso } from '@/lib/dates'
 import { WeekIngredientsSheet } from '@/components/WeekIngredientsSheet'
 import { runHaSync, syncSummary, type SyncResult } from '@/lib/haSync'
+import { useServices } from '@/lib/useServices'
+import Link from 'next/link'
 import { CATEGORY_LABELS, DEFAULT_CATEGORY_ORDER, CATEGORIES, plural } from '@/lib/shoppingLabels'
 import { apiCall } from '@/lib/apiCall'
 import { useRefreshOnResume } from '@/lib/useRefreshOnResume'
@@ -73,7 +75,10 @@ export default function ShoppingPage() {
   const { show: showToast, error: showErrorToast, hide: hideToast } = useToast()
   const showError = (msg: string) => showErrorToast(msg, { duration: ERROR_MS })
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null)
-  const [lastSync, setLastSync] = useState<SyncResult | null>(null)
+  // Outcome of the last Abgleichen, shown under the buttons (errors only there, no toast)
+  const [lastSync, setLastSync] = useState<(SyncResult & { setup?: boolean }) | null>(null)
+  const services = useServices()
+  const haReady = services?.ha !== false
   // "Zutaten der Woche" sheet (today to the end of next week)
   const [reviewOpen, setReviewOpen] = useState(false)
   // Loading failed and there is nothing to show: error state instead of "leer"
@@ -403,21 +408,18 @@ export default function ShoppingPage() {
     }
   }
 
-  /** Abgleichen; the result stays visible under the buttons. */
-  const runSync = async () => {
-    const result = await runHaSync()
-    setLastSync(result.ok ? (result.data ?? { ok: true }) : { ok: false, error: result.msg })
-    return result
-  }
-
+  /** Abgleichen; the result stays visible under the buttons. Without Home Assistant it only explains. */
   const syncList = async () => {
+    if (!haReady) {
+      setLastSync({ ok: false, setup: true, error: 'Abgleichen bringt die Liste in eure Home-Assistant-Liste (z. B. Google Keep). Home Assistant ist noch nicht eingerichtet.' })
+      return
+    }
     setSyncing(true)
-    const result = await runSync()
+    const result = await runHaSync()
+    setLastSync(result.ok ? (result.data ?? { ok: true }) : { ok: false, error: result.msg, setup: result.setup })
     if (result.ok) {
       await load(false)
       showToast(result.msg ? `Abgeglichen: ${result.msg}` : 'Schon alles abgeglichen')
-    } else {
-      showError(result.msg)
     }
     setSyncing(false)
   }
@@ -593,7 +595,11 @@ export default function ShoppingPage() {
             disabled={syncing}
             aria-label="Mit Home Assistant abgleichen"
             title="Mit Home Assistant abgleichen"
-            className="min-h-[48px] flex items-center gap-2 px-3.5 rounded-xl bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm text-[#d0d0d0] hover:text-white transition-colors disabled:opacity-70"
+            className={`min-h-[48px] flex items-center gap-2 px-3.5 rounded-xl border text-sm transition-colors disabled:opacity-70 ${
+              haReady
+                ? 'bg-[#1c1c1c] hover:bg-[#252525] border-[#2a2a2a] text-[#d0d0d0] hover:text-white'
+                : 'bg-transparent border-dashed border-[#2a2a2a] text-ink-hint'
+            }`}
           >
             <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
             <span>Abgleichen</span>
@@ -618,12 +624,19 @@ export default function ShoppingPage() {
         )}
 
         {lastSync && (
-          <div className={`rounded-lg border px-3 py-2 text-xs ${
-            lastSync.ok ? 'border-[#243525] bg-[#101810] text-[#9fb8a1]' : 'border-red-500/30 bg-red-500/10 text-red-300'
+          <div role={lastSync.ok || lastSync.setup ? 'status' : 'alert'} className={`flex items-center gap-2 rounded-lg border pl-3 pr-1 py-1 text-xs ${
+            lastSync.ok ? 'border-[#243525] bg-[#101810] text-[#9fb8a1]'
+              : lastSync.setup ? 'border-[#2a2a2a] bg-[#141414] text-ink-soft'
+              : 'border-red-500/30 bg-red-500/10 text-red-300'
           }`}>
-            {lastSync.ok
-              ? <p>Zuletzt abgeglichen: {syncSummary(lastSync) || 'nichts Neues'}</p>
-              : <p>{lastSync.error}</p>}
+            <p className="flex-1 min-w-0 py-1">
+              {lastSync.ok ? `Zuletzt abgeglichen: ${syncSummary(lastSync) || 'nichts Neues'}` : lastSync.error}
+            </p>
+            {lastSync.setup && (
+              <Link href="/settings#ha" className="flex-shrink-0 min-h-[40px] flex items-center px-2.5 rounded-md font-semibold text-primary hover:bg-[#1c1c1c]">
+                Einstellungen öffnen
+              </Link>
+            )}
           </div>
         )}
       </div>

@@ -10,6 +10,8 @@ import CookMode, { FewIngredientsHint, readCookProgress } from '@/components/Coo
 import { track } from '@/lib/track'
 import { apiCall } from '@/lib/apiCall'
 import { PlanRecipeSheet } from '@/components/PlanRecipeSheet'
+import { useServices } from '@/lib/useServices'
+import { germanError } from '@/lib/errorText'
 
 type Effort = 'quick' | 'involved' | null
 type Ingredient = { amount: string; unit: string; name: string; note?: string }
@@ -49,6 +51,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
   const [settings, setSettings] = useState<{ mealie_url: string }>({ mealie_url: '' })
   const [cooking, setCooking] = useState(false)
   const [planning, setPlanning] = useState(false)
+  const services = useServices()
   const [effortError, setEffortError] = useState(false)
   // Load failure: 'gone' = recipe deleted (404), otherwise the error text
   const [loadError, setLoadError] = useState<'gone' | string>('')
@@ -135,7 +138,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
           })
       const saved = await res.json().catch(() => ({}))
       if (!res.ok || !saved?.id) {
-        setSaveError(saved?.error || 'Speichern fehlgeschlagen')
+        setSaveError(germanError(saved?.error, { fallback: 'Speichern fehlgeschlagen' }))
         return
       }
       if (isNew) {
@@ -156,7 +159,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
     const res = await fetch(`/api/recipes/${id}`, { method: 'DELETE' }).catch(() => null)
     if (!res || !res.ok) {
       const data = res ? await res.json().catch(() => ({})) : {}
-      setSaveError(data?.error || 'Löschen hat nicht geklappt')
+      setSaveError(germanError(data?.error, { fallback: 'Löschen hat nicht geklappt' }))
       return
     }
     track('recipe_delete', { source: recipe.source })
@@ -307,8 +310,10 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
       {saveError && (
         <p role="alert" className="text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">{saveError}</p>
       )}
-      {isNew && (
-        <p className="text-xs text-[#8f8f8f]">Neue Rezepte werden direkt in Mealie angelegt.</p>
+      {isNew && services && (
+        <p className="text-xs text-[#8f8f8f]">
+          {services.mealie ? 'Das Rezept wird in Mealie angelegt und erscheint hier bei euren Rezepten.' : 'Das Rezept wird in eurer Sammlung gespeichert.'}
+        </p>
       )}
 
       {editing ? (
@@ -392,7 +397,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
 
       {mealieError && (
         <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-          Mealie-Sync fehlgeschlagen: {mealieError}
+          Bewertung ist hier gespeichert, aber nicht in Mealie: {germanError(mealieError, { service: 'mealie', fallback: 'Mealie hat nicht geantwortet' })}
         </p>
       )}
 

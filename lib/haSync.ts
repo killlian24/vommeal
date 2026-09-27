@@ -3,6 +3,8 @@
 // "Abgleichen": POST /api/ha/sync and describe the outcome in German.
 // Used by Einkauf and by the "Zutaten der Woche" sheet.
 
+import { friendlyError } from './errorText'
+
 export type SyncResult = {
   ok: boolean
   imported?: number
@@ -28,7 +30,8 @@ export function syncSummary(data: SyncResult & { added?: number }): string {
   ].filter(Boolean).join(', ')
 }
 
-export async function runHaSync(): Promise<{ ok: boolean; msg: string; data?: SyncResult }> {
+/** `setup`: Home Assistant is not set up, the caller links to Einstellungen. */
+export async function runHaSync(): Promise<{ ok: boolean; msg: string; data?: SyncResult; setup?: boolean }> {
   try {
     const res = await fetch('/api/ha/sync', { method: 'POST' })
     let data: SyncResult & { added?: number } = { ok: false }
@@ -38,19 +41,14 @@ export async function runHaSync(): Promise<{ ok: boolean; msg: string; data?: Sy
       data = JSON.parse(bodyText)
     } catch { /* non-JSON error body (e.g. HTML from a proxy) */ }
     if (res.ok && data.ok) return { ok: true, msg: syncSummary(data), data }
-    const rawReason = data.error
+    const raw = data.error
       ? String(data.error)
-      : bodyText.trim() && !/^\s*</.test(bodyText) ? bodyText.trim().slice(0, 160) : `HTTP ${res.status}`
-    const reason = rawReason
-      .replace(/^Cannot reach Home Assistant:\s*/i, '')
-      .replace(/^TypeError:\s*/i, '')
-    let msg: string
-    if (/not configured/i.test(reason)) msg = 'Home Assistant ist nicht eingerichtet – bitte in den Einstellungen eintragen.'
-    else if (res.status === 409 || /already running/i.test(reason)) msg = 'Abgleich läuft gerade schon – gleich nochmal versuchen.'
-    else if (res.status === 503 || /fetch failed|ECONN|ENOTFOUND|timeout|unreachable/i.test(reason)) msg = `Home Assistant nicht erreichbar (${reason})`
-    else msg = `Abgleich fehlgeschlagen (${reason})`
-    return { ok: false, msg }
+      : res.status === 409 ? 'already running'
+        : res.status === 503 ? 'unreachable'
+          : bodyText.trim() && !/^\s*</.test(bodyText) ? bodyText.trim().slice(0, 160) : `HTTP ${res.status}`
+    const { message, setup } = friendlyError(raw, { service: 'ha', fallback: 'Abgleich hat nicht geklappt' })
+    return { ok: false, msg: message, setup: setup === 'ha' }
   } catch {
-    return { ok: false, msg: 'Abgleich fehlgeschlagen – bitte Einstellungen prüfen.' }
+    return { ok: false, msg: 'Keine Verbindung zu Vommeal' }
   }
 }

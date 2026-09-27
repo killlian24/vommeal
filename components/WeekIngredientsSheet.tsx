@@ -91,7 +91,7 @@ export function WeekIngredientsSheet({ start, end, source, categoryOrder: givenO
   /** An ingredient went into the pantry */
   onPantryAdd?: (staple: { id: string; name: string }) => void
   /** Abgleichen ran (Einkauf shows the result) */
-  onSynced?: (result: SyncResult) => void
+  onSynced?: (result: SyncResult & { setup?: boolean }) => void
 }) {
   const { show: showToast, error: showError } = useToast()
   const today = todayIso()
@@ -260,7 +260,7 @@ export function WeekIngredientsSheet({ start, end, source, categoryOrder: givenO
     setReview(r => ({ ...r, phase: 'sending' }))
     const result = await runHaSync()
     if (result.ok) onChanged?.()
-    onSynced?.(result.ok ? (result.data ?? { ok: true }) : { ok: false, error: result.msg })
+    onSynced?.(result.ok ? (result.data ?? { ok: true }) : { ok: false, error: result.msg, setup: result.setup })
     setReview(r => ({
       ...r,
       phase: 'sent',

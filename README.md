@@ -39,7 +39,7 @@ Kommt man zurück in die App (oder ist wieder online), laden Woche, Heute und Ei
 ### Rezepte
 
 - Rezepte kommen aus Mealie (gefiltert auf die Abendessen-Kategorie). Der Abgleich läuft jede Nacht und per Knopf auf der Seite **Rezepte**. Neue und geänderte Rezepte werden übernommen, in Mealie gelöschte Rezepte verschwinden auch in Vommeal, ein ersetztes Rezeptbild erscheint nach dem nächsten Abgleich. Sicherheitsbremse: Liefert Mealie gar nichts oder würde mehr als die Hälfte auf einmal verschwinden, löscht Vommeal nichts und zeigt einen Hinweis.
-- **Neues Rezept** (Plus auf der Seite Rezepte oder beim Planen) legt das Rezept direkt in Mealie an, mit Beschreibung, Zutaten und Schritten.
+- **Neues Rezept** (Plus auf der Seite Rezepte oder beim Planen) legt das Rezept direkt in Mealie an, mit Beschreibung, Zutaten und Schritten. Ohne Mealie wird es in Vommeal gespeichert; der Mealie-Abgleich und der Import per Link sind dann ausgeblendet, ein kurzer Hinweis führt zu den Einstellungen.
 - **Rezept per Link hinzufügen:** Link einfügen oder auf Android über „Teilen“ an Vommeal schicken, Mealie liest die Seite aus (siehe [Rezept per Link importieren](#rezept-per-link-importieren)).
 - **Löschen** auf der Rezeptseite löscht das Rezept nach Rückfrage auch in Mealie. Geplante Abende behalten den Namen.
 - **Einplanen** neben **Kochen** zeigt die nächsten 10 Abende: freie hervorgehoben, belegte mit ihrem Gericht und „ersetzen“. Hat der andere inzwischen dort etwas geplant, fragt Vommeal nach, statt zu überschreiben; Rückgängig ist möglich.
@@ -55,7 +55,7 @@ Kommt man zurück in die App (oder ist wieder online), laden Woche, Heute und Ei
   - Vommeal merkt sich, welche Mahlzeiten schon eingekauft sind, auch nach dem Verschieben und nach dem Leeren der Liste. Nach dem Abschalten einer Mahlzeit fragt Vommeal „Als schon eingekauft merken?“. Gemerkte Mahlzeiten stehen abgewählt unter **Schon eingekauft**; einschalten holt sie zurück.
   - Einzelne Zutaten abwählen („haben wir“); bei abgewählten Zutaten legt **In den Vorrat** sie in den Vorrat, dann werden sie nie mehr vorausgewählt. Salz, Pfeffer und Wasser werden nie vorgeschlagen.
   - **N auf die Liste** übernimmt die Auswahl, danach bietet Vommeal **Abgleichen** mit Home Assistant an.
-- **Abgleichen:** gleicht mit der Home-Assistant-Todo-Liste ab (z. B. Google Keep) (siehe [Einkaufsliste und Home Assistant](#einkaufsliste-und-home-assistant)).
+- **Abgleichen:** gleicht mit der Home-Assistant-Todo-Liste ab (z. B. Google Keep); ohne eingerichtetes Home Assistant erklärt der Knopf nur, was fehlt, mit **Einstellungen öffnen** (siehe [Einkaufsliste und Home Assistant](#einkaufsliste-und-home-assistant)).
 - Im Menü **⋯**: **Liste kopieren** (als Text zum Teilen) und **Vorrat verwalten**. Löschen und „Erledigte entfernen“ lassen sich rückgängig machen, „Alles löschen“ fragt nach.
 - **Ohne Netz (z. B. im Supermarkt-Keller):** Das Handy merkt sich die zuletzt geladene Liste und zeigt sie mit „Offline · Stand 14:05“. Abhaken, Eintragen und Entfernen gehen weiter; die Änderungen warten auf dem Handy („2 Änderungen warten“) und werden gesendet, sobald wieder Verbindung da ist. Konnte die Liste nie geladen werden, zeigt Vommeal einen Fehler mit **Erneut laden** statt einer leeren Liste.
 - **App ohne Netz öffnen:** Die installierte App startet auch offline (Service Worker). Das klappt nur, wenn Vommeal über https erreichbar ist (z. B. per Tailscale mit HTTPS); über einfaches http im Heimnetz funktioniert alles, aber nur mit Verbindung.

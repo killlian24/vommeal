@@ -6,6 +6,8 @@ import Link from 'next/link'
 import { Link2, Loader2, AlertCircle } from 'lucide-react'
 import { importRecipe, extractFirstUrl } from '@/lib/recipeImport'
 import { track } from '@/lib/track'
+import { useServices } from '@/lib/useServices'
+import { germanError } from '@/lib/errorText'
 
 // Android share target (see public/manifest.json): the shared link arrives as
 // ?url=…, or buried in ?text=… (most apps) or ?title=….
@@ -15,6 +17,7 @@ function ShareImport() {
   const url = extractFirstUrl(params.get('url'), params.get('text'), params.get('title'))
   const [importing, setImporting] = useState(false)
   const [error, setError] = useState('')
+  const services = useServices()
 
   const confirm = async () => {
     if (!url) return
@@ -27,7 +30,7 @@ function ShareImport() {
       return
     }
     setImporting(false)
-    setError(result.error)
+    setError(germanError(result.error, { service: 'mealie', fallback: 'Import hat nicht geklappt' }))
   }
 
   if (!url) {
@@ -54,7 +57,14 @@ function ShareImport() {
       </div>
       <h1 className="text-2xl font-bold text-white">Rezept importieren?</h1>
       <p className="text-sm text-ink-soft break-all bg-[#0f0f0f] border border-[#222] rounded-xl px-3 py-2.5">{url}</p>
-      <p className="text-sm text-ink-muted">Das Rezept wird in Mealie angelegt und erscheint danach bei euren Rezepten.</p>
+      {services && !services.mealie ? (
+        <p className="text-sm text-ink-muted">
+          Importieren per Link geht mit Mealie, das ist noch nicht eingerichtet.{' '}
+          <Link href="/settings#mealie" className="text-primary font-medium">Einstellungen öffnen</Link>
+        </p>
+      ) : (
+        <p className="text-sm text-ink-muted">Mealie liest die Seite, das Rezept erscheint danach bei euren Rezepten.</p>
+      )}
 
       {error && (
         <p role="alert" className="text-sm text-red-300 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2.5">{error}</p>
@@ -64,7 +74,7 @@ function ShareImport() {
         <button
           type="button"
           onClick={confirm}
-          disabled={importing}
+          disabled={importing || services?.mealie === false}
           className="flex items-center justify-center gap-2 h-12 rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold transition-all disabled:opacity-60 active:scale-[0.98]"
         >
           {importing && <Loader2 size={18} className="animate-spin" />}

@@ -20,7 +20,7 @@ export function Section({ id, icon, title, meta, open, onToggle, children }: {
   children: ReactNode
 }) {
   return (
-    <section className="bg-[#141414] border border-[#262626] rounded-xl overflow-hidden">
+    <section id={id} className="scroll-mt-4 bg-[#141414] border border-[#262626] rounded-xl overflow-hidden">
       <button
         type="button"
         onClick={() => onToggle(id)}

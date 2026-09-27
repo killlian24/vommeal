@@ -18,6 +18,7 @@ import { UsageSection } from '@/components/settings/UsageSection'
 import { HaDashboardSection } from '@/components/settings/HaDashboardSection'
 import { ThisPhone } from '@/components/settings/ThisPhone'
 import { useCurrentUser } from '@/components/UserProvider'
+import { germanError } from '@/lib/errorText'
 
 type Settings = {
   mealie_url: string; mealie_token: string; has_token: boolean
@@ -100,6 +101,14 @@ export default function SettingsPage() {
   const setError = (key: SectionKey, message: string) => setErrors(prev => ({ ...prev, [key]: message }))
 
   const reloadSettings = () => fetch('/api/settings').then(r => r.json()).then((s: Settings) => setSettings(s)).catch(() => {})
+
+  // Links like /settings#mealie (from "Einstellungen öffnen") open that section
+  useEffect(() => {
+    const target = window.location.hash.slice(1)
+    if (!target) return
+    setOpen(prev => new Set(prev).add(target))
+    window.setTimeout(() => document.getElementById(target)?.scrollIntoView({ block: 'start' }), 100)
+  }, [])
 
   useEffect(() => {
     setAdminToken(localStorage.getItem('vommeal_admin_token') || '')
@@ -414,7 +423,7 @@ export default function SettingsPage() {
 
         {testResult && (
           <StatusBox ok={testResult.ok}>
-            {testResult.ok ? <>Verbunden als {testResult.user}</> : testResult.error}
+            {testResult.ok ? <>Verbunden als {testResult.user}</> : germanError(testResult.error, { service: 'mealie', fallback: 'Verbindung hat nicht geklappt' })}
           </StatusBox>
         )}
         {errors.mealie && <StatusBox ok={false}>{errors.mealie}</StatusBox>}
