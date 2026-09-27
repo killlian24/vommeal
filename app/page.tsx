@@ -617,39 +617,31 @@ export default function PlanPage() {
 
   const addToList = async (date: string) => {
     setAddingToList(date)
-    try {
-      const res = await fetch('/api/shopping', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'add_date', date }),
-      })
-      const data = await res.json()
-      track('shopping_from_plan', { scope: 'day', added: data.added ?? 0 })
-      showToast(data.added > 0 ? `${data.added} Zutaten auf die Einkaufsliste` : 'Schon alles auf der Liste')
-    } catch {
-      showToast('Zutaten konnten nicht übernommen werden')
-    } finally {
-      setAddingToList(null)
-    }
+    const res = await apiCall<{ added?: number }>('/api/shopping', {
+      method: 'POST',
+      body: { action: 'add_date', date },
+      fallback: 'Zutaten konnten nicht übernommen werden',
+    })
+    setAddingToList(null)
+    if (!res.ok) { showToast(res.error); return }
+    const added = res.data?.added ?? 0
+    track('shopping_from_plan', { scope: 'day', added })
+    showToast(added > 0 ? `${added} Zutaten auf die Einkaufsliste` : 'Schon alles auf der Liste')
   }
 
   const generateShopping = async () => {
     if (upcomingStartStr > endStr) { showToast('Diese Woche ist schon vorbei'); return }
     setAddingToList('week')
-    try {
-      const res = await fetch('/api/shopping', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'generate', start: upcomingStartStr, end: endStr }),
-      })
-      const data = await res.json()
-      track('shopping_from_plan', { scope: 'week', added: data.added ?? 0 })
-      showToast(data.added > 0 ? `${data.added} Zutaten auf die Einkaufsliste` : 'Schon alles auf der Liste')
-    } catch {
-      showToast('Zutaten konnten nicht übernommen werden')
-    } finally {
-      setAddingToList(null)
-    }
+    const res = await apiCall<{ added?: number }>('/api/shopping', {
+      method: 'POST',
+      body: { action: 'generate', start: upcomingStartStr, end: endStr },
+      fallback: 'Zutaten konnten nicht übernommen werden',
+    })
+    setAddingToList(null)
+    if (!res.ok) { showToast(res.error); return }
+    const added = res.data?.added ?? 0
+    track('shopping_from_plan', { scope: 'week', added })
+    showToast(added > 0 ? `${added} Zutaten auf die Einkaufsliste` : 'Schon alles auf der Liste')
   }
 
   const clearWeek = async () => {

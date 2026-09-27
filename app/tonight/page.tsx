@@ -153,19 +153,16 @@ export default function TonightPage() {
 
   const addToList = async (date: string) => {
     setAddingDate(date)
-    try {
-      const res = await fetch('/api/shopping', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'add_date', date }),
-      })
-      const data = await res.json()
-      if (data.added > 0) showToast(`${data.added} Zutaten auf die Einkaufsliste gesetzt`)
-      else showToast('Schon auf der Liste oder keine Zutaten hinterlegt')
-    } catch {
-      showToast('Einkaufsliste nicht erreichbar')
-    }
+    const res = await apiCall<{ added?: number }>('/api/shopping', {
+      method: 'POST',
+      body: { action: 'add_date', date },
+      fallback: 'Einkaufsliste nicht erreichbar',
+    })
     setAddingDate(null)
+    if (!res.ok) { showToast(res.error); return }
+    const added = res.data?.added ?? 0
+    if (added > 0) showToast(`${added} Zutaten auf die Einkaufsliste gesetzt`)
+    else showToast('Schon auf der Liste oder keine Zutaten hinterlegt')
   }
 
   // Suggestions only show while tonight is free, so the request expects a

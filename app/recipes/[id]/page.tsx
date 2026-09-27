@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, use } from 'react'
+import { useState, useEffect, useCallback, use } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import Link from 'next/link'
@@ -8,6 +8,7 @@ import { ArrowLeft, Clock, Users, ExternalLink, Edit2, Trash2, Save, X, Plus, Co
 import { StarRating } from '@/components/StarRating'
 import CookMode, { FewIngredientsHint } from '@/components/CookMode'
 import { track } from '@/lib/track'
+import { apiCall } from '@/lib/apiCall'
 
 type Effort = 'quick' | 'involved' | null
 type Ingredient = { amount: string; unit: string; name: string; note?: string }
@@ -46,17 +47,42 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
   const [settings, setSettings] = useState<{ mealie_url: string }>({ mealie_url: '' })
   const [cooking, setCooking] = useState(false)
   const [effortError, setEffortError] = useState(false)
+  // Load failure: 'gone' = recipe deleted (404), otherwise the error text
+  const [loadError, setLoadError] = useState<'gone' | string>('')
+  const [ratingError, setRatingError] = useState('')
+
+  const loadRecipe = useCallback(async () => {
+    setLoading(true)
+    setLoadError('')
+    const res = await apiCall<Recipe>(`/api/recipes/${id}`, { fallback: 'Rezept konnte nicht geladen werden' })
+    if (res.ok) setRecipe(res.data)
+    else setLoadError(res.status === 404 ? 'gone' : res.error)
+    setLoading(false)
+  }, [id])
 
   useEffect(() => {
-    fetch('/api/settings').then(r => r.json()).then(setSettings)
-    if (!isNew) {
-      fetch(`/api/recipes/${id}`).then(async r => {
-        if (!r.ok) { router.replace('/recipes'); return }
-        setRecipe(await r.json())
-        setLoading(false)
-      })
+    fetch('/api/settings').then(r => r.json()).then(setSettings).catch(() => { /* no Mealie link */ })
+    if (!isNew) loadRecipe()
+  }, [isNew, loadRecipe])
+
+  const rate = async (val: number) => {
+    const previous = recipe.rating
+    const newRating = val === 0 ? null : val
+    setRecipe(r => ({ ...r, rating: newRating }))
+    setMealieError(null)
+    setRatingError('')
+    const res = await apiCall<{ mealie_error?: string }>(`/api/recipes/${recipe.id}`, {
+      method: 'PATCH',
+      body: { rating: newRating },
+      fallback: 'Bewertung wurde nicht gespeichert',
+    })
+    if (!res.ok) {
+      setRecipe(r => (r.rating === newRating ? { ...r, rating: previous } : r))
+      setRatingError(res.error)
+      return
     }
-  }, [id, isNew, router])
+    if (res.data?.mealie_error) setMealieError(res.data.mealie_error)
+  }
 
   const save = async () => {
     if (!recipe.name.trim()) return
@@ -165,6 +191,30 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
   const mealieUrl = recipe.mealie_slug && settings.mealie_url
     ? `${settings.mealie_url}/g/home/r/${recipe.mealie_slug}`
     : null
+
+  if (loadError) return (
+    <div className="space-y-4 max-w-2xl">
+      <Link href="/recipes" className="inline-flex items-center gap-1.5 text-sm text-ink-muted hover:text-white transition-colors py-2">
+        <ArrowLeft size={15} />
+        Rezepte
+      </Link>
+      <div role="alert" className="rounded-xl border border-[#2a2a2a] bg-[#141414] p-6 text-center space-y-3">
+        <p className="text-base font-semibold text-white">
+          {loadError === 'gone' ? 'Rezept wurde gelöscht' : loadError}
+        </p>
+        {loadError === 'gone' ? (
+          <Link href="/recipes" className="inline-flex items-center justify-center min-h-[44px] px-4 rounded-lg bg-[#1c1c1c] border border-[#2a2a2a] text-sm text-ink-soft hover:text-white">
+            Zu den Rezepten
+          </Link>
+        ) : (
+          <button type="button" onClick={loadRecipe}
+            className="min-h-[44px] px-4 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-semibold">
+            Erneut laden
+          </button>
+        )}
+      </div>
+    </div>
+  )
 
   if (loading) return (
     <div className="space-y-4">
@@ -294,18 +344,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
               rating={recipe.rating}
               size={20}
               editable
-              onChange={async (val) => {
-                const newRating = val === 0 ? null : val
-                setRecipe(r => ({ ...r, rating: newRating }))
-                setMealieError(null)
-                const res = await fetch(`/api/recipes/${recipe.id}`, {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ rating: newRating }),
-                })
-                const data = await res.json()
-                if (data.mealie_error) setMealieError(data.mealie_error)
-              }}
+              onChange={rate}
             />
             {recipe.rating === 1 && (
               <span className="text-xs text-red-300 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded-full">Nicht nochmal</span>
@@ -313,6 +352,10 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
           </>
         )}
       </div>
+
+      {ratingError && (
+        <p role="alert" className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{ratingError}</p>
+      )}
 
       {mealieError && (
         <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
