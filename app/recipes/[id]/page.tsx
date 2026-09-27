@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, use } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import Link from 'next/link'
-import { ArrowLeft, Clock, Users, ExternalLink, Edit2, Trash2, Save, X, Plus, CookingPot, Zap, ChefHat, CalendarPlus } from 'lucide-react'
+import { ArrowLeft, Clock, Users, ExternalLink, Pencil, Trash2, Save, X, Plus, CookingPot, Zap, ChefHat, CalendarPlus, MoreHorizontal } from 'lucide-react'
 import { StarRating } from '@/components/StarRating'
 import CookMode, { FewIngredientsHint, readCookProgress } from '@/components/CookMode'
 import { track } from '@/lib/track'
@@ -30,7 +30,7 @@ type Recipe = {
 const EFFORT_OPTIONS: { value: Effort; label: string }[] = [
   { value: 'quick', label: 'Schnell' },
   { value: 'involved', label: 'Aufwendig' },
-  { value: null, label: '–' },
+  { value: null, label: 'Keine Angabe' },
 ]
 
 export default function RecipeDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -52,6 +52,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
   const [cooking, setCooking] = useState(false)
   const [planning, setPlanning] = useState(false)
   const services = useServices()
+  const [menuOpen, setMenuOpen] = useState(false)
   const [effortError, setEffortError] = useState(false)
   // Load failure: 'gone' = recipe deleted (404), otherwise the error text
   const [loadError, setLoadError] = useState<'gone' | string>('')
@@ -215,6 +216,9 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
     setTagInput('')
   }
 
+  // Without any amounts the column would only be empty space
+  const hasAmounts = recipe.ingredients.some(i => (i.amount || i.unit || '').trim())
+
   const mealieUrl = recipe.mealie_slug && settings.mealie_url
     ? `${settings.mealie_url}/g/home/r/${recipe.mealie_slug}`
     : null
@@ -269,15 +273,29 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
           )}
           {!isNew && !editing && (
             <>
-              <button onClick={() => setEditing(true)}
-                className="relative after:absolute after:-inset-y-1.5 after:inset-x-0 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] text-ink-muted hover:text-white text-xs transition-all border border-[#2a2a2a]">
-                <Edit2 size={12} />
-                Bearbeiten
+              <button onClick={() => setEditing(true)} aria-label="Bearbeiten" title="Bearbeiten"
+                className="relative after:absolute after:-inset-0.5 w-10 h-10 flex items-center justify-center rounded-lg bg-[#1c1c1c] hover:bg-[#252525] text-ink-soft hover:text-white transition-all border border-[#2a2a2a]">
+                <Pencil size={16} />
               </button>
-              <button onClick={del} title="Rezept löschen"
-                className="relative after:absolute after:-inset-y-0.5 after:inset-x-0 min-h-[40px] flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs transition-all border border-red-500/20">
-                <Trash2 size={12} /> Löschen
-              </button>
+              {/* Rare and destructive: behind ⋯ */}
+              <div className="relative">
+                <button onClick={() => setMenuOpen(o => !o)} aria-label="Weitere Aktionen" aria-haspopup="menu" aria-expanded={menuOpen}
+                  className="relative after:absolute after:-inset-0.5 w-10 h-10 flex items-center justify-center rounded-lg bg-[#1c1c1c] hover:bg-[#252525] text-ink-soft hover:text-white transition-all border border-[#2a2a2a]">
+                  <MoreHorizontal size={18} />
+                </button>
+                {menuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} aria-hidden="true" />
+                    <div role="menu" onKeyDown={e => { if (e.key === 'Escape') setMenuOpen(false) }}
+                      className="absolute right-0 top-12 z-50 w-48 py-1 rounded-xl bg-[#1a1a1a] border border-[#2e2e2e] shadow-2xl animate-slide-up">
+                      <button role="menuitem" autoFocus onClick={() => { setMenuOpen(false); del() }}
+                        className="w-full min-h-[44px] flex items-center gap-3 px-4 text-sm text-red-300 hover:bg-[#252525]">
+                        <Trash2 size={16} /> Löschen
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             </>
           )}
           {editing && (
@@ -431,9 +449,8 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
                     type="button"
                     role="radio"
                     aria-checked={active}
-                    aria-label={opt.value === null ? 'Kein Aufwand festgelegt' : opt.label}
                     onClick={() => setEffort(opt.value)}
-                    className={`${opt.value === null ? 'w-11 flex-none' : 'flex-1'} flex items-center justify-center gap-1 h-9 rounded-lg text-sm font-medium transition-all ${
+                    className={`flex-1 min-w-0 flex items-center justify-center gap-1 min-h-[40px] px-1 rounded-lg text-sm font-medium leading-tight transition-all ${
                       active
                         ? opt.value === 'quick' ? 'bg-green-500/15 text-green-300'
                         : opt.value === 'involved' ? 'bg-amber-500/15 text-amber-300'
@@ -441,8 +458,8 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
                         : 'text-ink-muted'
                     }`}
                   >
-                    {opt.value === 'quick' && <Zap size={13} />}
-                    {opt.value === 'involved' && <ChefHat size={13} />}
+                    {opt.value === 'quick' && <Zap size={13} className="flex-shrink-0" />}
+                    {opt.value === 'involved' && <ChefHat size={13} className="flex-shrink-0" />}
                     {opt.label}
                   </button>
                 )
@@ -540,9 +557,12 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
               </div>
             ) : (
               <div key={i} className="flex items-baseline gap-2 text-sm">
-                <span className="text-primary font-medium min-w-[3rem] text-right">
-                  {[ing.amount, ing.unit].filter(Boolean).join(' ') || '—'}
-                </span>
+                {hasAmounts && (
+                  <span className="text-primary font-medium min-w-[3rem] text-right">
+                    {[ing.amount, ing.unit].filter(Boolean).join(' ')}
+                  </span>
+                )}
+                {!hasAmounts && <span aria-hidden className="text-ink-hint">•</span>}
                 <span className="text-white">{ing.name}</span>
                 {ing.note && <span className="text-ink-hint text-xs">({ing.note})</span>}
               </div>
@@ -595,16 +615,18 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
       </div>
 
       {/* Mealie link (editing, local recipes) */}
-      {editing && recipe.source === 'local' && (
+      {editing && recipe.source === 'local' && services?.mealie && (
         <div className="border-t border-[#1e1e1e] pt-4">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-hint mb-2">Mit Mealie verknüpfen (optional)</h2>
+          <label htmlFor="mealie-slug" className="block text-xs font-semibold uppercase tracking-wider text-ink-hint mb-2">Mealie-Link (optional)</label>
           <input
+            id="mealie-slug"
             value={recipe.mealie_slug || ''}
             onChange={e => setRecipe(r => ({ ...r, mealie_slug: e.target.value || null }))}
-            placeholder="recipe-slug"
-            aria-label="Mealie-Slug"
+            placeholder="z. B. linsen-mit-spaetzle"
+            autoCapitalize="off"
+            autoCorrect="off"
           />
-          <p className="text-xs text-ink-hint mt-1">Mealie-Slug eintragen, um das Rezept in Mealie zu öffnen</p>
+          <p className="text-xs text-ink-hint mt-1">Der letzte Teil der Adresse des Rezepts in Mealie. Dann öffnet der Knopf „Mealie“ es dort.</p>
         </div>
       )}
 
