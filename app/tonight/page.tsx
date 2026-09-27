@@ -12,6 +12,11 @@ import { shiftPlan, undoPlanChange } from '@/lib/planApi'
 import { track } from '@/lib/track'
 import { apiCall } from '@/lib/apiCall'
 import { inDinnerCategory, pickSuggestions as pickFrom } from '@/lib/suggest'
+import { useCurrentUser } from '@/components/UserProvider'
+import { useRefreshOnResume } from '@/lib/useRefreshOnResume'
+import {
+  partnerChanges, changedBy, responseTime, addMarks, dropMarks, loadMarks, saveMarks, loadLastSeen, saveLastSeen,
+} from '@/lib/partnerChanges'
 
 type Effort = 'quick' | 'involved' | null
 type Recipe = {
@@ -20,7 +25,8 @@ type Recipe = {
 }
 type MealEntry = {
   id: string; date: string; recipe_id: string | null; custom_meal_name: string | null
-  servings: number; suggested_by?: string; recipe?: Recipe
+  servings: number; suggested_by: string; recipe?: Recipe
+  created_at?: string; updated_at?: string; updated_by?: string
 }
 
 const ISO = 'yyyy-MM-dd'
@@ -81,7 +87,11 @@ export default function TonightPage() {
   const [recipes, setRecipes] = useState<Recipe[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
-  const [currentUser, setCurrentUser] = useState('')
+  const { user: currentUser, users, askUser } = useCurrentUser()
+  // Tonight's dinner was planned or changed by the partner since the last look
+  const [tonightNew, setTonightNew] = useState(false)
+  // Server time of the last plan load, the "last seen" for that check
+  const loadedAt = useRef(0)
   const [addingDate, setAddingDate] = useState<string | null>(null)
   const [planning, setPlanning] = useState<string | null>(null)
   const [suggestions, setSuggestions] = useState<Recipe[]>([])
@@ -106,6 +116,7 @@ export default function TonightPage() {
     const res = await fetch(`/api/meal-plan?start=${start}&end=${end}`)
     if (!res.ok) throw new Error('meal-plan')
     const data: MealEntry[] = await res.json()
+    loadedAt.current = responseTime(res)
     setEntries(data)
     return data
   }, [])
@@ -114,6 +125,7 @@ export default function TonightPage() {
     let cancelled = false
     ;(async () => {
       try {
+        // Who is using the phone comes from UserProvider, never from a default profile
         const [entryData, recipeRes, settingsRes] = await Promise.all([
           loadEntries(),
           fetch('/api/recipes'),
@@ -123,10 +135,6 @@ export default function TonightPage() {
         const recipeData: Recipe[] = await recipeRes.json()
         const settings = settingsRes.ok ? await settingsRes.json() : {}
         if (cancelled) return
-
-        let user = ''
-        try { user = localStorage.getItem('vommeal_user') || '' } catch { /* storage unavailable */ }
-        setCurrentUser(user || settings.user1_name || settings.user2_name || '')
 
         setRecipes(recipeData)
         const category = typeof settings.dinner_category === 'string' ? settings.dinner_category : ''
@@ -150,6 +158,61 @@ export default function TonightPage() {
     })()
     return () => { cancelled = true }
   }, [loadEntries])
+
+  // Did the partner plan or change tonight's dinner since this phone last
+  // looked? Then a hint and a "neu" badge on the card until the page is left.
+  const today = format(new Date(), ISO)
+  const todayEntry = entries.find(e => e.date === today)
+  const checkTonight = useCallback((list: MealEntry[]) => {
+    if (!currentUser || !loadedAt.current) return
+    const key = `vommeal_lastseen_tonight_${currentUser}`
+    const lastSeen = loadLastSeen(key)
+    const tonight = list.find(e => e.date === format(new Date(), ISO))
+    const { planned, changed } = partnerChanges(tonight ? [tonight] : [], currentUser, lastSeen)
+    const fresh = planned[0] ?? changed[0]
+    let marks = loadMarks(currentUser)
+    if (fresh) {
+      marks = addMarks(marks, [fresh.id], Date.now())
+      saveMarks(currentUser, marks)
+      const name = fresh.recipe?.name || fresh.custom_meal_name || 'etwas'
+      showToast(`${changedBy(fresh)} hat für heute Abend ${name} geplant`, { duration: 4000 })
+    }
+    setTonightNew(!!tonight && !!marks[tonight.id])
+    saveLastSeen(key, loadedAt.current)
+  }, [currentUser])
+
+  useEffect(() => {
+    if (!loading) checkTonight(entries)
+    // Once per load and person; later loads check themselves (see resume)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, checkTonight])
+
+  // Leaving the page counts as having seen tonight's "neu"
+  const todayId = todayEntry?.id
+  useEffect(() => {
+    if (!currentUser || !todayId) return
+    const markSeen = () => saveMarks(currentUser, dropMarks(loadMarks(currentUser), [todayId]))
+    const onHide = () => {
+      if (document.visibilityState !== 'hidden') return
+      markSeen()
+      setTonightNew(false)
+    }
+    document.addEventListener('visibilitychange', onHide)
+    return () => { document.removeEventListener('visibilitychange', onHide); markSeen() }
+  }, [currentUser, todayId])
+
+  // Back in the app: refresh quietly, unless something is being saved
+  useRefreshOnResume(() => {
+    if (planning || postpone === 'busy') return
+    loadEntries().then(checkTonight).catch(() => {})
+  })
+
+  // Nothing is written without knowing who plans (asks "Wer bist du?" first)
+  const ensureUser = () => {
+    if (currentUser || users.length === 0) return true
+    askUser()
+    return false
+  }
 
   const recipeById = new Map(recipes.map(r => [r.id, r]))
   const fullRecipe = (e: MealEntry): Recipe | undefined =>
@@ -176,6 +239,7 @@ export default function TonightPage() {
     key: string,
     replaceId?: string,
   ): Promise<boolean> => {
+    if (!ensureUser()) return false
     setPlanning(key)
     try {
       const res = await apiCall<MealEntry>('/api/meal-plan', {
@@ -230,6 +294,7 @@ export default function TonightPage() {
   // Today's dinner (and the evenings right after it) move one day later;
   // tonight becomes "Auswärts essen" or stays free.
   const postponeToday = async (eatingOut: boolean) => {
+    if (!ensureUser()) return
     setPostpone('busy')
     try {
       const res = await shiftPlan({ from: format(new Date(), ISO), days: 1, fill: eatingOut ? EATING_OUT : null, suggested_by: currentUser })
@@ -244,7 +309,7 @@ export default function TonightPage() {
             if (toastTimer.current) clearTimeout(toastTimer.current)
             setToast(null)
             try {
-              await undoPlanChange(res.moves, res.filled?.id)
+              await undoPlanChange(res.moves, res.filled?.id, currentUser)
               showToast('Zurückgenommen')
             } catch (e) {
               showToast(e instanceof Error ? e.message : 'Konnte nicht zurückgenommen werden')
@@ -309,8 +374,6 @@ export default function TonightPage() {
     })
   }
 
-  const today = format(new Date(), ISO)
-  const todayEntry = entries.find(e => e.date === today)
   const upcomingEntries = entries.filter(e => e.date > today)
 
   if (loading) {
@@ -410,7 +473,15 @@ export default function TonightPage() {
             <div className="pt-8 text-center text-6xl" aria-hidden>{todayEmoji}</div>
           ) : null}
           <div className={`p-5 ${todayRecipe?.image_url ? '-mt-16 relative' : ''} ${todayEmoji ? 'text-center' : ''}`}>
-            <p className="text-xs font-semibold uppercase tracking-widest text-primary mb-2">Heute Abend</p>
+            <p className="text-xs font-semibold uppercase tracking-widest text-primary mb-2">
+              Heute Abend
+              {tonightNew && (
+                <span title={`Neu von ${changedBy(todayEntry)}`}
+                  className="ml-2 inline-flex items-center gap-1 align-middle px-1.5 rounded-full bg-primary/15 text-[10px] font-semibold normal-case tracking-normal leading-4">
+                  <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-primary" />neu
+                </span>
+              )}
+            </p>
             <p className="text-2xl font-bold text-white leading-tight mb-2">
               {todayEntry.recipe_id ? todayRecipe?.name : todayEntry.custom_meal_name}
             </p>

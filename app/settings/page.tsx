@@ -16,6 +16,8 @@ import { NotificationsSection, parseServiceList } from '@/components/settings/No
 import type { NotifySettings, NotifyTextDefaults } from '@/components/settings/NotificationsSection'
 import { UsageSection } from '@/components/settings/UsageSection'
 import { HaDashboardSection } from '@/components/settings/HaDashboardSection'
+import { ThisPhone } from '@/components/settings/ThisPhone'
+import { useCurrentUser } from '@/components/UserProvider'
 
 type Settings = {
   mealie_url: string; mealie_token: string; has_token: boolean
@@ -86,6 +88,7 @@ export default function SettingsPage() {
   const [errors, setErrors] = useState<Partial<Record<SectionKey, string>>>({})
   const [open, setOpen] = useState<Set<string>>(new Set(['profiles']))
   const [adminToken, setAdminToken] = useState('')
+  const { reloadUsers } = useCurrentUser()
 
   const toggle = (id: string) => setOpen(prev => {
     const next = new Set(prev)
@@ -222,6 +225,8 @@ export default function SettingsPage() {
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
     reloadSettings()
+    // Renamed profiles: this phone asks again if its person is gone
+    if (section === 'profiles') reloadUsers()
   }
 
   const saveHa = async () => {
@@ -297,6 +302,7 @@ export default function SettingsPage() {
         id="profiles" icon="👥" title="Profile" open={open.has('profiles')} onToggle={toggle}
         meta={profileNames.length > 0 && <MetaText>{profileNames.join(' & ')}</MetaText>}
       >
+        <ThisPhone />
         {/* Same ordered list the plan page uses, so colours match there */}
         <div className="space-y-3">
           {[

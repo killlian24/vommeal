@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import Navigation from '@/components/Navigation'
+import { UserProvider } from '@/components/UserProvider'
 
 export const metadata: Metadata = {
   title: 'Vommeal',
@@ -35,14 +36,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="mobile-web-app-capable" content="yes" />
       </head>
       <body className="min-h-screen flex flex-col">
-        <div className="flex flex-col min-h-screen md:flex-row overflow-x-hidden">
-          <Navigation />
-          <main className="flex-1 md:ml-56 pb-24 md:pb-0 min-w-0">
-            <div className="max-w-4xl mx-auto px-4 py-6 page-enter w-full">
-              {children}
-            </div>
-          </main>
-        </div>
+        <UserProvider>
+          <div className="flex flex-col min-h-screen md:flex-row overflow-x-hidden">
+            <Navigation />
+            <main className="flex-1 md:ml-56 pb-24 md:pb-0 min-w-0">
+              <div className="max-w-4xl mx-auto px-4 py-6 page-enter w-full">
+                {children}
+              </div>
+            </main>
+          </div>
+        </UserProvider>
       </body>
     </html>
   )

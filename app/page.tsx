@@ -4,19 +4,25 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { format, startOfWeek, addDays, isToday, parseISO, getDay } from 'date-fns'
 import { de } from 'date-fns/locale'
 import {
-  ChevronLeft, ChevronRight, ChevronDown, Plus, X, Search, ShoppingCart, RefreshCw,
+  ChevronLeft, ChevronRight, ChevronDown, Plus, X, Search, ShoppingCart,
   Zap, Dices, Heart, XCircle, ArrowLeftRight, ArrowRight, CalendarClock,
 } from 'lucide-react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { StarRating } from '@/components/StarRating'
-import { Avatar, avatarColor } from '@/components/Avatar'
+import { Avatar } from '@/components/Avatar'
+import { useCurrentUser } from '@/components/UserProvider'
 import { track } from '@/lib/track'
 import { QUICK_MEALS, EATING_OUT, quickMealEmoji } from '@/lib/quickMeals'
 import { planMove, applyMoves, type PlanMove } from '@/lib/planMoves'
 import { shiftPlan, movePlanEntry, undoPlanChange } from '@/lib/planApi'
 import { apiCall, NETWORK_ERROR } from '@/lib/apiCall'
 import { useLongPressDrag, type DragDrop } from '@/lib/useLongPressDrag'
+import { useRefreshOnResume } from '@/lib/useRefreshOnResume'
+import {
+  partnerChanges, partnerHint, responseTime, addMarks, dropMarks, loadMarks, saveMarks,
+  loadLastSeen, saveLastSeen, type Marks,
+} from '@/lib/partnerChanges'
 import { MoveSheet } from '@/components/MoveSheet'
 
 type Recipe = {
@@ -30,6 +36,8 @@ type MealEntry = {
   servings: number; notes: string
   status: 'suggested' | 'approved'; suggested_by: string
   created_at?: string
+  updated_at?: string
+  updated_by?: string
   recipe?: Recipe
 }
 type Toast = { msg: string; action?: { label: string; onClick: () => void } }
@@ -67,15 +75,6 @@ const normName = (s: string) => s.normalize('NFC').trim().replace(/\s+/g, ' ').t
 const abende = (n: number) => `${n} ${n === 1 ? 'Abend' : 'Abende'}`
 const errorText = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback)
 
-// SQLite stores created_at as "YYYY-MM-DD HH:MM:SS" in UTC; the API may also
-// return a full ISO string for freshly created rows. Normalise to a timestamp.
-function parseCreatedAt(value: string | undefined): number {
-  if (!value) return 0
-  const iso = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value) ? value.replace(' ', 'T') + 'Z' : value
-  const t = Date.parse(iso)
-  return Number.isNaN(t) ? 0 : t
-}
-
 // Deterministic shuffle seeded by a string — both partners get the same cards per day
 function seededShuffle<T>(arr: T[], seed: string): T[] {
   const copy = [...arr]
@@ -89,10 +88,14 @@ function seededShuffle<T>(arr: T[], seed: string): T[] {
   return copy
 }
 
-async function fetchRange(start: string, end: string): Promise<MealEntry[]> {
+async function fetchRangeAt(start: string, end: string): Promise<{ data: MealEntry[]; at: number }> {
   const res = await fetch(`/api/meal-plan?start=${start}&end=${end}`)
   if (!res.ok) throw new Error('meal plan load failed')
-  return res.json()
+  return { data: await res.json(), at: responseTime(res) }
+}
+
+async function fetchRange(start: string, end: string): Promise<MealEntry[]> {
+  return (await fetchRangeAt(start, end)).data
 }
 
 // Recipe image, quick-meal emoji or a plate as fallback
@@ -140,9 +143,9 @@ export default function PlanPage() {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [earlierOpen, setEarlierOpen] = useState(false)
   const [autofilling, setAutofilling] = useState(false)
-  const [currentUser, setCurrentUser] = useState('')
-  const [users, setUsers] = useState<string[]>([])
-  const [showUserPicker, setShowUserPicker] = useState(false)
+  const { user: currentUser, users, partner, askUser } = useCurrentUser()
+  // Evenings the partner planned or changed since this phone last looked ("neu")
+  const [marks, setMarks] = useState<Marks>({})
   // Fun mode ("Swipen")
   const [funMode, setFunMode] = useState(false)
   const [funDayPicker, setFunDayPicker] = useState(false)
@@ -157,6 +160,11 @@ export default function PlanPage() {
   const [clearing, setClearing] = useState(false)
   // How next week was opened on load; tracked once the profile is known
   const pendingOpenSource = useRef<string | null>(null)
+  // Week whose cards are on screen: skeletons only when another week loads
+  const shownWeek = useRef<string | null>(null)
+  // Optimistic card changes still on their way: background refreshes must
+  // not paint the older server state over them.
+  const optimistic = useRef({ pending: 0, gen: 0 })
 
   const now = new Date()
   const todayStr = ds(now)
@@ -189,7 +197,7 @@ export default function PlanPage() {
     if (source && ds(monday) === nextWeekStr) track('week_next_open', { source })
   }
 
-  // Load users + resolve identity from #hash or localStorage; honour ?week=next
+  // Load recipes; honour ?week=next (who is using the phone: UserProvider)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     if (params.get('week') === 'next') {
@@ -203,31 +211,8 @@ export default function PlanPage() {
 
     const loadInitial = async () => {
       try {
-        const [settingsRes, recipesRes] = await Promise.all([
-          fetch('/api/settings'),
-          fetch('/api/recipes'),
-        ])
-        if (!settingsRes.ok || !recipesRes.ok) throw new Error('initial load failed')
-
-        const s = await settingsRes.json()
-        const u = [s.user1_name, s.user2_name].filter(Boolean)
-        setUsers(u)
-
-        // Hash takes priority: /#susi or /#kilian
-        const hash = window.location.hash.replace('#', '').trim().toLowerCase()
-        const fromHash = u.find((name: string) => name.toLowerCase() === hash)
-        if (fromHash) {
-          setCurrentUser(fromHash)
-          localStorage.setItem('vommeal_user', fromHash)
-        } else {
-          const stored = localStorage.getItem('vommeal_user')
-          if (stored && u.includes(stored)) {
-            setCurrentUser(stored)
-          } else if (u.length > 0) {
-            setShowUserPicker(true)
-          }
-        }
-
+        const recipesRes = await fetch('/api/recipes')
+        if (!recipesRes.ok) throw new Error('initial load failed')
         setRecipes(await recipesRes.json())
       } catch {
         setLoadError('Vommeal konnte nicht geladen werden. Bitte Verbindung prüfen und neu laden.')
@@ -237,38 +222,42 @@ export default function PlanPage() {
     loadInitial()
   }, [])
 
-  const selectUser = (name: string) => {
-    setCurrentUser(name)
-    localStorage.setItem('vommeal_user', name)
-    setShowUserPicker(false)
+  // Nothing is written without knowing who plans (asks "Wer bist du?" first).
+  const ensureUser = () => {
+    if (currentUser || users.length === 0) return true
+    askUser()
+    return false
   }
 
-  const switchUser = () => {
-    const other = users.find(u => u !== currentUser)
-    if (other) selectUser(other)
-  }
-
-  const loadEntries = useCallback(async (): Promise<MealEntry[] | null> => {
-    setLoading(true)
-    setLoadError('')
+  // Skeletons only for the first load of a week; afterwards (after an action
+  // or when coming back to the app) the cards update in place.
+  // `background`: a refresh nobody asked for; it never shows errors and
+  // drops its result when an optimistic change happened meanwhile.
+  const loadEntries = useCallback(async (opts: { background?: boolean } = {}): Promise<MealEntry[] | null> => {
+    const firstLoad = shownWeek.current !== startStr
+    if (firstLoad) { setLoading(true); setLoadError('') }
+    const gen = optimistic.current.gen
     try {
       const data = await fetchRange(startStr, endStr)
+      if (opts.background && (optimistic.current.pending > 0 || optimistic.current.gen !== gen)) return null
       setEntries(data)
+      shownWeek.current = startStr
+      setLoadError('')
       return data
     } catch {
-      setLoadError('Diese Woche konnte nicht geladen werden.')
+      if (firstLoad) setLoadError('Diese Woche konnte nicht geladen werden.')
       return null
     } finally {
-      setLoading(false)
+      if (firstLoad) setLoading(false)
     }
   }, [startStr, endStr])
 
-  const loadNominations = useCallback(async () => {
+  const loadNominations = useCallback(async (opts: { background?: boolean } = {}) => {
     try {
       const res = await fetch(`/api/nominations?start=${startStr}&end=${endStr}`)
       if (res.ok) setNominations(await res.json())
     } catch {
-      setLoadError('Stimmen konnten nicht geladen werden.')
+      if (!opts.background) setLoadError('Stimmen konnten nicht geladen werden.')
     }
   }, [startStr, endStr])
 
@@ -286,6 +275,10 @@ export default function PlanPage() {
     return data
   }, [loadEntries, loadToday])
 
+  // Around optimistic card changes (remove, move)
+  const beginOptimistic = () => { optimistic.current.pending++; optimistic.current.gen++ }
+  const endOptimistic = () => { optimistic.current.pending = Math.max(0, optimistic.current.pending - 1) }
+
   useEffect(() => { loadEntries(); loadNominations() }, [loadEntries, loadNominations])
   useEffect(() => { loadToday() }, [loadToday])
 
@@ -298,30 +291,65 @@ export default function PlanPage() {
       .catch(() => setNextWeekPlanned(null))
   }, [showPlanNextWeekCard, entries])
 
-  // "New since last visit": evenings the partner planned (this week or next)
-  // since this user last opened the plan. Runs once per user.
+  // "Neu": evenings the partner planned or changed (this week or next) since
+  // this phone last looked. Runs when the plan opens and when the app comes
+  // back; marked cards keep a "neu" badge until seen or for 24 h.
+  const checkPartnerChanges = useCallback(async () => {
+    if (!currentUser) return
+    const key = `vommeal_lastseen_${currentUser}`
+    const lastSeen = loadLastSeen(key)
+    const monday = mondayOf(new Date())
+    try {
+      const { data, at } = await fetchRangeAt(ds(new Date()), ds(addDays(monday, 13)))
+      const { planned, changed } = partnerChanges(data, currentUser, lastSeen)
+      const fresh = [...planned, ...changed].map(e => e.id)
+      const next = addMarks(loadMarks(currentUser), fresh, Date.now())
+      saveMarks(currentUser, next)
+      setMarks(next)
+      const hint = partnerHint(planned, changed)
+      if (hint) showToast(hint, { duration: 4000 })
+      saveLastSeen(key, at)
+    } catch { /* offline: try again on the next return */ }
+  }, [currentUser])
+
   useEffect(() => {
     if (!currentUser) return
     if (pendingOpenSource.current) {
       track('week_next_open', { source: pendingOpenSource.current })
       pendingOpenSource.current = null
     }
-    const key = `vommeal_lastseen_${currentUser}`
-    let lastSeen = 0
-    try { lastSeen = Date.parse(localStorage.getItem(key) || '') || 0 } catch { /* storage unavailable */ }
-    const monday = mondayOf(new Date())
-    fetchRange(ds(new Date()), ds(addDays(monday, 13)))
-      .then(data => {
-        const fresh = data.filter(e =>
-          e.suggested_by && e.suggested_by !== currentUser && parseCreatedAt(e.created_at) > lastSeen
-        )
-        if (lastSeen > 0 && fresh.length > 0) {
-          showToast(`${fresh[0].suggested_by} hat ${abende(fresh.length)} geplant`, { duration: 4000 })
-        }
-        try { localStorage.setItem(key, new Date().toISOString()) } catch { /* storage unavailable */ }
-      })
-      .catch(() => {})
+    setMarks(loadMarks(currentUser))
+    checkPartnerChanges()
+  }, [currentUser, checkPartnerChanges])
+
+  // Leaving the page (other app, other tab) counts as having seen the
+  // cards of the week on screen: their "neu" badges go.
+  const entriesRef = useRef(entries)
+  entriesRef.current = entries
+  useEffect(() => {
+    if (!currentUser) return
+    const markSeen = () => {
+      const ids = entriesRef.current.map(e => e.id)
+      const next = dropMarks(loadMarks(currentUser), ids)
+      saveMarks(currentUser, next)
+    }
+    const onHide = () => {
+      if (document.visibilityState !== 'hidden') return
+      markSeen()
+      setMarks(loadMarks(currentUser))
+    }
+    document.addEventListener('visibilitychange', onHide)
+    return () => { document.removeEventListener('visibilitychange', onHide); markSeen() }
   }, [currentUser])
+
+  // Back in the app: the partner may have planned meanwhile. Updates in
+  // place, open sheets stay open.
+  useRefreshOnResume(() => {
+    loadEntries({ background: true })
+    loadToday()
+    loadNominations({ background: true })
+    checkPartnerChanges()
+  })
 
   const getEntry = (date: Date) => entries.find(e => e.date === ds(date))
 
@@ -333,6 +361,7 @@ export default function PlanPage() {
   // ---- Picker -------------------------------------------------------------
 
   const openPicker = async (date: string, replaceId?: string) => {
+    if (!ensureUser()) return
     setPicker({ date, replaceId })
     setSearch(''); setCustomName(''); setAddLeftovers(false); setNextDayFree(false); setKeepOld(null)
     const next = ds(addDays(parseISO(date), 1))
@@ -429,7 +458,7 @@ export default function PlanPage() {
         // The shift just freed this evening; anything there now came from elsewhere.
         const r = await postEntry({ date, recipe_id: opts.recipeId || null, custom_meal_name: opts.recipeId ? null : name, expect_empty: true })
         if (!r.ok) {
-          await undoPlanChange(res.moves).catch(() => {})
+          await undoPlanChange(res.moves, null, currentUser).catch(() => {})
           const current = conflictEntry(r)
           throw new Error(current ? conflictText(current) : r.error)
         }
@@ -498,7 +527,9 @@ export default function PlanPage() {
     const removed = entries.find(e => e.id === id)
     if (!removed) return
     setEntries(prev => prev.filter(e => e.id !== id))
+    beginOptimistic()
     const res = await apiCall(`/api/meal-plan/${id}`, { method: 'DELETE', fallback: 'Konnte nicht entfernt werden' })
+    endOptimistic()
     if (!res.ok) {
       // 404: the partner removed or replaced it already; show the fresh state.
       if (res.status === 404) { refresh(); showToast('Wurde inzwischen geändert'); return }
@@ -544,7 +575,7 @@ export default function PlanPage() {
         onClick: async () => {
           hideToast()
           try {
-            await undoPlanChange(moves, createdId)
+            await undoPlanChange(moves, createdId, currentUser)
             showToast('Zurückgenommen')
           } catch (e) {
             showToast(errorText(e, 'Konnte nicht zurückgenommen werden'))
@@ -579,13 +610,16 @@ export default function PlanPage() {
     const local = planMove(entries, id, to)
     if (local.ok) setEntries(prev => applyMoves(prev, local.moves))
     setMoving(true)
+    beginOptimistic()
     try {
-      const { moves } = await movePlanEntry(id, to)
+      const { moves } = await movePlanEntry(id, to, currentUser)
+      endOptimistic()
       const swap = moves.length > 1
       track(via === 'drag' ? 'plan_drag' : 'plan_move', { swap })
       setMoveFor(null)
       afterPlanChange(moves, null, swap ? 'Getauscht' : 'Verschoben')
     } catch (e) {
+      endOptimistic()
       showToast(errorText(e, 'Konnte nicht verschoben werden'))
       refresh()
     } finally {
@@ -599,7 +633,7 @@ export default function PlanPage() {
   })
 
   const autofillWeek = async () => {
-    if (!currentUser) { setShowUserPicker(true); return }
+    if (!currentUser) { askUser(); return }
     setAutofilling(true)
     const before = new Set(entries.map(e => e.id))
     try {
@@ -720,7 +754,7 @@ export default function PlanPage() {
     seededShuffle(recipes, dateStr).slice(0, CARDS_PER_DAY)
 
   const openFunMode = () => {
-    if (!currentUser) { setShowUserPicker(true); return }
+    if (!currentUser) { askUser(); return }
     // Pre-select empty days that are still ahead of us
     setFunSelectedDates(new Set(freeUpcoming.map(ds)))
     setFunDayPicker(true)
@@ -801,50 +835,11 @@ export default function PlanPage() {
     r.name.toLowerCase().includes(search.toLowerCase())
   )
 
-  const partner = users.find(u => u !== currentUser) || 'Partner'
   const title = isCurrentWeek ? 'Diese Woche' : isNextWeek ? 'Nächste Woche' : rangeLabel(weekStart, addDays(weekStart, 6))
   const subtitle = isCurrentWeek || isNextWeek ? rangeLabel(weekStart, addDays(weekStart, 6)) : `KW ${fmt(weekStart, 'I')}`
 
   return (
     <div className="space-y-5">
-      {/* Who are you? — full-screen picker */}
-      {showUserPicker && users.length > 0 && (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#0a0a0a]">
-          <div className="absolute inset-0 pointer-events-none" style={{
-            background: 'radial-gradient(ellipse 60% 40% at 50% 50%, rgba(249,115,22,0.08) 0%, transparent 70%)'
-          }} />
-
-          <div className="relative z-10 flex flex-col items-center px-6 w-full max-w-sm animate-slide-up">
-            <div className="w-12 h-12 rounded-2xl bg-primary flex items-center justify-center mb-8 shadow-lg shadow-primary/20">
-              <span className="text-xl">🍽️</span>
-            </div>
-
-            <h1 className="text-2xl font-bold text-white mb-1 tracking-tight">Wer bist du?</h1>
-            <p className="text-sm text-ink-muted mb-10 text-center">
-              Tipp: Lesezeichen auf <span className="text-ink-soft font-mono">/#deinname</span> überspringt diese Frage
-            </p>
-
-            <div className="w-full space-y-3">
-              {users.map(u => {
-                const color = avatarColor(u, users)
-                return (
-                  <button key={u} onClick={() => selectUser(u)}
-                    className="w-full group relative flex items-center gap-4 px-5 py-4 rounded-2xl transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
-                    style={{ background: `${color}1f`, border: `1px solid ${color}40`, boxShadow: `0 0 24px ${color}26` }}>
-                    <Avatar name={u} users={users} size="xl" />
-                    <div className="flex-1 text-left">
-                      <p className="text-base font-semibold text-white">{u}</p>
-                      <p className="text-xs text-ink-muted mt-0.5">Weiter als {u}</p>
-                    </div>
-                    <span className="text-ink-muted group-hover:text-white transition-colors text-lg">→</span>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
       {loadError && (
         <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
           {loadError}
@@ -880,7 +875,11 @@ export default function PlanPage() {
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold text-white truncate">{title}</h1>
-          <p className="text-sm text-ink-muted mt-0.5">{subtitle}</p>
+          <p className="flex items-center gap-1.5 text-sm text-ink-muted mt-0.5">
+            {subtitle}
+            {/* Who plans on this phone; changed in Einstellungen */}
+            {currentUser && <Avatar name={currentUser} users={users} size="xs" />}
+          </p>
         </div>
         <div className="flex items-center flex-shrink-0">
           <button onClick={() => goToWeek(addDays(weekStart, -7), 'nav')} aria-label="Vorherige Woche"
@@ -910,14 +909,6 @@ export default function PlanPage() {
           </button>
         )}
         <div className="flex items-center gap-2">
-          {currentUser && (
-            <button onClick={switchUser} title={`Zu ${partner} wechseln`} aria-label={`Angemeldet als ${currentUser}, zu ${partner} wechseln`}
-              className="min-h-[40px] flex items-center gap-1.5 px-2.5 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] transition-all">
-              <Avatar name={currentUser} users={users} />
-              <span className="text-sm text-ink-soft">{currentUser}</span>
-              <RefreshCw size={12} className="text-ink-hint" />
-            </button>
-          )}
           <div className="flex-1" />
           <button onClick={openFunMode} className={secondaryBtn}>
             <Dices size={16} /> Swipen
@@ -1001,6 +992,12 @@ export default function PlanPage() {
                   <div className="flex-1 min-w-0">
                     <p className={`text-xs font-semibold ${today ? 'text-primary' : 'text-ink-muted'}`}>
                       {dayLabel} <span className="font-normal text-ink-hint">{fmt(day, 'd.M.')}</span>
+                      {marks[entry.id] && (
+                        <span title={`Neu von ${entry.updated_by || entry.suggested_by}`}
+                          className="ml-1.5 inline-flex items-center gap-1 align-middle px-1.5 rounded-full bg-primary/15 text-[10px] font-semibold leading-4 text-primary">
+                          <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-primary" />neu
+                        </span>
+                      )}
                     </p>
                     {entry.recipe_id ? (
                       <Link href={`/recipes/${entry.recipe_id}`} draggable={false}
