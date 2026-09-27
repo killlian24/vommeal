@@ -26,7 +26,7 @@ type Recipe = {
 
 const EFFORT_OPTIONS: { value: Effort; label: string }[] = [
   { value: 'quick', label: 'Schnell' },
-  { value: 'involved', label: 'Aufwändig' },
+  { value: 'involved', label: 'Aufwendig' },
   { value: null, label: '–' },
 ]
 

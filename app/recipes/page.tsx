@@ -21,7 +21,7 @@ type EffortFilter = 'all' | 'quick' | 'involved'
 const EFFORT_FILTERS: { key: EffortFilter; label: string }[] = [
   { key: 'all', label: 'Alle' },
   { key: 'quick', label: 'Schnell' },
-  { key: 'involved', label: 'Aufwändig' },
+  { key: 'involved', label: 'Aufwendig' },
 ]
 
 type SyncProgress = {
@@ -52,7 +52,7 @@ function EffortBadge({ effort }: { effort?: Effort }) {
   if (effort === 'involved') {
     return (
       <span className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-black/60 text-amber-300 backdrop-blur-sm">
-        <ChefHat size={10} /> Aufwändig
+        <ChefHat size={10} /> Aufwendig
       </span>
     )
   }
@@ -347,7 +347,7 @@ export default function RecipesPage() {
           ) : effortFilter !== 'all' && searched.length > 0 ? (
             <>
               <p className="text-ink-muted">
-                Noch keine Rezepte als „{effortFilter === 'quick' ? 'Schnell' : 'Aufwändig'}“ markiert
+                Noch keine Rezepte als „{effortFilter === 'quick' ? 'Schnell' : 'Aufwendig'}“ markiert
               </p>
               <p className="text-sm text-ink-hint mt-1 px-6">Im Rezept kannst du den Aufwand mit einem Tipp festlegen.</p>
             </>

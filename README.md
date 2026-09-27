@@ -18,7 +18,7 @@ Kommt man zurück in die App (oder ist wieder online), laden Woche, Heute und Ei
 
 - **Planen ohne Bestätigen:** Jeder plant einfach, jede Karte zeigt, wer geplant hat. Hat der andere seit dem letzten Blick auf dieses Handy Abende geplant, ersetzt oder verschoben, erscheint ein kurzer Hinweis („Susi hat 3 Abende geplant“) und die Karten tragen ein kleines **neu**, bis man die Woche gesehen hat (höchstens 24 Stunden).
 - **Aktuelle und nächste Woche:** Von Freitag bis Sonntag öffnet die Woche automatisch die nächste Woche, oben bleibt „Heute: …“ sichtbar. Vergangene Tage sind unter „Vorbei“ eingeklappt, ab Donnerstag gibt es die Karte „Nächste Woche planen“.
-- **Abend planen:** Antippen öffnet die Auswahl mit Rezeptsuche, den Schnelloptionen **Reste**, **Auswärts essen**, **Bestellen** und **Frei** sowie einem Feld für ein neues Gericht. Ein neues Gericht („Schnitzel“) wird mit **Als Rezept anlegen & planen** direkt in Mealie angelegt (in der Abendessen-Kategorie) oder mit **Nur Notiz** nur für diesen Abend eingetragen. **Reste für morgen einplanen** trägt gleich für den nächsten Abend „Reste“ ein.
+- **Abend planen:** Antippen öffnet die Auswahl mit Rezeptsuche, den Schnelloptionen **Reste**, **Auswärts essen**, **Bestellen** und **Nichts kochen** sowie einem Feld für ein neues Gericht. Ein neues Gericht („Schnitzel“) wird mit **Als Rezept anlegen & planen** direkt in Mealie angelegt (in der Abendessen-Kategorie) oder mit **Nur Notiz** nur für diesen Abend eingetragen. **Reste für morgen einplanen** trägt gleich für den nächsten Abend „Reste“ ein.
 - **Freie Abende füllen:** Der große Knopf füllt alle freien Abende ab heute automatisch (nichts mit „Nicht nochmal“, schlecht bewertete nur wenn nötig, nichts aus den letzten 14 Tagen, montags bis donnerstags bevorzugt schnelle Rezepte). Rückgängig ist möglich.
 - **Verschieben:** Jede Karte hat **Verschieben** mit
   - **Ab hier 1 Tag später:** Das Gericht und alle direkt folgenden rutschen einen Tag nach hinten, bis zum nächsten freien Abend. Der frei gewordene Abend kann gleich „Auswärts essen“ bekommen (z. B. bei einer spontanen Einladung).
@@ -26,8 +26,8 @@ Kommt man zurück in die App (oder ist wieder online), laden Woche, Heute und Ei
   - **Auf anderen Tag:** Tag antippen; ist er belegt, werden die Gerichte getauscht.
 
   Alternativ lange auf eine Karte drücken und sie auf einen anderen Tag ziehen. Alles lässt sich 6 Sekunden lang rückgängig machen; die Zuordnung zur Einkaufsliste bleibt erhalten.
-- **Tauschen:** ersetzt das Gericht eines Abends. Wird dabei für heute „Auswärts essen“ oder „Bestellen“ gewählt, rutscht das bisherige Gericht automatisch auf morgen.
-- **Swipen:** gemeinsames Abstimmen wie bei einer Dating-App: pro Tag drei Rezepte, jeder stimmt auf seinem Handy ab, gemeinsame Treffer werden automatisch geplant.
+- **Anderes Gericht:** ersetzt das Gericht eines Abends, mit Rückgängig („Ersetzt: Linsen durch Pizza“). Wird dabei für heute „Auswärts essen“ oder „Bestellen“ gewählt, rutscht das bisherige Gericht automatisch auf morgen. Soll das alte Gericht an einen anderen Tag, führt **Stattdessen verschieben** zum Verschieben. „Tauschen“ heißt in Vommeal nur das Vertauschen zweier Tage.
+- **Abstimmen:** wie bei einer Dating-App: pro Tag drei Rezepte, jeder stimmt auf seinem Handy ab, gemeinsame Treffer werden automatisch geplant.
 - **Zutaten:** schickt die Zutaten der Woche auf die Einkaufsliste (ausführlicher unter [Einkauf](#einkauf)). **Woche leeren** unten entfernt alle Planungen der Woche.
 
 ### Heute
@@ -44,7 +44,7 @@ Kommt man zurück in die App (oder ist wieder online), laden Woche, Heute und Ei
 - **Rezept per Link hinzufügen:** Link einfügen oder auf Android über „Teilen“ an Vommeal schicken, Mealie liest die Seite aus (siehe [Rezept per Link importieren](#rezept-per-link-importieren)).
 - **Löschen** auf der Rezeptseite löscht das Rezept nach Rückfrage auch in Mealie. Geplante Abende behalten den Namen.
 - **Kochen** öffnet den Kochmodus: erst die Zutaten zum Abhaken, dann ein Schritt pro Bildschirm in großer Schrift; der Bildschirm bleibt dabei an.
-- **Schnell / Aufwändig** markiert Rezepte für Filter und Vorschläge. Bewertungen, Suche und Filter gibt es auf der Rezeptliste.
+- **Schnell / Aufwendig** markiert Rezepte für Filter und Vorschläge. Bewertungen, Suche und Filter gibt es auf der Rezeptliste.
 
 ### Einkauf
 
@@ -53,16 +53,16 @@ Kommt man zurück in die App (oder ist wieder online), laden Woche, Heute und Ei
 - **Zutaten der Woche:** sammelt die Zutaten aller geplanten Rezepte von heute bis Ende nächster Woche, ohne Mengen, gleiche Zutaten aus mehreren Rezepten zusammengefasst („für Linsen, Tajine“).
   - Oben stehen die **Mahlzeiten** als Schalter („Sa · Linsen mit Spätzle · 4 von 6“). Eine Mahlzeit abschalten wählt ihre Zutaten ab; was eine andere Mahlzeit noch braucht, bleibt drin.
   - Vommeal merkt sich, welche Mahlzeiten schon eingekauft sind, auch nach dem Verschieben und nach dem Leeren der Liste. Sie stehen abgewählt unter **Schon eingekauft** und lassen sich mit **Nicht gekauft** zurückholen.
-  - Einzelne Zutaten abwählen („haben wir“), **Immer da** legt sie in den Vorrat, dann werden sie nie mehr vorausgewählt. Salz, Pfeffer und Wasser werden nie vorgeschlagen.
-  - **N auf die Liste** übernimmt die Auswahl, danach bietet Vommeal **An Keep senden** an.
-- **Keep:** gleicht mit der Home-Assistant-Todo-Liste ab (siehe [Einkaufsliste und Home Assistant](#einkaufsliste-und-home-assistant)).
+  - Einzelne Zutaten abwählen („haben wir“), **In den Vorrat** legt sie in den Vorrat, dann werden sie nie mehr vorausgewählt. Salz, Pfeffer und Wasser werden nie vorgeschlagen.
+  - **N auf die Liste** übernimmt die Auswahl, danach bietet Vommeal **Abgleichen** mit Home Assistant an.
+- **Abgleichen:** gleicht mit der Home-Assistant-Todo-Liste ab (z. B. Google Keep) (siehe [Einkaufsliste und Home Assistant](#einkaufsliste-und-home-assistant)).
 - Im Menü **⋯**: **Heute-Zutaten**, **Liste kopieren** (als Text zum Teilen) und **Vorrat verwalten**. Löschen und „Erledigte entfernen“ lassen sich rückgängig machen, „Alles löschen“ fragt nach.
 - **Ohne Netz (z. B. im Supermarkt-Keller):** Das Handy merkt sich die zuletzt geladene Liste und zeigt sie mit „Offline · Stand 14:05“. Abhaken, Eintragen und Entfernen gehen weiter; die Änderungen warten auf dem Handy („2 Änderungen warten“) und werden gesendet, sobald wieder Verbindung da ist. Konnte die Liste nie geladen werden, zeigt Vommeal einen Fehler mit **Erneut laden** statt einer leeren Liste.
 - **App ohne Netz öffnen:** Die installierte App startet auch offline (Service Worker). Das klappt nur, wenn Vommeal über https erreichbar ist (z. B. per Tailscale mit HTTPS); über einfaches http im Heimnetz funktioniert alles, aber nur mit Verbindung.
 
 ### Einstellungen und Nutzung
 
-Profile, Mealie, Einkaufsreihenfolge, Home Assistant, [Benachrichtigungen](#benachrichtigungen), [Home Assistant Dashboard](#home-assistant-dashboard), **Nutzung (30 Tage)** und **Über & Docker** (Backup-Download). Die Nutzungsübersicht zählt lokal, welche Funktionen wie oft verwendet werden (z. B. ob Swipen genutzt wird); nichts davon verlässt den Server.
+Profile, Mealie, Einkaufsreihenfolge, Home Assistant, [Benachrichtigungen](#benachrichtigungen), [Home Assistant Dashboard](#home-assistant-dashboard), **Nutzung (30 Tage)** und **Über & Docker** (Backup-Download). Die Nutzungsübersicht zählt lokal, welche Funktionen wie oft verwendet werden (z. B. ob Abstimmen genutzt wird); nichts davon verlässt den Server.
 
 ---
 
@@ -165,7 +165,7 @@ Sind die Werte in Portainer gesetzt, gelten sie als von Docker gesteuert: Die Ei
 
 ### Einkaufsliste und Home Assistant
 
-Home Assistant ist die Schnell-Erfassung: Unterwegs Einträge dort hinzufügen (z. B. per Sprachassistent oder Google Keep), dann in Vommeal unter **Einkauf** auf **Keep** tippen.
+Home Assistant ist die Schnell-Erfassung: Unterwegs Einträge dort hinzufügen (z. B. per Sprachassistent oder Google Keep), dann in Vommeal unter **Einkauf** auf **Abgleichen** tippen.
 
 Der Sync holt zuerst die offenen HA-Einträge, verknüpft bekannte über ihre HA-UID, übernimmt neue, ordnet sie Kategorien zu, schickt fehlende Vommeal-Einträge an HA und **schreibt die HA-Liste danach komplett neu** in Kategorie-Reihenfolge. Das Neuschreiben ist nötig, weil HA-Todo-Listen nicht bei jeder Integration eine zuverlässige Sortierfunktion anbieten. Deshalb die echte Liste erst eintragen, wenn der Rest läuft.
 
@@ -179,7 +179,7 @@ Bilder laufen über Vommeal (`/api/images/<id>`), nicht direkt über Mealie. Der
 
 ### Nächtlicher Mealie-Sync
 
-Jede Nacht um 03:30 (Zeitzone aus den Einstellungen) gleicht Vommeal die Rezepte mit Mealie ab, genau wie der Abgleich-Knopf auf der Seite **Rezepte**: neue und geänderte Rezepte werden übernommen, in Mealie gelöschte entfernt (mit Sicherheitsbremse, siehe [Rezepte](#rezepte)). Abschalten unter **Einstellungen → Mealie**. Eigene Markierungen in Vommeal („Schnell“ / „Aufwändig“) bleiben erhalten.
+Jede Nacht um 03:30 (Zeitzone aus den Einstellungen) gleicht Vommeal die Rezepte mit Mealie ab, genau wie der Abgleich-Knopf auf der Seite **Rezepte**: neue und geänderte Rezepte werden übernommen, in Mealie gelöschte entfernt (mit Sicherheitsbremse, siehe [Rezepte](#rezepte)). Abschalten unter **Einstellungen → Mealie**. Eigene Markierungen in Vommeal („Schnell“ / „Aufwendig“) bleiben erhalten.
 
 ---
 

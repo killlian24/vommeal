@@ -8,7 +8,7 @@ export async function GET() {
 }
 
 // Add a pantry staple ("Vorrat"). Adding a name that already exists (any case) returns the
-// existing staple, so "Immer da" can be tapped twice without harm.
+// existing staple, so "In den Vorrat" can be tapped twice without harm.
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null) as Record<string, unknown> | null
   if (!body || typeof body !== 'object' || Array.isArray(body)) {

@@ -143,15 +143,15 @@ function standLabel(at: number): string {
 
 const changes = (n: number) => `${n} ${n === 1 ? 'Änderung' : 'Änderungen'}`
 
-/** Turn a sync result into a short German summary ("2 an Keep gesendet, 1 aus Keep übernommen"). */
+/** Turn a sync result into a short German summary ("2 gesendet, 1 übernommen"). */
 function syncSummary(data: SyncResult & { added?: number }): string {
   const imported = data.imported ?? data.added ?? 0
   return [
-    (data.pushed ?? 0) > 0 ? `${data.pushed} an Keep gesendet` : '',
-    imported > 0 ? `${imported} aus Keep übernommen` : '',
+    (data.pushed ?? 0) > 0 ? `${data.pushed} gesendet` : '',
+    imported > 0 ? `${imported} übernommen` : '',
     (data.linked ?? 0) > 0 ? `${data.linked} verknüpft` : '',
     (data.checked ?? 0) > 0 ? `${data.checked} abgehakt` : '',
-    (data.sorted ?? 0) > 0 ? 'Keep sortiert' : '',
+    (data.sorted ?? 0) > 0 ? 'Liste sortiert' : '',
     (data.needsCategory ?? 0) > 0 ? `${data.needsCategory} ohne Kategorie` : '',
   ].filter(Boolean).join(', ')
 }
@@ -567,7 +567,7 @@ export default function ShoppingPage() {
     const result = await runSync()
     if (result.ok) {
       await load(false)
-      showToast(result.msg ? `Abgeglichen: ${result.msg}` : 'Keep ist schon aktuell')
+      showToast(result.msg ? `Abgeglichen: ${result.msg}` : 'Schon alles abgeglichen')
     } else {
       showError(result.msg)
     }
@@ -716,7 +716,7 @@ export default function ShoppingPage() {
       ...r,
       phase: 'sent',
       sendResult: result.ok
-        ? { ok: true, msg: (result.data?.pushed ?? 0) > 0 ? `${plural(result.data?.pushed ?? 0, 'Eintrag', 'Einträge')} an Keep gesendet.` : 'Keep war schon aktuell.' }
+        ? { ok: true, msg: (result.data?.pushed ?? 0) > 0 ? `${plural(result.data?.pushed ?? 0, 'Eintrag', 'Einträge')} an Home Assistant gesendet.` : 'Home Assistant war schon aktuell.' }
         : { ok: false, msg: result.msg },
     })
   }
@@ -964,12 +964,12 @@ export default function ShoppingPage() {
           <button
             onClick={syncList}
             disabled={syncing}
-            aria-label="Mit Keep abgleichen"
-            title="Mit Keep abgleichen"
+            aria-label="Mit Home Assistant abgleichen"
+            title="Mit Home Assistant abgleichen"
             className="min-h-[48px] flex items-center gap-2 px-3.5 rounded-xl bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm text-[#d0d0d0] hover:text-white transition-colors disabled:opacity-70"
           >
             <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
-            <span>Keep</span>
+            <span>Abgleichen</span>
           </button>
         </div>
 
@@ -1032,7 +1032,7 @@ export default function ShoppingPage() {
           <div className="flex items-start justify-between gap-2">
             <div>
               <p className="text-sm font-semibold text-white">Vorrat</p>
-              <p className="text-xs text-[#9a9a9a] mt-0.5">Immer im Haus – wird bei „Zutaten der Woche“ nicht vorausgewählt.</p>
+              <p className="text-xs text-[#9a9a9a] mt-0.5">Immer im Haus, wird bei „Zutaten der Woche“ nicht vorausgewählt.</p>
             </div>
             <button
               onClick={() => setShowPantry(false)}
@@ -1404,7 +1404,7 @@ export default function ShoppingPage() {
                                   title="Zum Vorrat hinzufügen – wird künftig nicht mehr vorausgewählt"
                                   className="flex-shrink-0 min-h-[40px] px-2 rounded-lg text-xs text-[#9a9a9a] underline decoration-[#444] underline-offset-2 hover:text-white hover:bg-[#1a1a1a] disabled:opacity-50"
                                 >
-                                  Immer da
+                                  In den Vorrat
                                 </button>
                               )}
                             </div>
@@ -1424,7 +1424,7 @@ export default function ShoppingPage() {
                   {plural(review.added ?? selectedCount, 'Zutat', 'Zutaten')} auf der Liste
                 </p>
                 {review.phase !== 'sent' && (
-                  <p className="text-sm text-[#9a9a9a]">Jetzt an Keep senden, damit ihr sie beim Einkaufen habt.</p>
+                  <p className="text-sm text-[#9a9a9a]">Jetzt abgleichen, damit sie auch in eurer Home-Assistant-Liste stehen.</p>
                 )}
                 {review.sendResult && (
                   <p className={`text-sm ${review.sendResult.ok ? 'text-[#9fb8a1]' : 'text-red-300'}`}>
@@ -1476,8 +1476,8 @@ export default function ShoppingPage() {
                   className="flex-1 min-h-[48px] flex items-center justify-center gap-2 rounded-xl bg-primary-solid hover:bg-primary-solidHover disabled:opacity-80 text-white text-base font-semibold transition-colors"
                 >
                   {review.phase === 'sending'
-                    ? <><RefreshCw size={17} className="animate-spin" /> Wird gesendet …</>
-                    : <><Send size={17} /> An Keep senden</>}
+                    ? <><RefreshCw size={17} className="animate-spin" /> Wird abgeglichen …</>
+                    : <><Send size={17} /> Abgleichen</>}
                 </button>
               </div>
             )}
@@ -1488,7 +1488,7 @@ export default function ShoppingPage() {
                     onClick={sendToKeep}
                     className="flex-1 min-h-[48px] rounded-xl bg-[#1c1c1c] border border-[#2a2a2a] text-[#e5e5e5] text-base"
                   >
-                    Nochmal senden
+                    Nochmal abgleichen
                   </button>
                 )}
                 <button

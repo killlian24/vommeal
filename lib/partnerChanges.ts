@@ -43,7 +43,7 @@ export function partnerChanges<T extends ChangedEntry>(entries: T[], me: string,
   if (!me || since <= 0) return { planned, changed }
   for (const e of entries) {
     const by = changedBy(e)
-    // "Kilian & Susi": a Swipen match both agreed on
+    // "Kilian & Susi": an Abstimmen match both agreed on
     if (!by || by === me || by.split(' & ').includes(me)) continue
     if (parseDbTime(e.updated_at || e.created_at) <= since) continue
     if (parseDbTime(e.created_at) > since) planned.push(e)

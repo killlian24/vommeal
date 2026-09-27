@@ -7,7 +7,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { ShoppingCart, Clock, ChevronRight, BookOpen, Shuffle, Zap, ChefHat, ThumbsDown, CalendarClock } from 'lucide-react'
 import { StarRating } from '@/components/StarRating'
-import { QUICK_MEALS, EATING_OUT, quickMealEmoji } from '@/lib/quickMeals'
+import { QUICK_MEALS, EATING_OUT, NO_COOKING, quickMealEmoji } from '@/lib/quickMeals'
 import { shiftPlan, undoPlanChange } from '@/lib/planApi'
 import { track } from '@/lib/track'
 import { apiCall } from '@/lib/apiCall'
@@ -35,8 +35,6 @@ const ISO = 'yyyy-MM-dd'
 const HISTORY_DAYS = 30
 const RATE_WINDOW_DAYS = 2
 const PROMPTED_KEY = (entryId: string) => `vommeal_rate_prompted_${entryId}`
-// Evenings without cooking: nothing to move to tomorrow.
-const NO_COOKING: string[] = [EATING_OUT, 'Bestellen', 'Frei']
 
 // "Gestern" for the rating prompt, otherwise the app-wide "Heute", "Morgen", "Mi 30.9."
 function dayLabel(dateStr: string): string {
@@ -75,7 +73,7 @@ function EffortBadge({ effort }: { effort?: Effort }) {
   if (effort === 'involved') {
     return (
       <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
-        <ChefHat size={11} /> Aufwändig
+        <ChefHat size={11} /> Aufwendig
       </span>
     )
   }

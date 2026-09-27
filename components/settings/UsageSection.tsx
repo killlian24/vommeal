@@ -23,14 +23,14 @@ type LoadState =
 export const EVENT_LABELS: Record<string, string> = {
   plan_add: 'Abend geplant',
   autofill: 'Woche gefüllt',
-  fun_open: 'Swipen geöffnet',
-  fun_vote: 'Swipe-Stimmen',
+  fun_open: 'Abstimmen geöffnet',
+  fun_vote: 'Stimmen abgegeben',
   tonight_suggest_pick: 'Heute-Vorschlag übernommen',
   rating_prompt: 'Bewertet',
   recipe_import: 'Rezept importiert',
   cook_mode_open: 'Kochmodus',
   shopping_review_open: 'Zutaten der Woche geöffnet',
-  shopping_send_keep: 'An Keep gesendet',
+  shopping_send_keep: 'Abgeglichen nach Zutaten der Woche',
 }
 
 const TOP_N = 10

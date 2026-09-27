@@ -5,7 +5,7 @@ import { format, startOfWeek, addDays, isToday, parseISO, getDay } from 'date-fn
 import { de } from 'date-fns/locale'
 import {
   ChevronLeft, ChevronRight, ChevronDown, Plus, X, Search, ShoppingCart,
-  Zap, Dices, Heart, XCircle, ArrowLeftRight, ArrowRight, CalendarClock,
+  Zap, Vote, Heart, XCircle, ArrowLeftRight, ArrowRight, CalendarClock,
 } from 'lucide-react'
 import Image from 'next/image'
 import Link from 'next/link'
@@ -26,7 +26,7 @@ import {
 import { MoveSheet } from '@/components/MoveSheet'
 import { Sheet, SheetHeader, SheetTitle, SheetClose, sheetPanel } from '@/components/Sheet'
 import { useToast } from '@/components/Toast'
-import { dayLabel, shortDay, rangeLabel as dateRange } from '@/lib/dates'
+import { dayLabel, shortDay, relativeWeekday, rangeLabel as dateRange } from '@/lib/dates'
 
 type Recipe = {
   id: string; name: string; image_url: string; prep_time: number; cook_time: number
@@ -48,8 +48,8 @@ type Picker = { date: string; replaceId?: string }
 const SERVINGS = 2
 const CARDS_PER_DAY = 3
 const LEFTOVERS = 'Reste'
-// Replacing today's dinner with one of these keeps the old dish by default
-// (it moves to tomorrow, the rest of the week slides along).
+// Replacing today's dinner with one of these keeps the old dish: it moves to
+// tomorrow, the rest of the week slides along.
 const KEEP_OLD_BY_DEFAULT: string[] = [EATING_OUT, 'Bestellen']
 
 const ds = (d: Date) => format(d, 'yyyy-MM-dd')
@@ -135,8 +135,6 @@ export default function PlanPage() {
   const [creatingRecipe, setCreatingRecipe] = useState(false)
   const [nextDayFree, setNextDayFree] = useState(false)
   const [addLeftovers, setAddLeftovers] = useState(false)
-  // Replace mode: keep the old dish by shifting it one day later (null = default)
-  const [keepOld, setKeepOld] = useState<boolean | null>(null)
   const [moveFor, setMoveFor] = useState<MealEntry | null>(null)
   const [moving, setMoving] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -146,7 +144,7 @@ export default function PlanPage() {
   const { user: currentUser, users, partner, askUser } = useCurrentUser()
   // Evenings the partner planned or changed since this phone last looked ("neu")
   const [marks, setMarks] = useState<Marks>({})
-  // Fun mode ("Swipen")
+  // Voting ("Abstimmen")
   const [funMode, setFunMode] = useState(false)
   const [funDayPicker, setFunDayPicker] = useState(false)
   const [funSelectedDates, setFunSelectedDates] = useState<Set<string>>(new Set())
@@ -342,6 +340,11 @@ export default function PlanPage() {
   })
 
   const getEntry = (date: Date) => entries.find(e => e.date === ds(date))
+  // "heute", "morgen" or "Mittwoch" for "Anderes Gericht für …"
+  const forDay = (date: string) => {
+    const w = relativeWeekday(date, todayStr)
+    return w === 'Heute' || w === 'Morgen' ? w.toLowerCase() : w
+  }
 
   // In the current week, days before today collapse into a compact list
   const pastDays = isCurrentWeek ? days.filter(d => ds(d) < todayStr) : []
@@ -353,7 +356,7 @@ export default function PlanPage() {
   const openPicker = async (date: string, replaceId?: string) => {
     if (!ensureUser()) return
     setPicker({ date, replaceId })
-    setSearch(''); setCustomName(''); setAddLeftovers(false); setNextDayFree(false); setKeepOld(null)
+    setSearch(''); setCustomName(''); setAddLeftovers(false); setNextDayFree(false)
     const next = ds(addDays(parseISO(date), 1))
     if (next >= startStr && next <= endStr) {
       setNextDayFree(!entries.find(e => e.date === next))
@@ -397,7 +400,30 @@ export default function PlanPage() {
           if (!res.ok) { showError(res.error); return }
           track('plan_replace')
           refresh()
-          showToast(`${fmt(parseISO(String(body.date)), 'EEEE')}: ${label}`)
+          replacedToast(current, res.data, label)
+        },
+      },
+    })
+  }
+
+  // "Ersetzt: Linsen durch Pizza" with an undo that puts the old dish back,
+  // but only while the new one is still there (replace_id guard).
+  const replacedToast = (old: MealEntry, created: MealEntry, label: string, leftovers?: MealEntry | null) => {
+    showToast(`Ersetzt: ${mealName(old)} durch ${label}`, {
+      action: {
+        label: 'Rückgängig',
+        onClick: async () => {
+          hideToast()
+          const r = await postEntry({
+            id: old.id, date: old.date, recipe_id: old.recipe_id, custom_meal_name: old.custom_meal_name,
+            servings: old.servings || SERVINGS, notes: old.notes, suggested_by: old.suggested_by, replace_id: created.id,
+          })
+          if (leftovers) await apiCall(`/api/meal-plan/${leftovers.id}`, { method: 'DELETE' })
+          refresh()
+          const current = conflictEntry(r)
+          if (r.ok) { track('plan_replace_undo'); showToast(`Wieder da: ${mealName(old)}`) }
+          else if (current) showError(`Nicht zurückgenommen: ${conflictText(current)}`)
+          else showError(r.status === 0 ? r.error : 'Konnte nicht zurückgenommen werden')
         },
       },
     })
@@ -409,7 +435,7 @@ export default function PlanPage() {
     const name = opts.name ?? customName.trim()
     if (!opts.recipeId && !name) return
     const replaced = replaceId ? entries.find(e => e.id === replaceId) : undefined
-    const keep = !!replaced && (keepOld ?? (date === todayStr && !!opts.quick && KEEP_OLD_BY_DEFAULT.includes(name)))
+    const keep = !!replaced && date === todayStr && !!opts.quick && KEEP_OLD_BY_DEFAULT.includes(name)
     if (replaced && keep) { await replaceKeepingOld(replaced, opts, name); return }
     const label = opts.label || (opts.recipeId ? recipes.find(r => r.id === opts.recipeId)?.name || 'Rezept' : name)
     const body = { date, recipe_id: opts.recipeId || null, custom_meal_name: opts.recipeId ? null : name }
@@ -421,15 +447,16 @@ export default function PlanPage() {
       if (!res.ok) { showError(res.error); return }
       track(replaceId ? 'plan_replace' : 'plan_add', replaceId ? {} : { quick: !!opts.quick })
 
-      let leftovers = false
+      let leftovers: MealEntry | null = null
       if (addLeftovers && nextDayFree && !opts.quick && !keep) {
         const next = ds(addDays(parseISO(date), 1))
         const r = await postEntry({ date: next, recipe_id: null, custom_meal_name: LEFTOVERS, expect_empty: true })
-        if (r.ok) { leftovers = true; track('plan_leftovers') }
+        if (r.ok) { leftovers = r.data; track('plan_leftovers') }
       }
       closePicker()
       refresh()
-      showToast(leftovers ? `${label} + Reste morgen` : `${fmt(parseISO(date), 'EEEE')}: ${label}`)
+      if (replaced) replacedToast(replaced, res.data, label, leftovers)
+      else showToast(leftovers ? `${label} + Reste morgen` : `${fmt(parseISO(date), 'EEEE')}: ${label}`)
     } finally {
       setSaving(false)
     }
@@ -734,7 +761,7 @@ export default function PlanPage() {
     else showToast('Wiederhergestellt')
   }
 
-  // ---- Fun mode ("Swipen") -------------------------------------------------
+  // ---- Voting ("Abstimmen") ------------------------------------------------
 
   const getCardsForDate = (dateStr: string): Recipe[] =>
     seededShuffle(recipes, dateStr).slice(0, CARDS_PER_DAY)
@@ -778,7 +805,7 @@ export default function PlanPage() {
     else { setFunDayIndex(nextDay); setFunCardIndex(0) }
   }
 
-  // Each "Ja" is saved immediately so closing Swipen mid-way loses nothing
+  // Each "Ja" is saved immediately so closing Abstimmen mid-way loses nothing
   const funVote = (recipe: Recipe, yes: boolean) => {
     const dateStr = ds(funDays[funDayIndex])
     track('fun_vote', { yes })
@@ -875,7 +902,7 @@ export default function PlanPage() {
           {!isCurrentWeek && (
             <button onClick={() => goToWeek(currentMonday)}
               className="min-h-[40px] px-3 rounded-lg text-sm font-medium bg-[#1c1c1c] hover:bg-[#252525] text-ink-soft hover:text-white transition-all border border-[#2a2a2a]">
-              Heute
+              Diese Woche
             </button>
           )}
           <button onClick={() => goToWeek(addDays(weekStart, 7), 'nav')} aria-label="Nächste Woche"
@@ -897,7 +924,7 @@ export default function PlanPage() {
         <div className="flex items-center gap-2">
           <div className="flex-1" />
           <button onClick={openFunMode} className={secondaryBtn}>
-            <Dices size={16} /> Swipen
+            <Vote size={16} /> Abstimmen
           </button>
           <button onClick={generateShopping} disabled={addingToList === 'week'} className={secondaryBtn}
             title="Zutaten der kommenden Abende auf die Einkaufsliste">
@@ -1015,7 +1042,7 @@ export default function PlanPage() {
                   </button>
                   <button onClick={() => openPicker(dateStr, entry.id)}
                     className="min-h-[40px] flex items-center gap-1.5 px-2.5 rounded-lg text-sm text-ink-soft hover:text-white hover:bg-[#1c1c1c] transition-all">
-                    <ArrowLeftRight size={15} /> Tauschen
+                    <ArrowLeftRight size={15} /> Anderes Gericht
                   </button>
                   <button onClick={() => removeEntry(entry.id)} aria-label={`${mealName(entry)} entfernen`}
                     className={`${iconBtn} text-ink-muted hover:text-red-400 hover:bg-[#1c1c1c]`}>
@@ -1026,7 +1053,7 @@ export default function PlanPage() {
             )
           }
 
-          // Empty day: votes from Swipen, or a compact "plan" row
+          // Empty day: votes from Abstimmen, or a compact "plan" row
           const dayNoms = nominations.filter(n => n.date === dateStr)
           const myNoms = dayNoms.filter(n => n.user_name === currentUser)
           const partnerNoms = dayNoms.filter(n => n.user_name !== currentUser)
@@ -1108,30 +1135,29 @@ export default function PlanPage() {
         // keyboard would cover the quick options, so the sheet itself gets focus.
         <Sheet onClose={closePicker} initialFocus={finePointer() ? searchRef : undefined}>
           <SheetHeader
-            title={picker.replaceId ? 'Gericht tauschen' : 'Abendessen planen'}
+            title={picker.replaceId ? `Anderes Gericht für ${forDay(picker.date)}` : 'Abendessen planen'}
             subtitle={fmt(parseISO(picker.date), 'EEEE, d. MMMM')}
           />
 
           <div className="p-4 space-y-3 overflow-y-auto overscroll-contain">
-            {/* Replace mode: keep the old dish by moving it one day later */}
+            {/* Replace mode: moving the old dish is its own sheet; for today,
+                Auswärts essen and Bestellen move it to tomorrow on their own */}
             {picker.replaceId && (() => {
               const replaced = entries.find(e => e.id === picker.replaceId)
               if (!replaced) return null
-              const nextLabel = picker.date === todayStr ? 'morgen' : fmt(addDays(parseISO(picker.date), 1), 'EEEE')
-              const auto = keepOld === null && picker.date === todayStr
               return (
-                <label className="flex items-center gap-3 min-h-[44px] px-3 py-2 rounded-xl bg-[#1a1a1a] border border-[#262626] cursor-pointer">
-                  <CalendarClock size={18} className="text-primary flex-shrink-0" />
-                  <span className="flex-1 text-sm text-ink-soft">
-                    {mealName(replaced)} nicht verwerfen, sondern auf {nextLabel} schieben
-                    <span className="block text-xs text-ink-hint">
-                      Der Rest rutscht mit{auto ? ' · bei Auswärts essen oder Bestellen automatisch' : ''}
-                    </span>
+                <div className="flex items-center gap-3 min-h-[44px] px-3 py-1.5 rounded-xl bg-[#1a1a1a] border border-[#262626]">
+                  <span className="flex-1 min-w-0 text-sm text-ink-soft">
+                    Statt {mealName(replaced)}
+                    {picker.date === todayStr && (
+                      <span className="block text-xs text-ink-hint">Bei Auswärts essen oder Bestellen rutscht es auf morgen</span>
+                    )}
                   </span>
-                  <input type="checkbox" checked={keepOld ?? false} onChange={e => setKeepOld(e.target.checked)}
-                    className="sr-only peer" />
-                  <span aria-hidden className="relative flex-shrink-0 w-11 h-6 rounded-full bg-[#333] peer-checked:bg-primary transition-colors after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5" />
-                </label>
+                  <button type="button" onClick={() => { closePicker(); setMoveFor(replaced) }}
+                    className="flex-shrink-0 min-h-[44px] flex items-center gap-1.5 px-2 text-sm font-medium text-primary hover:text-primary-hover">
+                    <CalendarClock size={15} /> Stattdessen verschieben
+                  </button>
+                </div>
               )
             })()}
 
@@ -1175,7 +1201,7 @@ export default function PlanPage() {
             </div>
 
             {/* Leftovers for tomorrow (not when tomorrow gets the old dish) */}
-            {nextDayFree && !keepOld && (
+            {nextDayFree && (
               <label className="flex items-center gap-3 min-h-[44px] px-3 rounded-xl bg-[#1a1a1a] border border-[#262626] cursor-pointer">
                 <span className="text-lg">🍲</span>
                 <span className="flex-1 text-sm text-ink-soft">
@@ -1232,7 +1258,7 @@ export default function PlanPage() {
         />
       )}
 
-      {/* Swipen overlay: one sheet whose content changes (each screen returns
+      {/* Abstimmen overlay: one sheet whose content changes (each screen returns
           a <Sheet> at this spot, so the dialog stays open between them).
           A tap next to it does not end the voting, Escape does. */}
       {funMode && (() => {
@@ -1243,7 +1269,7 @@ export default function PlanPage() {
             className="bg-[#141414] border border-[#2a2a2a] rounded-2xl p-8 max-w-sm w-full text-center">
             <div className="text-4xl mb-4">🎉</div>
             <SheetTitle className="text-white font-semibold text-lg">Alles geplant!</SheetTitle>
-            <p className="text-ink-muted text-sm mt-1 mb-6">Diese Woche gibt es nichts mehr zu swipen.</p>
+            <p className="text-ink-muted text-sm mt-1 mb-6">Diese Woche gibt es nichts mehr abzustimmen.</p>
             <button onClick={closeFunMode} className="min-h-[44px] px-6 rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-medium">Fertig</button>
           </Sheet>
         )
@@ -1283,7 +1309,7 @@ export default function PlanPage() {
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        <p className="text-xs text-amber-300">Kein Match – wählt eins:</p>
+                        <p className="text-xs text-amber-300">Kein Match, wählt eins:</p>
                         {[...myNoms, ...partnerNoms.filter(n => !myNoms.find(m => m.recipe_id === n.recipe_id))].slice(0, 4).map(n => (
                           <button key={n.id} onClick={() => resolveConflict(dateStr, n.recipe_id)}
                             className="w-full min-h-[44px] flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-left transition-all">
@@ -1387,7 +1413,7 @@ export default function PlanPage() {
         return (
           <Sheet onClose={() => setSettleDate(null)} className={sheetPanel('max-w-sm')}>
             <SheetHeader
-              title={matchNom ? '❤️ Ihr mögt beide' : '⚖️ Kein Match – wählt eins'}
+              title={matchNom ? '❤️ Ihr mögt beide' : '⚖️ Kein Match, wählt eins'}
               subtitle={fmt(parseISO(settleDate), 'EEEE, d. MMMM')}
             />
             <div className="p-4 space-y-2 overflow-y-auto overscroll-contain">
@@ -1417,10 +1443,10 @@ export default function PlanPage() {
         )
       })()}
 
-      {/* Swipen: day picker */}
+      {/* Abstimmen: day picker */}
       {funDayPicker && (
         <Sheet onClose={() => setFunDayPicker(false)} className={sheetPanel('max-w-sm')}>
-          <SheetHeader title="Swipen" subtitle="Für welche Abende?" />
+          <SheetHeader title="Abstimmen" subtitle="Für welche Abende?" />
           <div className="p-4 space-y-2 overflow-y-auto overscroll-contain">
             {days.map(day => {
               const s = ds(day)
@@ -1464,7 +1490,7 @@ export default function PlanPage() {
               disabled={funSelectedDates.size === 0}
               className="w-full min-h-[48px] rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none"
             >
-              Los geht&apos;s – {abende(funSelectedDates.size)} 🎲
+              Los geht&apos;s: {abende(funSelectedDates.size)}
             </button>
           </div>
         </Sheet>
