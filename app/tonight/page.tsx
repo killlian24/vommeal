@@ -102,6 +102,16 @@ export default function TonightPage() {
   const { show: showToast, error: showError, hide: hideToast } = useToast()
   // "Heute doch nicht": null = closed, 'ask' = choose what tonight becomes
   const [postpone, setPostpone] = useState<null | 'ask' | 'busy'>(null)
+  // Focus follows the panel: its heading when it opens, the button again on "Abbrechen"
+  const postponeHeading = useRef<HTMLParagraphElement>(null)
+  const postponeButton = useRef<HTMLButtonElement>(null)
+  const postponeFocus = useRef<'heading' | 'button' | null>(null)
+  useEffect(() => {
+    const target = postponeFocus.current === 'heading' ? postponeHeading.current
+      : postponeFocus.current === 'button' ? postponeButton.current : null
+    postponeFocus.current = null
+    target?.focus()
+  }, [postpone])
 
   const loadEntries = useCallback(async (): Promise<MealEntry[]> => {
     const now = new Date()
@@ -508,15 +518,16 @@ export default function TonightPage() {
                 Not offered for evenings without cooking (eating out, ordering, free). */}
             {!postponable ? null : postpone === null ? (
               <button
+                ref={postponeButton}
                 type="button"
-                onClick={() => setPostpone('ask')}
+                onClick={() => { postponeFocus.current = 'heading'; setPostpone('ask') }}
                 className="mt-3 w-full flex items-center justify-center gap-1.5 min-h-[44px] rounded-xl text-sm font-medium text-ink-muted hover:text-white active:bg-[#1c1c1c] transition-all"
               >
                 <CalendarClock size={15} /> Heute doch nicht – auf morgen schieben
               </button>
             ) : (
               <div className="mt-3 rounded-xl border border-[#2a2a2a] bg-[#1a1a1a] p-3 text-left">
-                <p className="text-sm font-semibold text-white">Auf morgen schieben – und heute Abend?</p>
+                <p ref={postponeHeading} tabIndex={-1} className="text-sm font-semibold text-white focus:outline-none">Auf morgen schieben – und heute Abend?</p>
                 <p className="text-xs text-ink-muted mt-0.5">Die nächsten geplanten Abende rutschen mit bis zum ersten freien Tag.</p>
                 <div className="grid grid-cols-2 gap-2 mt-3">
                   <button
@@ -538,7 +549,7 @@ export default function TonightPage() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setPostpone(null)}
+                  onClick={() => { postponeFocus.current = 'button'; setPostpone(null) }}
                   disabled={postpone === 'busy'}
                   className="mt-1 w-full min-h-[40px] text-sm text-ink-muted hover:text-white transition-colors"
                 >
@@ -585,7 +596,7 @@ export default function TonightPage() {
                       type="button"
                       onClick={() => cookSuggestion(r, i)}
                       disabled={planning !== null}
-                      className="self-start flex items-center gap-1.5 px-4 h-10 rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-semibold transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none active:scale-95"
+                      className="relative after:absolute after:-inset-0.5 self-start flex items-center gap-1.5 px-4 h-10 rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-semibold transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none active:scale-95"
                     >
                       {planning === r.id ? 'Wird geplant…' : 'Heute kochen'}
                     </button>
@@ -656,7 +667,7 @@ export default function TonightPage() {
                     onClick={() => addToList(entry.date)}
                     disabled={addingDate === entry.date}
                     aria-label="Zutaten auf die Einkaufsliste"
-                    className="p-2.5 rounded-lg text-ink-hint hover:text-primary hover:bg-primary/10 transition-all disabled:opacity-50 flex-shrink-0"
+                    className="w-11 h-11 -my-1.5 -mr-1 flex items-center justify-center rounded-lg text-ink-hint hover:text-primary hover:bg-primary/10 transition-all disabled:opacity-50 flex-shrink-0"
                   >
                     <ShoppingCart size={17} />
                   </button>

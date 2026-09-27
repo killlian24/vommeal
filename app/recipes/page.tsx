@@ -290,6 +290,7 @@ export default function RecipesPage() {
           <input
             type="search"
             placeholder="Rezept oder Tag suchen…"
+            aria-label="Rezepte durchsuchen"
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="pl-9 h-11 text-base"

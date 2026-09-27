@@ -257,7 +257,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
         <div className="flex items-center gap-2">
           {!isNew && mealieUrl && (
             <a href={mealieUrl} target="_blank" rel="noopener noreferrer"
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs transition-all border border-blue-500/20">
+              className="relative after:absolute after:-inset-y-1.5 after:inset-x-0 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs transition-all border border-blue-500/20">
               <ExternalLink size={12} />
               Mealie
             </a>
@@ -265,12 +265,12 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
           {!isNew && !editing && (
             <>
               <button onClick={() => setEditing(true)}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] text-ink-muted hover:text-white text-xs transition-all border border-[#2a2a2a]">
+                className="relative after:absolute after:-inset-y-1.5 after:inset-x-0 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] text-ink-muted hover:text-white text-xs transition-all border border-[#2a2a2a]">
                 <Edit2 size={12} />
                 Bearbeiten
               </button>
               <button onClick={del} title="Rezept löschen"
-                className="min-h-[40px] flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs transition-all border border-red-500/20">
+                className="relative after:absolute after:-inset-y-0.5 after:inset-x-0 min-h-[40px] flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs transition-all border border-red-500/20">
                 <Trash2 size={12} /> Löschen
               </button>
             </>
@@ -278,13 +278,13 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
           {editing && (
             <>
               <button onClick={save} disabled={saving}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-xs font-medium transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none">
+                className="relative after:absolute after:-inset-y-1.5 after:inset-x-0 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-xs font-medium transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none">
                 <Save size={12} />
                 {saving ? 'Speichert…' : 'Speichern'}
               </button>
               {!isNew && (
                 <button onClick={() => setEditing(false)}
-                  className="p-2 rounded-lg hover:bg-[#1c1c1c] text-ink-muted transition-all" aria-label="Bearbeiten abbrechen">
+                  className="relative after:absolute after:-inset-[7px] p-2 rounded-lg hover:bg-[#1c1c1c] text-ink-muted transition-all" aria-label="Bearbeiten abbrechen">
                   <X size={14} />
                 </button>
               )}
@@ -314,6 +314,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
           value={recipe.name}
           onChange={e => setRecipe(r => ({ ...r, name: e.target.value }))}
           placeholder="Name des Rezepts"
+          aria-label="Name des Rezepts"
           className="text-xl font-bold bg-[#141414] border-[#2a2a2a]"
           autoFocus={isNew}
         />
@@ -445,7 +446,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
             <span key={tag} className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
               {tag}
               {editing && (
-                <button onClick={() => setRecipe(r => ({ ...r, tags: r.tags.filter(t => t !== tag) }))} className="hover:text-red-400 transition-colors">
+                <button onClick={() => setRecipe(r => ({ ...r, tags: r.tags.filter(t => t !== tag) }))} aria-label={`Tag ${tag} entfernen`} className="hover:text-red-400 transition-colors">
                   <X size={10} />
                 </button>
               )}
@@ -471,6 +472,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
               value={recipe.description}
               onChange={e => setRecipe(r => ({ ...r, description: e.target.value }))}
               placeholder="Kurze Beschreibung…"
+              aria-label="Beschreibung"
               rows={2}
               className="resize-none"
             />
@@ -488,6 +490,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
             value={recipe.image_url}
             onChange={e => setRecipe(r => ({ ...r, image_url: e.target.value }))}
             placeholder="https://..."
+            aria-label="Bild-URL"
           />
         </div>
       )}
@@ -510,12 +513,12 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
             editing ? (
               <div key={i} className="flex gap-2 items-center">
                 <input value={ing.amount} onChange={e => updateIngredient(i, 'amount', e.target.value)}
-                  placeholder="Menge" className="w-16" />
+                  placeholder="Menge" aria-label={`Zutat ${i + 1}: Menge`} className="w-16" />
                 <input value={ing.unit} onChange={e => updateIngredient(i, 'unit', e.target.value)}
-                  placeholder="Einheit" className="w-20" />
+                  placeholder="Einheit" aria-label={`Zutat ${i + 1}: Einheit`} className="w-20" />
                 <input value={ing.name} onChange={e => updateIngredient(i, 'name', e.target.value)}
-                  placeholder="Zutat" className="flex-1" />
-                <button onClick={() => removeIngredient(i)} className="text-ink-hint hover:text-red-400 transition-colors flex-shrink-0">
+                  placeholder="Zutat" aria-label={`Zutat ${i + 1}: Name`} className="flex-1" />
+                <button onClick={() => removeIngredient(i)} aria-label={`Zutat ${i + 1} entfernen`} className="text-ink-hint hover:text-red-400 transition-colors flex-shrink-0">
                   <X size={14} />
                 </button>
               </div>
@@ -557,10 +560,11 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
                   value={ins.text}
                   onChange={e => updateInstruction(i, e.target.value)}
                   placeholder={`Schritt ${i + 1}`}
+                  aria-label={`Schritt ${i + 1}`}
                   rows={2}
                   className="flex-1 resize-none"
                 />
-                <button onClick={() => removeInstruction(i)} className="text-ink-hint hover:text-red-400 transition-colors mt-2 flex-shrink-0">
+                <button onClick={() => removeInstruction(i)} aria-label={`Schritt ${i + 1} entfernen`} className="text-ink-hint hover:text-red-400 transition-colors mt-2 flex-shrink-0">
                   <X size={14} />
                 </button>
               </div>
@@ -582,6 +586,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
             value={recipe.mealie_slug || ''}
             onChange={e => setRecipe(r => ({ ...r, mealie_slug: e.target.value || null }))}
             placeholder="recipe-slug"
+            aria-label="Mealie-Slug"
           />
           <p className="text-xs text-ink-hint mt-1">Mealie-Slug eintragen, um das Rezept in Mealie zu öffnen</p>
         </div>

@@ -116,7 +116,8 @@ function MealThumb({ entry, recipe, size }: { entry?: MealEntry; recipe?: Recipe
   )
 }
 
-const iconBtn = 'w-10 h-10 flex items-center justify-center rounded-lg transition-all'
+// 40 px to look at, 44 px to hit (the ::after overhangs by 2 px)
+const iconBtn = 'relative after:absolute after:-inset-0.5 w-10 h-10 flex items-center justify-center rounded-lg transition-all'
 const finePointer = () => typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: fine)').matches
 // Highlight for the day row under a dragged card
 const dropBadge = 'absolute top-1.5 right-1.5 z-10 px-2 py-0.5 rounded-full bg-primary-solid text-white text-xs font-semibold pointer-events-none'
@@ -1151,6 +1152,7 @@ export default function PlanPage() {
             {/* Free text: new recipe in Mealie (default) or just a note for the evening */}
             <div className="space-y-2">
               <input placeholder="Neues Gericht, z. B. Schnitzel…" value={customName}
+                aria-label="Neues Gericht"
                 onChange={e => setCustomName(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); onCustomNameEnter() } }}
                 enterKeyHint="done"
@@ -1193,7 +1195,7 @@ export default function PlanPage() {
             {/* Recipe search */}
             <div className="relative">
               <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-hint" />
-              <input ref={searchRef} placeholder="Rezepte suchen…"
+              <input ref={searchRef} placeholder="Rezepte suchen…" aria-label="Rezepte suchen"
                 value={search} onChange={e => setSearch(e.target.value)}
                 className="pl-9 text-base min-h-[44px]" />
             </div>
