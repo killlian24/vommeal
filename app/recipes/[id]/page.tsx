@@ -452,8 +452,8 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
             <div className="flex gap-1">
               <input value={tagInput} onChange={e => setTagInput(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && addTag()}
-                placeholder="Tag…" className="h-6 text-xs px-2 py-0 w-24" />
-              <button onClick={addTag} className="h-6 px-2 rounded-md bg-[#222] hover:bg-[#2a2a2a] text-xs text-ink-muted hover:text-white transition-all">+</button>
+                placeholder="Tag…" aria-label="Tag hinzufügen" className="h-8 px-2 py-0 w-28" />
+              <button onClick={addTag} aria-label="Tag übernehmen" className="h-8 px-2.5 rounded-md bg-[#222] hover:bg-[#2a2a2a] text-xs text-ink-muted hover:text-white transition-all">+</button>
             </div>
           )}
         </div>

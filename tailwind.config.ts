@@ -49,16 +49,7 @@ const config: Config = {
         xl: '1rem',
         '2xl': '1.25rem',
       },
-      animation: {
-        'fade-in': 'fadeIn 0.2s ease-out',
-        'slide-up': 'slideUp 0.3s ease-out',
-        'shimmer': 'shimmer 1.5s infinite',
-      },
-      keyframes: {
-        fadeIn: { from: { opacity: '0' }, to: { opacity: '1' } },
-        slideUp: { from: { opacity: '0', transform: 'translateY(8px)' }, to: { opacity: '1', transform: 'translateY(0)' } },
-        shimmer: { '0%': { backgroundPosition: '-200% 0' }, '100%': { backgroundPosition: '200% 0' } },
-      },
+      // Animations (slideUp, shimmer, sheets) live in app/globals.css only
     },
   },
   plugins: [],

@@ -457,7 +457,7 @@ export function NotificationsSection({
                         value={profileNames.includes(people[id] ?? '') ? people[id] : ''}
                         onChange={e => setPerson(id, e.target.value)}
                         aria-label={`Wer bekommt die Nachrichten auf ${name}?`}
-                        className="h-10 w-[92px] px-2 text-sm"
+                        className="h-10 w-[92px] px-2"
                       >
                         {profileNames.map(p => <option key={p} value={p}>{p}</option>)}
                         <option value="">niemand</option>

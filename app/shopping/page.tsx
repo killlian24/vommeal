@@ -1083,7 +1083,7 @@ export default function ShoppingPage() {
               value={newStaple}
               onChange={e => setNewStaple(e.target.value)}
               placeholder="z. B. Olivenöl, Knoblauch …"
-              className="flex-1 text-sm min-h-[44px]"
+              className="flex-1 min-h-[44px]"
               aria-label="Neuer Vorrat"
               enterKeyHint="done"
             />
@@ -1266,7 +1266,7 @@ export default function ShoppingPage() {
                                 value={item.category}
                                 onChange={e => changeCategory(item.id, e.target.value)}
                                 aria-label="Kategorie"
-                                className="w-full text-sm min-h-[44px] bg-[#101010] border-[#2a2a2a] text-[#d0d0d0]"
+                                className="w-full min-h-[44px] bg-[#101010] border-[#2a2a2a] text-[#d0d0d0]"
                               >
                                 {CATEGORIES.map(c => (
                                   <option key={c} value={c}>{CATEGORY_LABELS[c] || c}</option>

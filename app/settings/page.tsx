@@ -377,7 +377,7 @@ export default function SettingsPage() {
                 id="dinner-category"
                 value={settings.dinner_category}
                 onChange={e => setSettings(s => ({ ...s, dinner_category: e.target.value }))}
-                className="w-full h-11 appearance-none pr-8 text-sm"
+                className="w-full h-11 appearance-none pr-8"
                 style={{ background: '#0f0f0f' }}
               >
                 <option value="">Alle Rezepte (kein Filter)</option>
@@ -501,7 +501,7 @@ export default function SettingsPage() {
                   onKeyDown={e => e.key === 'Enter' && addCustomKeyword(cat)}
                   placeholder="Wort hinzufügen"
                   aria-label={`Wort für ${CATEGORY_LABELS[cat].replace(/^.+? /, '')} hinzufügen`}
-                  className="h-11 text-sm"
+                  className="h-11"
                 />
                 <button
                   type="button"

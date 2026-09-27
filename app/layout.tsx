@@ -28,6 +28,9 @@ export const viewport: Viewport = {
   themeColor: '#0a0a0a',
   width: 'device-width',
   initialScale: 1,
+  // Draw under the status bar and home indicator of the installed iPhone app
+  // (black-translucent); the insets are padded in globals.css.
+  viewportFit: 'cover',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -40,8 +43,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <UserProvider>
           <div className="flex flex-col min-h-screen md:flex-row overflow-x-hidden">
             <Navigation />
-            <main className="flex-1 md:ml-56 pb-24 md:pb-0 min-w-0">
-              <div className="max-w-4xl mx-auto px-4 py-6 page-enter w-full">
+            <main className="flex-1 md:ml-56 pb-tabbar min-w-0">
+              <div className="max-w-4xl mx-auto px-4 pt-page pb-6 page-enter w-full">
                 {children}
               </div>
             </main>

@@ -45,7 +45,8 @@ input, textarea, select {
   border: 1px solid #2a2a2a;
   border-radius: 8px;
   padding: 8px 12px;
-  font-size: 0.875rem;
+  /* 16 px: smaller fields make iOS zoom in when they get focus */
+  font-size: 1rem;
   transition: border-color 0.15s;
   width: 100%;
 }
@@ -81,5 +82,27 @@ input::placeholder, textarea::placeholder {
   100% { background-position: -200% 0; }
 }
 
-/* Mobile safe area */
+/* Mobile safe area (needs viewport-fit=cover, see app/layout.tsx). The
+   insets are 0 on desktop and most Android phones. */
 .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+/* Page content: clear of the status bar at the top (installed iPhone app
+   with a translucent status bar), of the tab bar at the bottom */
+.pt-page { padding-top: calc(1.5rem + env(safe-area-inset-top)); }
+.pb-tabbar { padding-bottom: calc(6rem + env(safe-area-inset-bottom)); }
+.bottom-toast { bottom: calc(6rem + env(safe-area-inset-bottom)); }
+@media (min-width: 768px) {
+  .pb-tabbar { padding-bottom: 0; }
+  .bottom-toast { bottom: 1.5rem; }
+}
+
+/* Less motion when the phone asks for it: animations and transitions end
+   right away, the skeleton shimmer stands still. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after, ::backdrop {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .skeleton { animation: none; }
+}
