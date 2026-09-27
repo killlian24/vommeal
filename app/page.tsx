@@ -5,7 +5,7 @@ import { format, startOfWeek, addDays, isToday, parseISO, getDay } from 'date-fn
 import { de } from 'date-fns/locale'
 import {
   ChevronLeft, ChevronRight, ChevronDown, Plus, X, Search, ShoppingCart,
-  Zap, Vote, Heart, XCircle, ArrowLeftRight, ArrowRight, CalendarClock,
+  Zap, Vote, Heart, XCircle, ArrowLeftRight, ArrowRight, CalendarClock, StickyNote,
 } from 'lucide-react'
 import Image from 'next/image'
 import Link from 'next/link'
@@ -130,9 +130,9 @@ export default function PlanPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [picker, setPicker] = useState<Picker | null>(null)
+  // The planner's one field: searches recipes, or names a new dish
   const [search, setSearch] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
-  const [customName, setCustomName] = useState('')
   const [creatingRecipe, setCreatingRecipe] = useState(false)
   const [nextDayFree, setNextDayFree] = useState(false)
   const [addLeftovers, setAddLeftovers] = useState(false)
@@ -358,7 +358,7 @@ export default function PlanPage() {
   const openPicker = async (date: string, replaceId?: string) => {
     if (!ensureUser()) return
     setPicker({ date, replaceId })
-    setSearch(''); setCustomName(''); setAddLeftovers(false); setNextDayFree(false)
+    setSearch(''); setAddLeftovers(false); setNextDayFree(false)
     const next = ds(addDays(parseISO(date), 1))
     if (next >= startStr && next <= endStr) {
       setNextDayFree(!entries.find(e => e.date === next))
@@ -367,7 +367,7 @@ export default function PlanPage() {
     }
   }
 
-  const closePicker = () => { setPicker(null); setSearch(''); setCustomName(''); setAddLeftovers(false) }
+  const closePicker = () => { setPicker(null); setSearch(''); setAddLeftovers(false) }
 
   // Plans send what they expect on that evening (`expect_empty` or
   // `replace_id`); the server answers 409 with the current entry instead of
@@ -434,7 +434,7 @@ export default function PlanPage() {
   const planMeal = async (opts: { recipeId?: string; name?: string; quick?: boolean; label?: string }) => {
     if (!picker || saving) return
     const { date, replaceId } = picker
-    const name = opts.name ?? customName.trim()
+    const name = opts.name ?? search.trim()
     if (!opts.recipeId && !name) return
     const replaced = replaceId ? entries.find(e => e.id === replaceId) : undefined
     const keep = !!replaced && date === todayStr && !!opts.quick && KEEP_OLD_BY_DEFAULT.includes(name)
@@ -500,16 +500,16 @@ export default function PlanPage() {
     return n ? recipes.find(r => normName(r.name) === n) : undefined
   }
 
-  // Enter never creates a recipe: it plans an existing one with that exact
-  // name, otherwise it does nothing and the buttons below decide.
-  const onCustomNameEnter = () => {
-    const existing = sameNameRecipe(customName)
-    if (existing) planMeal({ recipeId: existing.id, label: existing.name })
+  // Enter never creates a recipe: it plans the first match of the list
+  // (an exact name comes first), otherwise it does nothing.
+  const onSearchEnter = () => {
+    const first = filteredRecipes[0]
+    if (first) planMeal({ recipeId: first.id, label: first.name })
   }
 
   // Free text → new recipe in Mealie (dinner category), then planned like any recipe.
   const createRecipeAndPlan = async () => {
-    const name = customName.trim()
+    const name = search.trim()
     if (!name || saving || creatingRecipe) return
     const existing = sameNameRecipe(name)
     if (existing) {
@@ -825,9 +825,15 @@ export default function PlanPage() {
     setSettleDate(null)
   }
 
-  const filteredRecipes = recipes.filter(r =>
-    r.name.toLowerCase().includes(search.toLowerCase())
-  )
+  // Exact name first, then names starting with the text, then the rest
+  const query = normName(search)
+  const matchRank = (r: Recipe) => {
+    const n = normName(r.name)
+    return n === query ? 0 : n.startsWith(query) ? 1 : 2
+  }
+  const filteredRecipes = recipes
+    .filter(r => normName(r.name).includes(query))
+    .sort((a, b) => matchRank(a) - matchRank(b))
 
   const title = isCurrentWeek ? 'Diese Woche' : isNextWeek ? 'Nächste Woche' : rangeLabel(weekStart, addDays(weekStart, 6))
   const subtitle = isCurrentWeek || isNextWeek ? rangeLabel(weekStart, addDays(weekStart, 6)) : `KW ${fmt(weekStart, 'I')}`
@@ -1142,68 +1148,45 @@ export default function PlanPage() {
               )
             })()}
 
+            {/* One field: search the recipes or name a new dish */}
+            <div className="relative">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-hint pointer-events-none" />
+              <input ref={searchRef} placeholder="Gericht suchen oder neu eingeben" aria-label="Gericht suchen oder neu eingeben"
+                value={search} onChange={e => setSearch(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); onSearchEnter() } }}
+                enterKeyHint="search" autoComplete="off"
+                className="pl-9 text-base min-h-[44px]" />
+            </div>
+
             {/* Quick options */}
-            <div className="grid grid-cols-2 gap-2">
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Ohne Rezept">
               {QUICK_MEALS.map(q => (
                 <button key={q.name} onClick={() => planMeal({ name: q.name, quick: true })} disabled={saving}
-                  className="min-h-[44px] flex items-center gap-2 px-3 rounded-xl bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm font-medium text-white text-left transition-all disabled:opacity-50">
-                  <span className="text-lg">{q.emoji}</span> {q.name}
+                  className="min-h-[44px] flex items-center gap-1.5 px-3 rounded-full bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm font-medium text-white transition-all disabled:opacity-50">
+                  <span aria-hidden>{q.emoji}</span> {q.name}
                 </button>
               ))}
             </div>
 
-            {/* Free text: new recipe in Mealie (default) or just a note for the evening */}
-            <div className="space-y-2">
-              <input placeholder="Neues Gericht, z. B. Schnitzel…" value={customName}
-                aria-label="Neues Gericht"
-                onChange={e => setCustomName(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); onCustomNameEnter() } }}
-                enterKeyHint="done"
-                className="text-base min-h-[44px]" />
-              {customName.trim() && (
-                <div className="flex gap-2">
-                  <button onClick={createRecipeAndPlan} disabled={saving || creatingRecipe}
-                    className="flex-1 min-h-[44px] px-3 rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-semibold transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none">
-                    {creatingRecipe ? 'Lege an…' : sameNameRecipe(customName) ? 'Vorhandenes Rezept planen' : 'Als Rezept anlegen & planen'}
-                  </button>
-                  <button onClick={() => planMeal({})} disabled={saving || creatingRecipe}
-                    className="min-h-[44px] px-3 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm text-ink-soft flex-shrink-0 transition-all disabled:opacity-50">
-                    Nur Notiz
-                  </button>
-                </div>
-              )}
-              {customName.trim() && (
-                <p className="text-xs text-ink-hint">
-                  {sameNameRecipe(customName)
-                    ? `„${sameNameRecipe(customName)!.name}“ gibt es schon als Rezept und wird eingeplant.`
-                    : 'Das Rezept landet in Mealie. Zutaten und Schritte könnt ihr später dort ergänzen.'}
-                </p>
-              )}
-            </div>
-
-            {/* Leftovers for tomorrow (not when tomorrow gets the old dish) */}
+            {/* Leftovers for tomorrow */}
             {nextDayFree && (
               <label className="flex items-center gap-3 min-h-[44px] px-3 rounded-xl bg-[#1a1a1a] border border-[#262626] cursor-pointer">
-                <span className="text-lg">🍲</span>
+                <span className="text-lg" aria-hidden>🍲</span>
                 <span className="flex-1 text-sm text-ink-soft">
                   Reste für morgen einplanen
                   <span className="block text-xs text-ink-hint">{fmt(addDays(parseISO(picker.date), 1), 'EEEE')} ist noch frei</span>
                 </span>
                 <input type="checkbox" checked={addLeftovers} onChange={e => setAddLeftovers(e.target.checked)}
                   className="sr-only peer" />
-                <span aria-hidden className="relative w-11 h-6 rounded-full bg-[#333] peer-checked:bg-primary transition-colors after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5" />
+                <span aria-hidden className="relative w-11 h-6 rounded-full bg-[#333] peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary/60 transition-colors after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5" />
               </label>
             )}
 
-            {/* Recipe search */}
-            <div className="relative">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-hint" />
-              <input ref={searchRef} placeholder="Rezepte suchen…" aria-label="Rezepte suchen"
-                value={search} onChange={e => setSearch(e.target.value)}
-                className="pl-9 text-base min-h-[44px]" />
-            </div>
+            {/* Recipes matching the field; a new dish only as the last entries */}
             <div className="space-y-1">
-              {filteredRecipes.length === 0 && <p className="text-center text-ink-muted text-sm py-4">Keine Rezepte gefunden</p>}
+              {filteredRecipes.length === 0 && !search.trim() && (
+                <p className="text-center text-ink-muted text-sm py-4">Noch keine Rezepte</p>
+              )}
               {filteredRecipes.map(r => {
                 const mins = (r.prep_time || 0) + (r.cook_time || 0)
                 return (
@@ -1221,6 +1204,28 @@ export default function PlanPage() {
                   </button>
                 )
               })}
+              {search.trim() && !sameNameRecipe(search) && (
+                <div className="pt-1 space-y-1 border-t border-[#1e1e1e]">
+                  <button onClick={createRecipeAndPlan} disabled={saving || creatingRecipe}
+                    className="w-full min-h-[48px] flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-[#1e1e1e] text-left transition-all disabled:opacity-50">
+                    <span className="w-10 h-10 rounded-lg bg-primary/10 text-primary flex items-center justify-center flex-shrink-0"><Plus size={18} /></span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-sm font-medium text-white truncate">
+                        {creatingRecipe ? 'Lege an…' : `„${search.trim()}“ als neues Rezept anlegen`}
+                      </span>
+                      <span className="block text-xs text-ink-hint">Zutaten und Schritte könnt ihr später ergänzen</span>
+                    </span>
+                  </button>
+                  <button onClick={() => planMeal({})} disabled={saving || creatingRecipe}
+                    className="w-full min-h-[48px] flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-[#1e1e1e] text-left transition-all disabled:opacity-50">
+                    <span className="w-10 h-10 rounded-lg bg-[#1e1e1e] text-ink-muted flex items-center justify-center flex-shrink-0"><StickyNote size={17} /></span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-sm font-medium text-white truncate">„{search.trim()}“ nur als Notiz</span>
+                      <span className="block text-xs text-ink-hint">Nur für diesen Abend, ohne Rezept</span>
+                    </span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </Sheet>
