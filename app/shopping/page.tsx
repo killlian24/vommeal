@@ -229,20 +229,31 @@ export default function ShoppingPage() {
     loadStaples()
   }, [])
 
+  // Rollbacks only touch the affected item, so a second quick tap that did
+  // succeed is not undone with it.
+  const revertItem = (id: string, patch: Partial<ShoppingItem>) =>
+    setItems(prev => prev.map(i => i.id === id ? { ...i, ...patch } : i))
+
   const toggle = async (id: string) => {
-    const previous = items
-    setItems(prev => prev.map(i => i.id === id ? { ...i, checked: !i.checked } : i))
+    const item = items.find(i => i.id === id)
+    if (!item) return
+    const checked = !item.checked
+    setItems(prev => prev.map(i => i.id === id ? { ...i, checked } : i))
     try {
-      const res = await fetch(`/api/shopping/${id}`, { method: 'PATCH' })
+      const res = await fetch(`/api/shopping/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ checked }),
+      })
       if (!res.ok) throw new Error('toggle failed')
     } catch {
-      setItems(previous)
+      revertItem(id, { checked: !checked })
       showToast('Eintrag konnte nicht geändert werden', { duration: ERROR_MS })
     }
   }
 
   const changeCategory = async (id: string, category: string) => {
-    const previous = items
+    const previousCategory = items.find(i => i.id === id)?.category
     setItems(prev => prev.map(i => i.id === id ? { ...i, category } : i))
     try {
       const res = await fetch(`/api/shopping/${id}`, {
@@ -254,7 +265,7 @@ export default function ShoppingPage() {
       setEditingCategoryId(null)
     } catch {
       showToast('Kategorie konnte nicht geändert werden', { duration: ERROR_MS })
-      setItems(previous)
+      if (previousCategory !== undefined) revertItem(id, { category: previousCategory })
     }
   }
 
@@ -291,7 +302,6 @@ export default function ShoppingPage() {
   const remove = async (id: string) => {
     const item = items.find(i => i.id === id)
     if (!item) return
-    const previous = items
     setItems(prev => prev.filter(i => i.id !== id))
     const pending = fetch(`/api/shopping/${id}`, { method: 'DELETE' })
     showToast(`„${item.name}“ entfernt`, {
@@ -302,7 +312,7 @@ export default function ShoppingPage() {
       const res = await pending
       if (!res.ok) throw new Error('delete failed')
     } catch {
-      setItems(previous)
+      setItems(prev => prev.some(i => i.id === id) ? prev : [...prev, item])
       showToast('Eintrag konnte nicht entfernt werden', { duration: ERROR_MS })
     }
   }
@@ -310,7 +320,6 @@ export default function ShoppingPage() {
   const clearChecked = async () => {
     const removed = items.filter(i => i.checked)
     if (removed.length === 0) return
-    const previous = items
     setItems(prev => prev.filter(i => !i.checked))
     const pending = fetch('/api/shopping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'clear_checked' }) })
     showToast(`${plural(removed.length, 'erledigter Eintrag', 'erledigte Einträge')} entfernt`, {
@@ -321,7 +330,10 @@ export default function ShoppingPage() {
       const res = await pending
       if (!res.ok) throw new Error('clear checked failed')
     } catch {
-      setItems(previous)
+      setItems(prev => {
+        const have = new Set(prev.map(i => i.id))
+        return [...prev, ...removed.filter(i => !have.has(i.id))]
+      })
       showToast('Erledigte konnten nicht entfernt werden', { duration: ERROR_MS })
     }
   }

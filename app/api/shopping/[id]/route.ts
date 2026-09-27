@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { toggleShoppingItem, deleteShoppingItem, getShoppingItemById, setShoppingItemCategory, CATEGORIES } from '@/lib/db'
+import { toggleShoppingItem, setShoppingItemChecked, deleteShoppingItem, getShoppingItemById, setShoppingItemCategory, CATEGORIES } from '@/lib/db'
 import { getHomeAssistantConfig } from '@/lib/config'
 import { completeHAItem, removeActiveHAItemsForLocalItems } from '@/lib/ha'
 
@@ -15,11 +15,19 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ ok: true, item: getShoppingItemById(id) })
   }
 
+  if (body.checked !== undefined && typeof body.checked !== 'boolean') {
+    return NextResponse.json({ error: 'checked must be true or false' }, { status: 400 })
+  }
+
   const item = getShoppingItemById(id)
   if (!item) return NextResponse.json({ error: 'Eintrag nicht gefunden' }, { status: 404 })
 
+  // Clients send the target state so two quick taps (or both phones) cannot
+  // cancel each other out. Without `checked` it toggles as before.
+  const target: boolean = typeof body.checked === 'boolean' ? body.checked : !item.checked
+
   // If this is an HA item being checked off, mark it done in HA/Keep too
-  if (!item.checked && item.ha_uid) {
+  if (target && !item.checked && item.ha_uid) {
     const config = getHomeAssistantConfig()
     if (config) {
       try {
@@ -32,7 +40,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
   }
 
-  toggleShoppingItem(id)
+  if (typeof body.checked === 'boolean') setShoppingItemChecked(id, target)
+  else toggleShoppingItem(id)
   return NextResponse.json({ ok: true })
 }
 
