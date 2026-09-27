@@ -4,11 +4,12 @@ import { useState, useEffect, useCallback, use } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import Link from 'next/link'
-import { ArrowLeft, Clock, Users, ExternalLink, Edit2, Trash2, Save, X, Plus, CookingPot, Zap, ChefHat } from 'lucide-react'
+import { ArrowLeft, Clock, Users, ExternalLink, Edit2, Trash2, Save, X, Plus, CookingPot, Zap, ChefHat, CalendarPlus } from 'lucide-react'
 import { StarRating } from '@/components/StarRating'
 import CookMode, { FewIngredientsHint, readCookProgress } from '@/components/CookMode'
 import { track } from '@/lib/track'
 import { apiCall } from '@/lib/apiCall'
+import { PlanRecipeSheet } from '@/components/PlanRecipeSheet'
 
 type Effort = 'quick' | 'involved' | null
 type Ingredient = { amount: string; unit: string; name: string; note?: string }
@@ -47,6 +48,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
   const [tagInput, setTagInput] = useState('')
   const [settings, setSettings] = useState<{ mealie_url: string }>({ mealie_url: '' })
   const [cooking, setCooking] = useState(false)
+  const [planning, setPlanning] = useState(false)
   const [effortError, setEffortError] = useState(false)
   // Load failure: 'gone' = recipe deleted (404), otherwise the error text
   const [loadError, setLoadError] = useState<'gone' | string>('')
@@ -397,13 +399,22 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
       {/* Kochen + Aufwand */}
       {!isNew && !editing && (
         <div className="space-y-3">
-          <button
-            type="button"
-            onClick={openCookMode}
-            className="w-full flex items-center justify-center gap-2 h-12 rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold transition-all active:scale-[0.98]"
-          >
-            <CookingPot size={19} /> Kochen
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={openCookMode}
+              className="flex-1 flex items-center justify-center gap-2 h-12 rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold transition-all active:scale-[0.98]"
+            >
+              <CookingPot size={19} /> Kochen
+            </button>
+            <button
+              type="button"
+              onClick={() => { setPlanning(true); track('recipe_plan_open') }}
+              className="flex-1 flex items-center justify-center gap-2 h-12 rounded-xl bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-white text-base font-medium transition-all active:scale-[0.98]"
+            >
+              <CalendarPlus size={18} /> Einplanen
+            </button>
+          </div>
           <div className="flex items-center gap-3">
             <span className="text-sm text-ink-muted flex-shrink-0">Aufwand</span>
             <div className="flex flex-1 bg-[#141414] border border-[#2a2a2a] rounded-xl p-1" role="radiogroup" aria-label="Aufwand">
@@ -590,6 +601,10 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
           />
           <p className="text-xs text-ink-hint mt-1">Mealie-Slug eintragen, um das Rezept in Mealie zu öffnen</p>
         </div>
+      )}
+
+      {planning && (
+        <PlanRecipeSheet recipe={{ id: recipe.id, name: recipe.name }} onClose={() => setPlanning(false)} />
       )}
 
       {cooking && (

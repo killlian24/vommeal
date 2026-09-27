@@ -43,6 +43,7 @@ Kommt man zurück in die App (oder ist wieder online), laden Woche, Heute und Ei
 - **Neues Rezept** (Plus auf der Seite Rezepte oder beim Planen) legt das Rezept direkt in Mealie an, mit Beschreibung, Zutaten und Schritten.
 - **Rezept per Link hinzufügen:** Link einfügen oder auf Android über „Teilen“ an Vommeal schicken, Mealie liest die Seite aus (siehe [Rezept per Link importieren](#rezept-per-link-importieren)).
 - **Löschen** auf der Rezeptseite löscht das Rezept nach Rückfrage auch in Mealie. Geplante Abende behalten den Namen.
+- **Einplanen** neben **Kochen** zeigt die nächsten 10 Abende: freie hervorgehoben, belegte mit ihrem Gericht und „ersetzen“. Hat der andere inzwischen dort etwas geplant, fragt Vommeal nach, statt zu überschreiben; Rückgängig ist möglich.
 - **Kochen** öffnet den Kochmodus: erst die Zutaten zum Abhaken, dann ein Schritt pro Bildschirm in großer Schrift; der Bildschirm bleibt dabei an.
 - **Schnell / Aufwendig** markiert Rezepte für Filter und Vorschläge. Bewertungen, Suche und Filter gibt es auf der Rezeptliste.
 
