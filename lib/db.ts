@@ -611,9 +611,16 @@ export function deleteMealPlanEntry(id: string): boolean {
   return changes > 0
 }
 
-export function deleteMealPlanRange(startDate: string, endDate: string) {
-  getDb().prepare('DELETE FROM meal_plan WHERE date BETWEEN ? AND ?').run(startDate, endDate)
+/** Delete every entry in the range and return what was removed (for undo). */
+export function deleteMealPlanRange(startDate: string, endDate: string): MealPlanEntry[] {
+  const db = getDb()
+  let removed: MealPlanEntry[] = []
+  db.transaction(() => {
+    removed = getMealPlanRange(startDate, endDate)
+    db.prepare('DELETE FROM meal_plan WHERE date BETWEEN ? AND ?').run(startDate, endDate)
+  })()
   mealPlanChanged()
+  return removed
 }
 
 // --- Moving planned evenings ---
@@ -755,8 +762,15 @@ export function deleteNominationsOlderThan(cutoffDate: string) {
   getDb().prepare('DELETE FROM nominations WHERE date < ?').run(cutoffDate)
 }
 
-export function deleteNominationsForRange(startDate: string, endDate: string) {
-  getDb().prepare('DELETE FROM nominations WHERE date BETWEEN ? AND ?').run(startDate, endDate)
+/** Delete the range's nominations and return what was removed (for undo). */
+export function deleteNominationsForRange(startDate: string, endDate: string): Nomination[] {
+  const db = getDb()
+  let removed: Nomination[] = []
+  db.transaction(() => {
+    removed = getNominationsForRange(startDate, endDate)
+    db.prepare('DELETE FROM nominations WHERE date BETWEEN ? AND ?').run(startDate, endDate)
+  })()
+  return removed
 }
 
 // --- Shopping List ---

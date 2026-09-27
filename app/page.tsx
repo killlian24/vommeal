@@ -152,6 +152,7 @@ export default function PlanPage() {
   const pendingVotes = useRef<Promise<unknown>[]>([])
   const [settleDate, setSettleDate] = useState<string | null>(null)
   const [addingToList, setAddingToList] = useState<string | null>(null)
+  const [clearing, setClearing] = useState(false)
   // How next week was opened on load; tracked once the profile is known
   const pendingOpenSource = useRef<string | null>(null)
 
@@ -644,15 +645,53 @@ export default function PlanPage() {
     showToast(added > 0 ? `${added} Zutaten auf die Einkaufsliste` : 'Schon alles auf der Liste')
   }
 
+  // Clears from today on only: past evenings are history (14-day rule,
+  // "Wie war's?"). No confirm, but an undo that restores onto free evenings.
   const clearWeek = async () => {
-    if (!confirm(`Alle Gerichte und Stimmen für ${rangeLabel(weekStart, addDays(weekStart, 6))} löschen? Das kann nicht rückgängig gemacht werden.`)) return
-    await Promise.all([
-      fetch(`/api/meal-plan?start=${startStr}&end=${endStr}`, { method: 'DELETE' }),
-      fetch(`/api/nominations?start=${startStr}&end=${endStr}`, { method: 'DELETE' }),
+    if (clearing || upcomingStartStr > endStr) return
+    setClearing(true)
+    const range = `start=${upcomingStartStr}&end=${endStr}`
+    const [plan, noms] = await Promise.all([
+      apiCall<{ removed?: MealEntry[] }>(`/api/meal-plan?${range}`, { method: 'DELETE', fallback: 'Woche konnte nicht geleert werden' }),
+      apiCall<{ removed?: Nomination[] }>(`/api/nominations?${range}`, { method: 'DELETE', fallback: 'Stimmen konnten nicht gelöscht werden' }),
     ])
+    setClearing(false)
     await refresh()
     await loadNominations()
-    showToast('Woche geleert')
+    const removed = plan.ok ? plan.data?.removed ?? [] : []
+    const removedNoms = noms.ok ? noms.data?.removed ?? [] : []
+    if (!plan.ok || !noms.ok) {
+      showToast(!plan.ok ? plan.error : noms.error)
+      return
+    }
+    track('plan_clear', { removed: removed.length })
+    const what = upcomingStartStr > startStr ? 'Rest der Woche' : 'Woche'
+    showToast(removed.length > 0 ? `${what} geleert: ${abende(removed.length)}` : `${what} geleert`, {
+      duration: 8000,
+      action: removed.length + removedNoms.length > 0 ? {
+        label: 'Rückgängig',
+        onClick: () => { hideToast(); restoreCleared(removed, removedNoms) },
+      } : undefined,
+    })
+  }
+
+  // Undo for "Woche leeren": each evening only comes back if it is still free.
+  const restoreCleared = async (removed: MealEntry[], removedNoms: Nomination[]) => {
+    const results = await Promise.all(removed.map(e => postEntry({
+      id: e.id, date: e.date, recipe_id: e.recipe_id, custom_meal_name: e.custom_meal_name,
+      servings: e.servings || SERVINGS, notes: e.notes, suggested_by: e.suggested_by, expect_empty: true,
+    })))
+    await Promise.all(removedNoms.map(n => apiCall('/api/nominations', {
+      method: 'POST',
+      body: { date: n.date, recipe_id: n.recipe_id, user_name: n.user_name },
+    })))
+    await refresh()
+    await loadNominations()
+    const taken = results.filter(r => r.status === 409).length
+    const failed = results.find(r => !r.ok && r.status !== 409)
+    if (failed) showToast(failed.status === 0 ? failed.error : 'Konnte nicht wiederhergestellt werden')
+    else if (taken > 0) showToast(`${abende(taken)} inzwischen neu geplant, dort nichts überschrieben`, { duration: 4000 })
+    else showToast('Wiederhergestellt')
   }
 
   // ---- Fun mode ("Swipen") -------------------------------------------------
@@ -1051,12 +1090,12 @@ export default function PlanPage() {
         </button>
       )}
 
-      {/* Clear week */}
-      {(entries.length > 0 || nominations.length > 0) && (
+      {/* Clear week: only what is still ahead, past weeks are never cleared */}
+      {(entries.some(e => e.date >= upcomingStartStr) || nominations.some(n => n.date >= upcomingStartStr)) && (
         <div className="flex justify-center pt-2">
-          <button onClick={clearWeek}
-            className="min-h-[40px] text-sm text-ink-hint hover:text-red-400 transition-colors px-4">
-            Woche leeren
+          <button onClick={clearWeek} disabled={clearing}
+            className="min-h-[40px] text-sm text-ink-hint hover:text-red-400 transition-colors px-4 disabled:opacity-50">
+            {upcomingStartStr > startStr ? 'Ab heute leeren' : 'Woche leeren'}
           </button>
         </div>
       )}

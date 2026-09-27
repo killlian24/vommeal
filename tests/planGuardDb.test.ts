@@ -78,3 +78,20 @@ describe('deleteMealPlanEntry (B3)', () => {
     expect(db.deleteMealPlanEntry('never-existed')).toBe(false)
   })
 })
+
+describe('deleteMealPlanRange (B9)', () => {
+  it('deletes only the given range and returns the removed entries for undo', () => {
+    db.addMealPlanEntry(entry('past', '2026-09-28', 'Gestern'))
+    db.addMealPlanEntry(entry('t', '2026-09-30', 'Heute'))
+    db.addMealPlanEntry(entry('f', '2026-10-02', 'Freitag'))
+    // The week page passes today..Sunday for the current week
+    const removed = db.deleteMealPlanRange('2026-09-30', '2026-10-04')
+    expect(removed.map(e => e.id)).toEqual(['t', 'f'])
+    expect(db.getMealPlanRange('2026-09-28', '2026-10-04').map(e => e.id)).toEqual(['past'])
+    // Undo puts them back with their ids while the evenings are still free
+    for (const e of removed) {
+      expect(db.addMealPlanEntryIfExpected({ ...e, status: 'approved' }, { expectEmpty: true }).ok).toBe(true)
+    }
+    expect(db.getMealPlanRange('2026-09-28', '2026-10-04').map(e => e.id)).toEqual(['past', 't', 'f'])
+  })
+})
