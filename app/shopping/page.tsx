@@ -9,6 +9,7 @@ import { format, startOfWeek, addDays, parseISO, isToday } from 'date-fns'
 import { de } from 'date-fns/locale'
 import { track } from '@/lib/track'
 import { useToast } from '@/components/Toast'
+import { dayLabel, todayIso } from '@/lib/dates'
 import { Sheet, SheetTitle, SheetClose } from '@/components/Sheet'
 import { apiCall } from '@/lib/apiCall'
 import { useRefreshOnResume } from '@/lib/useRefreshOnResume'
@@ -106,22 +107,17 @@ function mealsLabel(names: string[] | undefined): string {
   return names && names.length > 0 ? `für ${names.join(', ')}` : ''
 }
 
-/** "Mo 29. Linsen · Mi 1. Tajine" — meals with their day, for the review sheet. */
+/** "Mo 29.9. Linsen · Mi 1.10. Tajine": meals with their day, for the review sheet. */
 function datedMealsLabel(meals: ReviewItem['meals']): string {
+  const today = todayIso()
   return [...meals]
     .sort((a, b) => a.date.localeCompare(b.date))
-    .map(m => `${format(parseISO(m.date), 'EEEEEE d.', { locale: de })} ${m.recipe_name}`)
+    .map(m => `${dayLabel(m.date, today)} ${m.recipe_name}`)
     .join(' · ')
 }
 
-/** "Heute", "Morgen" or "Sa 3." for a meal row. */
-function mealDayLabel(date: string): string {
-  const d = parseISO(date)
-  const today = new Date()
-  if (format(d, 'yyyy-MM-dd') === format(today, 'yyyy-MM-dd')) return 'Heute'
-  if (format(d, 'yyyy-MM-dd') === format(addDays(today, 1), 'yyyy-MM-dd')) return 'Morgen'
-  return format(d, 'EEEEEE d.', { locale: de })
-}
+/** "Heute", "Morgen" or "Sa 3.10." for a meal row. */
+const mealDayLabel = (date: string) => dayLabel(date, todayIso())
 
 function endOfNextWeek(): string {
   return format(addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), 13), 'yyyy-MM-dd')

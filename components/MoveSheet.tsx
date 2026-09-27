@@ -7,6 +7,7 @@ import { ArrowDown, ArrowUp } from 'lucide-react'
 import { addDaysIso, planShift, type PlanMove } from '@/lib/planMoves'
 import { EATING_OUT } from '@/lib/quickMeals'
 import { Sheet, SheetHeader } from '@/components/Sheet'
+import { dayLabel, rangeLabel } from '@/lib/dates'
 
 type Planned = { id: string; date: string; recipe?: { name: string }; custom_meal_name: string | null }
 
@@ -73,14 +74,14 @@ export function MoveSheet({ entry, weekStart, today, busy, onClose, onShift, onM
       monday,
       label: monday === mondayOf(today) ? 'Diese Woche'
         : monday === addDaysIso(mondayOf(today), 7) ? 'Nächste Woche'
-        : `${fmt(monday, 'd.M.')} – ${fmt(addDaysIso(monday, 6), 'd.M.')}`,
+        : rangeLabel(monday, addDaysIso(monday, 6)),
       days: Array.from({ length: 7 }, (_, i) => addDaysIso(monday, i)).filter(d => d >= today),
     }
   }).filter(w => w.days.length > 0)
 
   return (
     <Sheet onClose={onClose}>
-      <SheetHeader title="Verschieben" subtitle={`${fmt(entry.date, 'EEEEEE d.M.')} · ${entry.name}`} />
+      <SheetHeader title="Verschieben" subtitle={`${dayLabel(entry.date, today)} · ${entry.name}`} />
 
       <div className="p-4 space-y-4 overflow-y-auto overscroll-contain">
         {/* One day later, the following evenings slide along */}
@@ -136,7 +137,7 @@ export function MoveSheet({ entry, weekStart, today, busy, onClose, onShift, onM
                           : 'border-dashed border-[#333] bg-[#121212] hover:bg-[#1c1c1c]'
                       } disabled:cursor-not-allowed`}>
                       <span className="flex items-center justify-between gap-1 text-sm font-semibold text-white">
-                        {fmt(date, 'EEEEEE d.M.')}
+                        {dayLabel(date, today)}
                         {!isCurrent && !past && other && (
                           <span className="text-[11px] font-medium text-amber-300">tauschen</span>
                         )}

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { format, addDays, subDays, isToday, isTomorrow, isYesterday } from 'date-fns'
+import { format, addDays, subDays, isYesterday } from 'date-fns'
 import { de } from 'date-fns/locale'
 import Image from 'next/image'
 import Link from 'next/link'
@@ -14,6 +14,7 @@ import { apiCall } from '@/lib/apiCall'
 import { inDinnerCategory, pickSuggestions as pickFrom } from '@/lib/suggest'
 import { useCurrentUser } from '@/components/UserProvider'
 import { useToast } from '@/components/Toast'
+import { dayLabel as appDayLabel, todayIso } from '@/lib/dates'
 import { useRefreshOnResume } from '@/lib/useRefreshOnResume'
 import {
   partnerChanges, changedBy, responseTime, addMarks, dropMarks, loadMarks, saveMarks, loadLastSeen, saveLastSeen,
@@ -37,12 +38,10 @@ const PROMPTED_KEY = (entryId: string) => `vommeal_rate_prompted_${entryId}`
 // Evenings without cooking: nothing to move to tomorrow.
 const NO_COOKING: string[] = [EATING_OUT, 'Bestellen', 'Frei']
 
+// "Gestern" for the rating prompt, otherwise the app-wide "Heute", "Morgen", "Mi 30.9."
 function dayLabel(dateStr: string): string {
-  const d = new Date(dateStr + 'T12:00:00')
-  if (isToday(d)) return 'Heute'
-  if (isTomorrow(d)) return 'Morgen'
-  if (isYesterday(d)) return 'Gestern'
-  return format(d, 'EEEE', { locale: de })
+  if (isYesterday(new Date(dateStr + 'T12:00:00'))) return 'Gestern'
+  return appDayLabel(dateStr, todayIso())
 }
 
 function wasPrompted(entryId: string): boolean {

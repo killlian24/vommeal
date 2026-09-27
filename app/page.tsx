@@ -26,6 +26,7 @@ import {
 import { MoveSheet } from '@/components/MoveSheet'
 import { Sheet, SheetHeader, SheetTitle, SheetClose, sheetPanel } from '@/components/Sheet'
 import { useToast } from '@/components/Toast'
+import { dayLabel, shortDay, rangeLabel as dateRange } from '@/lib/dates'
 
 type Recipe = {
   id: string; name: string; image_url: string; prep_time: number; cook_time: number
@@ -63,12 +64,8 @@ function defaultWeekStart(now = new Date()): Date {
   return dow === 5 || dow === 6 || dow === 0 ? addDays(monday, 7) : monday
 }
 
-// "22.–28. Sep." or "29. Sep. – 5. Okt."
-function rangeLabel(start: Date, end: Date): string {
-  return start.getMonth() === end.getMonth()
-    ? `${fmt(start, 'd.')}–${fmt(end, 'd. MMM')}`
-    : `${fmt(start, 'd. MMM')} – ${fmt(end, 'd. MMM')}`
-}
+// "22. bis 28. Sep." or "29. Sep. bis 5. Okt."
+const rangeLabel = (start: Date, end: Date) => dateRange(ds(start), ds(end))
 
 const mealName = (e: MealEntry) => e.recipe?.name || e.custom_meal_name || 'Essen'
 // Compare dish names loosely: case, surrounding and double spaces do not matter
@@ -930,7 +927,7 @@ export default function PlanPage() {
                 const dateStr = ds(day)
                 return (
                   <div key={dateStr} className="flex items-center gap-3 px-3 py-2 text-sm">
-                    <span className="w-16 flex-shrink-0 text-ink-hint font-medium">{fmt(day, 'EEE d.')}</span>
+                    <span className="w-16 flex-shrink-0 text-ink-hint font-medium">{shortDay(dateStr)}</span>
                     {entry ? (
                       entry.recipe_id ? (
                         <Link href={`/recipes/${entry.recipe_id}`} className="flex-1 min-w-0 truncate text-ink-muted hover:text-white transition-colors">
@@ -960,7 +957,6 @@ export default function PlanPage() {
           const dateStr = ds(day)
           const today = isToday(day)
           const past = dateStr < todayStr
-          const dayLabel = today ? 'Heute' : fmt(day, 'EEEE')
           const dropOver = drag.overDate === dateStr
 
           if (loading) {
@@ -980,7 +976,7 @@ export default function PlanPage() {
                   <MealThumb entry={entry} size="w-14 h-14" />
                   <div className="flex-1 min-w-0">
                     <p className={`text-xs font-semibold ${today ? 'text-primary' : 'text-ink-muted'}`}>
-                      {dayLabel} <span className="font-normal text-ink-hint">{fmt(day, 'd.M.')}</span>
+                      {dayLabel(dateStr, todayStr)}
                       {marks[entry.id] && (
                         <span title={`Neu von ${entry.updated_by || entry.suggested_by}`}
                           className="ml-1.5 inline-flex items-center gap-1 align-middle px-1.5 rounded-full bg-primary/15 text-[10px] font-semibold leading-4 text-primary">
@@ -1038,7 +1034,7 @@ export default function PlanPage() {
           const hasMatch = myNoms.some(n => partnerIds.has(n.recipe_id))
           const dayHead = (
             <span className={`w-20 flex-shrink-0 text-sm font-semibold ${today ? 'text-primary' : 'text-ink-soft'}`}>
-              {today ? 'Heute' : fmt(day, 'EEE d.')}
+              {dayLabel(dateStr, todayStr)}
             </span>
           )
 
