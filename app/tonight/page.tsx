@@ -14,6 +14,7 @@ import { apiCall } from '@/lib/apiCall'
 import { inDinnerCategory, pickSuggestions as pickFrom } from '@/lib/suggest'
 import { useCurrentUser } from '@/components/UserProvider'
 import { useToast } from '@/components/Toast'
+import { WeekIngredientsSheet } from '@/components/WeekIngredientsSheet'
 import { dayLabel as appDayLabel, todayIso } from '@/lib/dates'
 import { useRefreshOnResume } from '@/lib/useRefreshOnResume'
 import {
@@ -90,7 +91,6 @@ export default function TonightPage() {
   const [tonightNew, setTonightNew] = useState(false)
   // Server time of the last plan load, the "last seen" for that check
   const loadedAt = useRef(0)
-  const [addingDate, setAddingDate] = useState<string | null>(null)
   const [planning, setPlanning] = useState<string | null>(null)
   const [suggestions, setSuggestions] = useState<Recipe[]>([])
   const [seen, setSeen] = useState<Set<string>>(new Set())
@@ -219,19 +219,8 @@ export default function TonightPage() {
   const fullRecipe = (e: MealEntry): Recipe | undefined =>
     (e.recipe_id && recipeById.get(e.recipe_id)) || e.recipe
 
-  const addToList = async (date: string) => {
-    setAddingDate(date)
-    const res = await apiCall<{ added?: number }>('/api/shopping', {
-      method: 'POST',
-      body: { action: 'add_date', date },
-      fallback: 'Einkaufsliste nicht erreichbar',
-    })
-    setAddingDate(null)
-    if (!res.ok) { showError(res.error); return }
-    const added = res.data?.added ?? 0
-    if (added > 0) showToast(`${added} Zutaten auf die Einkaufsliste gesetzt`)
-    else showToast('Schon auf der Liste oder keine Zutaten hinterlegt')
-  }
+  // Ingredients go through the review sheet, prefiltered to that evening
+  const [ingredientsFor, setIngredientsFor] = useState<string | null>(null)
 
   // Suggestions only show while tonight is free, so the request expects a
   // free evening; a 409 means the partner planned something in the meantime.
@@ -501,12 +490,11 @@ export default function TonightPage() {
                   <BookOpen size={18} /> Rezept öffnen
                 </Link>
                 <button
-                  onClick={() => addToList(today)}
-                  disabled={addingDate === today}
+                  onClick={() => setIngredientsFor(today)}
                   className="flex items-center justify-center gap-2 h-11 rounded-xl border border-[#2a2a2a] bg-[#1c1c1c] text-ink-soft text-sm font-medium transition-all disabled:opacity-50 active:scale-[0.98]"
                 >
                   <ShoppingCart size={15} />
-                  {addingDate === today ? 'Wird hinzugefügt…' : 'Zutaten auf die Einkaufsliste'}
+                  Zutaten auf die Einkaufsliste
                 </button>
               </div>
             )}
@@ -661,9 +649,8 @@ export default function TonightPage() {
                 </div>
                 {entry.recipe_id && (
                   <button
-                    onClick={() => addToList(entry.date)}
-                    disabled={addingDate === entry.date}
-                    aria-label="Zutaten auf die Einkaufsliste"
+                    onClick={() => setIngredientsFor(entry.date)}
+                    aria-label={`Zutaten für ${r?.name ?? 'dieses Gericht'} einkaufen`}
                     className="w-11 h-11 -my-1.5 -mr-1 flex items-center justify-center rounded-lg text-ink-hint hover:text-primary hover:bg-primary/10 transition-all disabled:opacity-50 flex-shrink-0"
                   >
                     <ShoppingCart size={17} />
@@ -673,6 +660,10 @@ export default function TonightPage() {
             )
           })}
         </div>
+      )}
+
+      {ingredientsFor && (
+        <WeekIngredientsSheet start={ingredientsFor} end={ingredientsFor} source="tonight" onClose={() => setIngredientsFor(null)} />
       )}
     </div>
   )

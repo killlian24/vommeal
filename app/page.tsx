@@ -24,6 +24,7 @@ import {
   loadLastSeen, saveLastSeen, type Marks,
 } from '@/lib/partnerChanges'
 import { MoveSheet } from '@/components/MoveSheet'
+import { WeekIngredientsSheet } from '@/components/WeekIngredientsSheet'
 import { Sheet, SheetHeader, SheetTitle, SheetClose, sheetPanel } from '@/components/Sheet'
 import { useToast } from '@/components/Toast'
 import { dayLabel, shortDay, relativeWeekday, rangeLabel as dateRange } from '@/lib/dates'
@@ -154,7 +155,8 @@ export default function PlanPage() {
   const [funDone, setFunDone] = useState(false)
   const pendingVotes = useRef<Promise<unknown>[]>([])
   const [settleDate, setSettleDate] = useState<string | null>(null)
-  const [addingToList, setAddingToList] = useState<string | null>(null)
+  // "Zutaten der Woche" sheet for the week on screen or one evening
+  const [ingredients, setIngredients] = useState<{ start: string; end: string; source: 'week' | 'card' } | null>(null)
   const [clearing, setClearing] = useState(false)
   // How next week was opened on load; tracked once the profile is known
   const pendingOpenSource = useRef<string | null>(null)
@@ -684,33 +686,12 @@ export default function PlanPage() {
     }
   }
 
-  const addToList = async (date: string) => {
-    setAddingToList(date)
-    const res = await apiCall<{ added?: number }>('/api/shopping', {
-      method: 'POST',
-      body: { action: 'add_date', date },
-      fallback: 'Zutaten konnten nicht übernommen werden',
-    })
-    setAddingToList(null)
-    if (!res.ok) { showError(res.error); return }
-    const added = res.data?.added ?? 0
-    track('shopping_from_plan', { scope: 'day', added })
-    showToast(added > 0 ? `${added} Zutaten auf die Einkaufsliste` : 'Schon alles auf der Liste')
-  }
-
-  const generateShopping = async () => {
-    if (upcomingStartStr > endStr) { showToast('Diese Woche ist schon vorbei'); return }
-    setAddingToList('week')
-    const res = await apiCall<{ added?: number }>('/api/shopping', {
-      method: 'POST',
-      body: { action: 'generate', start: upcomingStartStr, end: endStr },
-      fallback: 'Zutaten konnten nicht übernommen werden',
-    })
-    setAddingToList(null)
-    if (!res.ok) { showError(res.error); return }
-    const added = res.data?.added ?? 0
-    track('shopping_from_plan', { scope: 'week', added })
-    showToast(added > 0 ? `${added} Zutaten auf die Einkaufsliste` : 'Schon alles auf der Liste')
+  // Every way to the shopping list goes through the review sheet: "Einkaufen"
+  // for the evenings of the week on screen, the cart for one evening.
+  const openIngredients = (start: string, end: string, source: 'week' | 'card') => {
+    if (start > end) { showToast('Diese Woche ist schon vorbei'); return }
+    track('shopping_from_plan', { scope: source === 'week' ? 'week' : 'day' })
+    setIngredients({ start, end, source })
   }
 
   // Clears from today on only: past evenings are history (14-day rule,
@@ -926,9 +907,9 @@ export default function PlanPage() {
           <button onClick={openFunMode} className={secondaryBtn}>
             <Vote size={16} /> Abstimmen
           </button>
-          <button onClick={generateShopping} disabled={addingToList === 'week'} className={secondaryBtn}
-            title="Zutaten der kommenden Abende auf die Einkaufsliste">
-            <ShoppingCart size={16} /> Zutaten
+          <button onClick={() => openIngredients(upcomingStartStr, endStr, 'week')} className={secondaryBtn}
+            title="Zutaten der kommenden Abende prüfen und auf die Einkaufsliste">
+            <ShoppingCart size={16} /> Einkaufen
           </button>
         </div>
       </div>
@@ -1030,8 +1011,8 @@ export default function PlanPage() {
                     </span>
                   ) : <span className="flex-1" />}
                   {entry.recipe_id && (
-                    <button onClick={() => addToList(dateStr)} disabled={addingToList === dateStr}
-                      aria-label="Zutaten auf die Einkaufsliste" title="Zutaten auf die Einkaufsliste"
+                    <button onClick={() => openIngredients(dateStr, dateStr, 'card')}
+                      aria-label={`Zutaten für ${mealName(entry)} einkaufen`} title="Zutaten einkaufen"
                       className={`${iconBtn} text-ink-muted hover:text-primary hover:bg-[#1c1c1c] disabled:opacity-50`}>
                       <ShoppingCart size={16} />
                     </button>
@@ -1243,6 +1224,16 @@ export default function PlanPage() {
             </div>
           </div>
         </Sheet>
+      )}
+
+      {/* Zutaten der Woche, prefiltered to the week on screen or one evening */}
+      {ingredients && (
+        <WeekIngredientsSheet
+          start={ingredients.start}
+          end={ingredients.end}
+          source={ingredients.source}
+          onClose={() => setIngredients(null)}
+        />
       )}
 
       {/* Verschieben sheet */}

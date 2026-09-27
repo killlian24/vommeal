@@ -2,25 +2,23 @@
 
 import { useState, useEffect, useRef, useMemo } from 'react'
 import {
-  Check, Plus, Copy, RefreshCw, ChevronDown, ChevronRight, X, Moon, Package, Tags, Search,
-  MoreHorizontal, ListPlus, Send, CircleCheck,
+  Check, Plus, Copy, RefreshCw, ChevronDown, ChevronRight, X, Package, Tags, Search,
+  MoreHorizontal, ListPlus,
 } from 'lucide-react'
-import { format, startOfWeek, addDays, parseISO, isToday } from 'date-fns'
+import { format, startOfWeek, addDays, isToday } from 'date-fns'
 import { de } from 'date-fns/locale'
 import { track } from '@/lib/track'
 import { useToast } from '@/components/Toast'
-import { dayLabel, todayIso } from '@/lib/dates'
-import { Sheet, SheetTitle, SheetClose } from '@/components/Sheet'
+import { todayIso } from '@/lib/dates'
+import { WeekIngredientsSheet } from '@/components/WeekIngredientsSheet'
+import { runHaSync, syncSummary, type SyncResult } from '@/lib/haSync'
+import { CATEGORY_LABELS, DEFAULT_CATEGORY_ORDER, CATEGORIES, plural } from '@/lib/shoppingLabels'
 import { apiCall } from '@/lib/apiCall'
 import { useRefreshOnResume } from '@/lib/useRefreshOnResume'
 import { categorizeWithRules } from '@/lib/categoryRules'
 import {
   type QueuedOp, enqueue, applyQueue, flushQueue, newItemId, readCache, writeCache, readQueue, writeQueue,
 } from '@/lib/shoppingOffline'
-import {
-  type Selection, initialSelection, isSelected, toggleItem, setMealOn, setAllMealsOn,
-  activeMealIds, isHidden, mealCounts, buildCommitLines,
-} from '@/lib/shoppingSelection'
 
 type ShoppingItem = {
   id: string; name: string; amount: string; unit: string
@@ -29,102 +27,19 @@ type ShoppingItem = {
   recipe_names?: string[]; meal_plan_ids?: string[]
 }
 type PantryStaple = { id: string; name: string }
-type SyncResult = {
-  ok: boolean
-  imported?: number
-  linked?: number
-  pushed?: number
-  checked?: number
-  sorted?: number
-  needsCategory?: number
-  restored?: number
-  error?: string
-}
-
-type ReviewItem = {
-  key: string
-  name: string
-  category: string
-  recipe_names: string[]
-  meal_plan_ids: string[]
-  meals: { meal_plan_id: string; date: string; recipe_name: string }[]
-  status: 'new' | 'staple' | 'on_list'
-  added?: boolean
-}
-
-/** A planned recipe meal in the review sheet. */
-type ReviewMeal = {
-  meal_plan_id: string
-  date: string
-  name: string
-  recipe_id: string
-  item_count: number
-  /** Already shopped for — starts off and sits under „Schon eingekauft“. */
-  added: boolean
-  /** Hardly any ingredients in Mealie. */
-  thin: boolean
-}
-
-type Review = {
-  phase: 'loading' | 'select' | 'saving' | 'added' | 'sending' | 'sent'
-  items: ReviewItem[]
-  meals: ReviewMeal[]
-  haConfigured: boolean
-  end: string
-  /** „Trotzdem anzeigen“ was tapped on the everything-bought screen. */
-  showAll?: boolean
-  /** Meals marked „schon eingekauft“ in this sheet. */
-  markedBought: string[]
-  added?: number
-  merged?: number
-  sendResult?: { ok: boolean; msg: string }
-  error?: string
-}
-
-const CATEGORY_LABELS: Record<string, string> = {
-  produce: '🥦 Obst & Gemüse',
-  meat: '🥩 Fleisch & Fisch',
-  dairy: '🧀 Milchprodukte & Eier',
-  bakery: '🍞 Brot & Nudeln',
-  pantry: '🫙 Trockenware & Konserven',
-  frozen: '🧊 Tiefkühl',
-  beverages: '🥤 Getränke',
-  other: '📦 Sonstiges',
-}
-
-const DEFAULT_CATEGORY_ORDER = ['produce', 'meat', 'dairy', 'bakery', 'pantry', 'frozen', 'beverages', 'other']
-const CATEGORIES = ['produce', 'meat', 'dairy', 'bakery', 'pantry', 'frozen', 'beverages', 'other']
 
 const ERROR_MS = 6000
 const SEARCH_THRESHOLD = 8
 // While the list is open it picks up the partner's changes this often
 const POLL_MS = 20_000
 
-const STATUS_ORDER: Record<ReviewItem['status'], number> = { new: 0, staple: 1, on_list: 2 }
-
-/** "für Linsen, Tajine" — which meals a row is for. */
+/** "für Linsen, Tajine": which meals a row is for. */
 function mealsLabel(names: string[] | undefined): string {
   return names && names.length > 0 ? `für ${names.join(', ')}` : ''
 }
 
-/** "Mo 29.9. Linsen · Mi 1.10. Tajine": meals with their day, for the review sheet. */
-function datedMealsLabel(meals: ReviewItem['meals']): string {
-  const today = todayIso()
-  return [...meals]
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .map(m => `${dayLabel(m.date, today)} ${m.recipe_name}`)
-    .join(' · ')
-}
-
-/** "Heute", "Morgen" or "Sa 3.10." for a meal row. */
-const mealDayLabel = (date: string) => dayLabel(date, todayIso())
-
 function endOfNextWeek(): string {
   return format(addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), 13), 'yyyy-MM-dd')
-}
-
-function plural(n: number, one: string, many: string): string {
-  return `${n} ${n === 1 ? one : many}`
 }
 
 /** An item added while offline, until the server has it. */
@@ -143,25 +58,11 @@ function standLabel(at: number): string {
 
 const changes = (n: number) => `${n} ${n === 1 ? 'Änderung' : 'Änderungen'}`
 
-/** Turn a sync result into a short German summary ("2 gesendet, 1 übernommen"). */
-function syncSummary(data: SyncResult & { added?: number }): string {
-  const imported = data.imported ?? data.added ?? 0
-  return [
-    (data.pushed ?? 0) > 0 ? `${data.pushed} gesendet` : '',
-    imported > 0 ? `${imported} übernommen` : '',
-    (data.linked ?? 0) > 0 ? `${data.linked} verknüpft` : '',
-    (data.checked ?? 0) > 0 ? `${data.checked} abgehakt` : '',
-    (data.sorted ?? 0) > 0 ? 'Liste sortiert' : '',
-    (data.needsCategory ?? 0) > 0 ? `${data.needsCategory} ohne Kategorie` : '',
-  ].filter(Boolean).join(', ')
-}
-
 export default function ShoppingPage() {
   const [items, setItems] = useState<ShoppingItem[]>([])
   const [categoryOrder, setCategoryOrder] = useState<string[]>(DEFAULT_CATEGORY_ORDER)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
-  const [addingTonight, setAddingTonight] = useState(false)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [newItem, setNewItem] = useState('')
   const [showPantry, setShowPantry] = useState(false)
@@ -173,10 +74,8 @@ export default function ShoppingPage() {
   const showError = (msg: string) => showErrorToast(msg, { duration: ERROR_MS })
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null)
   const [lastSync, setLastSync] = useState<SyncResult | null>(null)
-  const [review, setReview] = useState<Review | null>(null)
-  const [sel, setSel] = useState<Selection>(() => initialSelection([]))
-  const [stapleBusy, setStapleBusy] = useState<string | null>(null)
-  const [markBusy, setMarkBusy] = useState<string | null>(null)
+  // "Zutaten der Woche" sheet (today to the end of next week)
+  const [reviewOpen, setReviewOpen] = useState(false)
   // Loading failed and there is nothing to show: error state instead of "leer"
   const [loadError, setLoadError] = useState(false)
   // No connection at the last attempt
@@ -463,30 +362,6 @@ export default function ShoppingPage() {
     }
   }
 
-  const addTonight = async () => {
-    setMenuOpen(false)
-    setAddingTonight(true)
-    const today = format(new Date(), 'yyyy-MM-dd')
-    try {
-      const res = await fetch('/api/shopping', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'add_date', date: today }),
-      })
-      if (!res.ok) throw new Error('add_date failed')
-      const data = await res.json()
-      if (data.added > 0 || data.merged > 0) {
-        showToast(`${plural(data.added + (data.merged ?? 0), 'Zutat', 'Zutaten')} für heute auf der Liste`)
-        load(false)
-      } else {
-        showToast('Nichts hinzuzufügen – kein Rezept für heute geplant oder schon auf der Liste')
-      }
-    } catch {
-      showError('Heute-Zutaten konnten nicht hinzugefügt werden')
-    }
-    setAddingTonight(false)
-  }
-
   const addStapleByName = async (name: string): Promise<PantryStaple | null> => {
     try {
       const res = await fetch('/api/pantry', {
@@ -528,38 +403,11 @@ export default function ShoppingPage() {
     }
   }
 
-  /** POST /api/ha/sync and describe the outcome in German. */
-  const runSync = async (): Promise<{ ok: boolean; msg: string; data?: SyncResult }> => {
-    try {
-      const res = await fetch('/api/ha/sync', { method: 'POST' })
-      let data: SyncResult & { added?: number } = { ok: false }
-      let bodyText = ''
-      try {
-        bodyText = await res.text()
-        data = JSON.parse(bodyText)
-      } catch { /* non-JSON error body (e.g. HTML from a proxy) */ }
-      if (res.ok && data.ok) {
-        setLastSync(data)
-        return { ok: true, msg: syncSummary(data), data }
-      }
-      const rawReason = data.error
-        ? String(data.error)
-        : bodyText.trim() && !/^\s*</.test(bodyText) ? bodyText.trim().slice(0, 160) : `HTTP ${res.status}`
-      const reason = rawReason
-        .replace(/^Cannot reach Home Assistant:\s*/i, '')
-        .replace(/^TypeError:\s*/i, '')
-      let msg: string
-      if (/not configured/i.test(reason)) msg = 'Home Assistant ist nicht eingerichtet – bitte in den Einstellungen eintragen.'
-      else if (res.status === 409 || /already running/i.test(reason)) msg = 'Abgleich läuft gerade schon – gleich nochmal versuchen.'
-      else if (res.status === 503 || /fetch failed|ECONN|ENOTFOUND|timeout|unreachable/i.test(reason)) msg = `Home Assistant nicht erreichbar (${reason})`
-      else msg = `Abgleich fehlgeschlagen (${reason})`
-      setLastSync({ ok: false, error: msg })
-      return { ok: false, msg }
-    } catch {
-      const msg = 'Abgleich fehlgeschlagen – bitte Einstellungen prüfen.'
-      setLastSync({ ok: false, error: msg })
-      return { ok: false, msg }
-    }
+  /** Abgleichen; the result stays visible under the buttons. */
+  const runSync = async () => {
+    const result = await runHaSync()
+    setLastSync(result.ok ? (result.data ?? { ok: true }) : { ok: false, error: result.msg })
+    return result
   }
 
   const syncList = async () => {
@@ -574,151 +422,10 @@ export default function ShoppingPage() {
     setSyncing(false)
   }
 
-  // --- Zutaten der Woche ---------------------------------------------------
-
-  const openReview = async () => {
+  const openReview = () => {
     setMenuOpen(false)
     setShowPantry(false)
-    track('shopping_review_open')
-    const end = endOfNextWeek()
-    setReview({ phase: 'loading', items: [], meals: [], haConfigured: false, end, markedBought: [] })
-    setSel(initialSelection([]))
-    try {
-      const res = await fetch('/api/shopping', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'preview', start: format(new Date(), 'yyyy-MM-dd'), end }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok || !data.ok) throw new Error(data.error || 'preview failed')
-      const reviewItems: ReviewItem[] = data.items ?? []
-      const reviewMeals: ReviewMeal[] = Array.isArray(data.meals) ? data.meals : []
-      setSel(initialSelection(reviewMeals))
-      setReview({
-        phase: 'select',
-        items: reviewItems,
-        meals: reviewMeals,
-        haConfigured: !!data.ha_configured,
-        end: data.end ?? end,
-        markedBought: [],
-      })
-    } catch {
-      setReview(r => r && { ...r, phase: 'select', error: 'Zutaten konnten nicht geladen werden. Bitte nochmal versuchen.' })
-    }
-  }
-
-  const closeReview = () => {
-    if (review && (review.phase === 'saving' || review.phase === 'sending')) return
-    setReview(null)
-  }
-
-  const toggleReviewItem = (item: ReviewItem) => {
-    setSel(prev => toggleItem(item, prev))
-  }
-
-  const toggleMeal = (meal: ReviewMeal) => {
-    if (!review) return
-    const on = !sel.on.has(meal.meal_plan_id)
-    track('shopping_meal_toggle', { on })
-    setSel(prev => setMealOn(meal.meal_plan_id, on, review.items, prev))
-  }
-
-  /** Record a meal as „schon eingekauft“ (bought = true) or open it again (bought = false). */
-  const markMealBought = async (meal: ReviewMeal, bought: boolean) => {
-    if (!review || markBusy) return
-    const id = meal.meal_plan_id
-    const before = { review, sel }
-    if (bought) track('shopping_meal_mark_bought')
-    setMarkBusy(id)
-    setSel(prev => setMealOn(id, !bought, review.items, prev))
-    setReview(r => r && {
-      ...r,
-      meals: r.meals.map(m => m.meal_plan_id === id ? { ...m, added: bought } : m),
-      markedBought: bought ? [...r.markedBought.filter(x => x !== id), id] : r.markedBought.filter(x => x !== id),
-    })
-    try {
-      const res = await fetch('/api/shopping', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'mark_meals', meal_plan_ids: [id], added: bought }),
-      })
-      if (!res.ok) throw new Error('mark_meals failed')
-    } catch {
-      setSel(before.sel)
-      setReview(r => r && { ...r, meals: before.review.meals, markedBought: before.review.markedBought })
-      showError('Konnte nicht gespeichert werden')
-    } finally {
-      setMarkBusy(null)
-    }
-  }
-
-  const showAllMeals = () => {
-    if (!review) return
-    setSel(prev => setAllMealsOn(review.meals.map(m => m.meal_plan_id), prev))
-    setReview(r => r && { ...r, showAll: true })
-  }
-
-  const markAlwaysThere = async (item: ReviewItem) => {
-    setStapleBusy(item.key)
-    const staple = await addStapleByName(item.name)
-    setStapleBusy(null)
-    if (!staple) return
-    track('pantry_add', { from: 'review' })
-    setSel(prev => {
-      const overrides = new Map(prev.overrides)
-      overrides.delete(item.key)
-      return { on: prev.on, overrides }
-    })
-    setReview(r => r && { ...r, items: r.items.map(i => i.key === item.key ? { ...i, status: 'staple' } : i) })
-    showToast(`Jetzt im Vorrat: ${item.name}`)
-  }
-
-  const commitReview = async () => {
-    if (!review) return
-    // Items already on the list are sent too (for meals that are on), so their row learns the
-    // new meals. Each line only names the meals it is currently for.
-    const mealNames = new Map(review.meals.map(m => [m.meal_plan_id, m.name]))
-    const { chosen, lines: payload } = buildCommitLines(review.items, sel, mealNames)
-    if (chosen.length === 0) {
-      // Nothing to add, but meals were marked „schon eingekauft“ — that is already saved.
-      if (review.markedBought.length > 0) setReview(null)
-      return
-    }
-    setReview(r => r && { ...r, phase: 'saving', error: undefined })
-    try {
-      const res = await fetch('/api/shopping', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'add_selected', items: payload }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok || !data.ok) throw new Error(data.error || 'add_selected failed')
-      track('shopping_add', { count: chosen.length })
-      await load(false)
-      const haConfigured = data.ha_configured ?? review.haConfigured
-      if (haConfigured) {
-        setReview(r => r && { ...r, phase: 'added', added: chosen.length, merged: data.merged ?? 0, haConfigured })
-      } else {
-        setReview(null)
-        showToast(`${plural(chosen.length, 'Zutat', 'Zutaten')} auf der Liste`)
-      }
-    } catch {
-      setReview(r => r && { ...r, phase: 'select', error: 'Hinzufügen hat nicht geklappt. Bitte nochmal versuchen.' })
-    }
-  }
-
-  const sendToKeep = async () => {
-    track('shopping_send_keep')
-    setReview(r => r && { ...r, phase: 'sending' })
-    const result = await runSync()
-    if (result.ok) await load(false)
-    setReview(r => r && {
-      ...r,
-      phase: 'sent',
-      sendResult: result.ok
-        ? { ok: true, msg: (result.data?.pushed ?? 0) > 0 ? `${plural(result.data?.pushed ?? 0, 'Eintrag', 'Einträge')} an Home Assistant gesendet.` : 'Home Assistant war schon aktuell.' }
-        : { ok: false, msg: result.msg },
-    })
+    setReviewOpen(true)
   }
 
   // --- Manual add / copy ------------------------------------------------------
@@ -819,78 +526,7 @@ export default function ShoppingPage() {
   const totalCount = items.length
   const openCount = totalCount - checkedCount
 
-  const reviewGroups = useMemo(() => {
-    if (!review) return []
-    const bought = new Set(review.meals.filter(m => m.added).map(m => m.meal_plan_id))
-    const visible = review.items.filter(i => !isHidden(i, sel, bought))
-    return displayCategoryOrder
-      .map(cat => ({
-        cat,
-        items: visible
-          .filter(i => (CATEGORIES.includes(i.category) ? i.category : 'other') === cat)
-          .sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || a.name.localeCompare(b.name, 'de')),
-      }))
-      .filter(g => g.items.length > 0)
-    // displayCategoryOrder is derived from categoryOrder + items
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [review, sel, categoryOrder, items])
-
-  const selectedCount = review ? review.items.filter(i => isSelected(i, sel)).length : 0
-  const openMeals = review ? review.meals.filter(m => !m.added) : []
-  const boughtMeals = review ? review.meals.filter(m => m.added) : []
-  /** Every planned meal is already shopped for and none was switched back on. */
-  const allBought = !!review && review.meals.length > 0 && openMeals.length === 0
-    && !review.showAll && review.meals.every(m => !sel.on.has(m.meal_plan_id))
-  const canFinish = !!review && selectedCount === 0 && review.markedBought.length > 0
-
   const iconBtn = 'w-10 h-10 flex items-center justify-center rounded-lg transition-colors'
-
-  /** One row in the „Mahlzeiten“ block: switch + day/dish + „schon eingekauft“ action. */
-  const renderMealRow = (meal: ReviewMeal) => {
-    if (!review) return null
-    const on = sel.on.has(meal.meal_plan_id)
-    const { selected: nSel, total } = mealCounts(meal.meal_plan_id, review.items, sel)
-    const busy = review.phase === 'saving' || markBusy === meal.meal_plan_id
-    const detail = meal.added && !on
-      ? 'Antippen, um nochmal einzukaufen'
-      : total === 0 ? 'Keine Zutaten hinterlegt' : `${nSel} von ${total} Zutaten`
-    return (
-      <div key={meal.meal_plan_id} className="flex items-center gap-1 pr-1">
-        <button
-          type="button"
-          role="switch"
-          aria-checked={on}
-          onClick={() => toggleMeal(meal)}
-          disabled={busy}
-          className="flex-1 min-w-0 min-h-[56px] flex items-center gap-3 pl-3 pr-1 py-2 text-left rounded-xl hover:bg-[#1c1c1c] disabled:opacity-60"
-        >
-          <span className={`relative flex-shrink-0 inline-block h-6 w-10 rounded-full transition-colors ${on ? 'bg-primary' : 'bg-[#3a3a3a]'}`}>
-            <span className={`absolute top-1 left-1 h-4 w-4 rounded-full bg-white shadow transition-transform ${on ? 'translate-x-4' : ''}`} />
-          </span>
-          <span className="flex-1 min-w-0">
-            <span className={`block text-[15px] leading-snug line-clamp-2 ${on ? 'text-white' : 'text-[#b5b5b5]'}`}>
-              <span className={on ? 'text-[#d0d0d0]' : 'text-[#9a9a9a]'}>{mealDayLabel(meal.date)}</span>
-              <span className="text-[#7a7a7a]"> · </span>
-              {meal.name}
-            </span>
-            <span className="block text-[13px] leading-snug text-[#9a9a9a]">
-              {detail}
-              {meal.thin && total > 0 && <span className="text-amber-200/90"> · kaum Zutaten in Mealie</span>}
-            </span>
-          </span>
-        </button>
-        <button
-          type="button"
-          onClick={() => markMealBought(meal, !meal.added)}
-          disabled={busy}
-          aria-label={meal.added ? `„${meal.name}“ doch nicht eingekauft` : `„${meal.name}“ als schon eingekauft markieren`}
-          className="flex-shrink-0 min-h-[44px] max-w-[96px] px-2 rounded-lg text-xs leading-tight text-center text-[#a5a5a5] underline decoration-[#555] underline-offset-2 hover:text-white hover:bg-[#1c1c1c] disabled:opacity-50"
-        >
-          {meal.added ? 'Nicht gekauft' : 'Schon eingekauft'}
-        </button>
-      </div>
-    )
-  }
 
   return (
     <div className="space-y-5">
@@ -921,15 +557,6 @@ export default function ShoppingPage() {
                     role="menu"
                     className="absolute right-0 top-12 z-50 w-56 py-1 rounded-xl bg-[#1a1a1a] border border-[#2e2e2e] shadow-2xl animate-slide-up"
                   >
-                    <button
-                      role="menuitem"
-                      onClick={addTonight}
-                      disabled={addingTonight}
-                      className="w-full min-h-[44px] flex items-center gap-3 px-4 text-sm text-[#e5e5e5] hover:bg-[#252525] disabled:opacity-60"
-                    >
-                      <Moon size={16} className={`text-[#9a9a9a] ${addingTonight ? 'animate-pulse' : ''}`} />
-                      Heute-Zutaten
-                    </button>
                     <button
                       role="menuitem"
                       onClick={copyList}
@@ -1267,240 +894,20 @@ export default function ShoppingPage() {
         </div>
       )}
 
-      {/* Review sheet: Zutaten der Woche */}
-      {review && (
-        // Cannot be closed while adding or sending
-        <Sheet
-          onClose={closeReview}
-          dismissible={review.phase !== 'saving' && review.phase !== 'sending'}
-          centerFrom="md"
-          className="[--sheet-max:88dvh] w-full md:max-w-lg flex flex-col bg-[#121212] border-t md:border border-[#2a2a2a] rounded-t-2xl md:rounded-2xl shadow-2xl"
-        >
-          {/* Sheet header */}
-          <div className="flex items-start justify-between gap-2 px-4 pt-4 pb-3 border-b border-[#222] flex-shrink-0">
-            <div className="min-w-0">
-              <SheetTitle className="text-lg font-bold text-white">Zutaten der Woche</SheetTitle>
-              <p className="text-sm text-[#9a9a9a]">
-                Heute bis {format(parseISO(review.end), 'EEEEEE d. MMM', { locale: de })}
-                {review.phase === 'select' && review.items.length > 0 && !allBought && ' · Abwählen, was ihr habt'}
-              </p>
-            </div>
-            <SheetClose
-              disabled={review.phase === 'saving' || review.phase === 'sending'}
-              size={20}
-              className="-mr-2 -mt-1"
-            />
-          </div>
-
-          {/* Sheet body */}
-          <div className="flex-1 overflow-y-auto overscroll-contain px-2 py-2">
-            {review.phase === 'loading' && (
-              <div className="space-y-2 p-2">
-                {Array.from({ length: 6 }).map((_, i) => <div key={i} className="skeleton h-12 rounded-lg" />)}
-              </div>
-            )}
-
-            {review.error && (
-              <p className="m-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{review.error}</p>
-            )}
-
-            {(review.phase === 'select' || review.phase === 'saving') && !review.error && (
-              review.meals.length === 0 ? (
-                <div className="text-center px-4 py-10">
-                  <p className="text-[#d0d0d0]">Keine Rezepte mit Zutaten geplant.</p>
-                  <p className="text-sm text-[#8a8a8a] mt-1">Reste, Auswärts essen und Bestellen brauchen keine Zutaten.</p>
-                </div>
-              ) : allBought ? (
-                <div className="text-center px-4 py-10">
-                  <CircleCheck size={36} className="mx-auto text-primary mb-3" />
-                  <p className="text-[#e5e5e5]">Alles für die geplanten Mahlzeiten ist schon eingekauft</p>
-                  <p className="text-sm text-[#9a9a9a] mt-1">Neu geplante Gerichte tauchen hier auf.</p>
-                  <button
-                    type="button"
-                    onClick={showAllMeals}
-                    className="mt-3 min-h-[44px] px-3 text-sm font-medium text-primary underline underline-offset-4 hover:text-primary-hover"
-                  >
-                    Trotzdem anzeigen
-                  </button>
-                </div>
-              ) : (
-                <>
-                  {/* Meals: switch whole dishes on / off */}
-                  <section aria-labelledby="review-meals" className="px-2 pt-1 pb-3">
-                    <h3 id="review-meals" className="pb-1.5 text-sm font-semibold text-white">Mahlzeiten</h3>
-                    {openMeals.length > 0 && (
-                      <div className="rounded-xl border border-[#262626] bg-[#171717] divide-y divide-[#232323]">
-                        {openMeals.map(meal => renderMealRow(meal))}
-                      </div>
-                    )}
-                    {boughtMeals.length > 0 && (
-                      <>
-                        <p className="pt-3 pb-1.5 text-xs font-semibold uppercase tracking-wide text-[#9a9a9a]">Schon eingekauft</p>
-                        <div className="rounded-xl border border-[#222] bg-[#141414] divide-y divide-[#202020]">
-                          {boughtMeals.map(meal => renderMealRow(meal))}
-                        </div>
-                      </>
-                    )}
-                  </section>
-
-                  <h3 className="px-2 pt-1 text-sm font-semibold text-white">Zutaten</h3>
-                  {reviewGroups.length === 0 ? (
-                    <p className="px-2 py-4 text-sm text-[#9a9a9a]">
-                      {review.items.length === 0
-                        ? 'In Mealie sind für diese Gerichte keine Zutaten hinterlegt.'
-                        : sel.on.size > 0
-                          ? 'Für die eingeschalteten Gerichte ist nichts mehr einzukaufen.'
-                          : 'Keine Mahlzeit eingeschaltet – schalte oben ein Gericht ein.'}
-                    </p>
-                  ) : (
-                    reviewGroups.map(group => (
-                      <div key={group.cat} className="mb-2">
-                        <p className="px-2 pt-2 pb-1 text-xs font-semibold uppercase tracking-wide text-[#8a8a8a]">
-                          {CATEGORY_LABELS[group.cat] || group.cat}
-                        </p>
-                        {group.items.map(item => {
-                          const isOnList = item.status === 'on_list'
-                          const itemSelected = isSelected(item, sel)
-                          const forMeals = activeMealIds(item, sel)
-                          const mealsOff = !item.meal_plan_ids.some(id => sel.on.has(id))
-                          const tag = isOnList ? 'schon drauf'
-                            : itemSelected ? ''
-                              : item.status === 'staple' ? 'Vorrat'
-                                : mealsOff && !sel.overrides.has(item.key) ? 'Gericht aus' : 'haben wir'
-                          return (
-                            <div key={item.key} className="flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => !isOnList && toggleReviewItem(item)}
-                                disabled={isOnList || review.phase === 'saving'}
-                                aria-pressed={isOnList ? undefined : itemSelected}
-                                className="flex-1 min-w-0 min-h-[52px] flex items-center gap-3 px-2 py-2 rounded-lg text-left hover:bg-[#1a1a1a] disabled:hover:bg-transparent"
-                              >
-                                <span className={`w-[22px] h-[22px] flex-shrink-0 rounded-md border-2 flex items-center justify-center transition-colors ${
-                                  itemSelected ? 'bg-primary border-primary' : isOnList ? 'border-[#3a3a3a] bg-[#262626]' : 'border-[#6b6b6b]'
-                                }`}>
-                                  {itemSelected && <Check size={13} className="text-white" strokeWidth={3} />}
-                                  {isOnList && <Check size={13} className="text-[#8a8a8a]" strokeWidth={3} />}
-                                </span>
-                                <span className="flex-1 min-w-0">
-                                  <span className={`block text-[15px] leading-snug ${itemSelected ? 'text-white' : 'text-[#9a9a9a]'}`}>
-                                    {item.name}
-                                  </span>
-                                  <span className="block text-[13px] leading-snug text-[#8a8a8a] line-clamp-2">
-                                    {datedMealsLabel(item.meals.filter(m => forMeals.includes(m.meal_plan_id)))}
-                                  </span>
-                                </span>
-                                {tag && (
-                                  <span className="flex-shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-[#222] border border-[#333] text-[#a5a5a5]">
-                                    {tag}
-                                  </span>
-                                )}
-                              </button>
-                              {item.status === 'new' && (
-                                <button
-                                  type="button"
-                                  onClick={() => markAlwaysThere(item)}
-                                  disabled={stapleBusy === item.key || review.phase === 'saving'}
-                                  title="Zum Vorrat hinzufügen – wird künftig nicht mehr vorausgewählt"
-                                  className="flex-shrink-0 min-h-[40px] px-2 rounded-lg text-xs text-[#9a9a9a] underline decoration-[#444] underline-offset-2 hover:text-white hover:bg-[#1a1a1a] disabled:opacity-50"
-                                >
-                                  In den Vorrat
-                                </button>
-                              )}
-                            </div>
-                          )
-                        })}
-                      </div>
-                    ))
-                  )}
-                </>
-              )
-            )}
-
-            {(review.phase === 'added' || review.phase === 'sending' || review.phase === 'sent') && (
-              <div className="px-4 py-8 text-center space-y-2">
-                <CircleCheck size={40} className="mx-auto text-primary" />
-                <p className="text-lg font-semibold text-white">
-                  {plural(review.added ?? selectedCount, 'Zutat', 'Zutaten')} auf der Liste
-                </p>
-                {review.phase !== 'sent' && (
-                  <p className="text-sm text-[#9a9a9a]">Jetzt abgleichen, damit sie auch in eurer Home-Assistant-Liste stehen.</p>
-                )}
-                {review.sendResult && (
-                  <p className={`text-sm ${review.sendResult.ok ? 'text-[#9fb8a1]' : 'text-red-300'}`}>
-                    {review.sendResult.msg}
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Sheet footer */}
-          <div className="px-4 pt-3 border-t border-[#222] pb-[max(1rem,env(safe-area-inset-bottom))]">
-            {(review.phase === 'select' || review.phase === 'saving' || review.phase === 'loading') && (
-              review.phase !== 'loading' && (review.meals.length === 0 || allBought || canFinish) ? (
-                <button
-                  onClick={closeReview}
-                  className={canFinish || (allBought && review.markedBought.length > 0)
-                    ? 'w-full min-h-[48px] rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold transition-colors'
-                    : 'w-full min-h-[48px] rounded-xl bg-[#1c1c1c] border border-[#2a2a2a] text-[#e5e5e5] text-base font-medium'}
-                >
-                  {canFinish || (allBought && review.markedBought.length > 0) ? 'Fertig' : 'Schließen'}
-                </button>
-              ) : (
-                <button
-                  onClick={commitReview}
-                  disabled={selectedCount === 0 || review.phase !== 'select'}
-                  className="w-full min-h-[48px] rounded-xl bg-primary-solid hover:bg-primary-solidHover disabled:bg-[#2a2a2a] disabled:text-[#9a9a9a] text-white text-base font-semibold transition-colors"
-                >
-                  {review.phase === 'saving'
-                    ? 'Wird hinzugefügt …'
-                    : review.phase === 'loading'
-                      ? 'Lädt …'
-                      : selectedCount === 0 ? 'Nichts ausgewählt' : `${selectedCount} auf die Liste`}
-                </button>
-              )
-            )}
-            {(review.phase === 'added' || review.phase === 'sending') && (
-              <div className="flex gap-2">
-                <button
-                  onClick={closeReview}
-                  disabled={review.phase === 'sending'}
-                  className="min-h-[48px] px-4 rounded-xl bg-[#1c1c1c] border border-[#2a2a2a] text-[#e5e5e5] text-base disabled:opacity-60"
-                >
-                  Später
-                </button>
-                <button
-                  onClick={sendToKeep}
-                  disabled={review.phase === 'sending'}
-                  className="flex-1 min-h-[48px] flex items-center justify-center gap-2 rounded-xl bg-primary-solid hover:bg-primary-solidHover disabled:opacity-80 text-white text-base font-semibold transition-colors"
-                >
-                  {review.phase === 'sending'
-                    ? <><RefreshCw size={17} className="animate-spin" /> Wird abgeglichen …</>
-                    : <><Send size={17} /> Abgleichen</>}
-                </button>
-              </div>
-            )}
-            {review.phase === 'sent' && (
-              <div className="flex gap-2">
-                {!review.sendResult?.ok && (
-                  <button
-                    onClick={sendToKeep}
-                    className="flex-1 min-h-[48px] rounded-xl bg-[#1c1c1c] border border-[#2a2a2a] text-[#e5e5e5] text-base"
-                  >
-                    Nochmal abgleichen
-                  </button>
-                )}
-                <button
-                  onClick={closeReview}
-                  className="flex-1 min-h-[48px] rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold"
-                >
-                  Fertig
-                </button>
-              </div>
-            )}
-          </div>
-        </Sheet>
+      {/* Zutaten der Woche */}
+      {reviewOpen && (
+        <WeekIngredientsSheet
+          start={todayIso()}
+          end={endOfNextWeek()}
+          source="shopping"
+          categoryOrder={categoryOrder}
+          onClose={() => setReviewOpen(false)}
+          onChanged={() => load(false)}
+          onPantryAdd={staple => setStaples(prev => prev.some(s => s.id === staple.id)
+            ? prev
+            : [...prev, staple].sort((a, b) => a.name.localeCompare(b.name, 'de')))}
+          onSynced={setLastSync}
+        />
       )}
     </div>
   )

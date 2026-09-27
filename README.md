@@ -28,11 +28,11 @@ Kommt man zurück in die App (oder ist wieder online), laden Woche, Heute und Ei
   Alternativ lange auf eine Karte drücken und sie auf einen anderen Tag ziehen. Alles lässt sich 6 Sekunden lang rückgängig machen; die Zuordnung zur Einkaufsliste bleibt erhalten.
 - **Anderes Gericht:** ersetzt das Gericht eines Abends, mit Rückgängig („Ersetzt: Linsen durch Pizza“). Wird dabei für heute „Auswärts essen“ oder „Bestellen“ gewählt, rutscht das bisherige Gericht automatisch auf morgen. Soll das alte Gericht an einen anderen Tag, führt **Stattdessen verschieben** zum Verschieben. „Tauschen“ heißt in Vommeal nur das Vertauschen zweier Tage.
 - **Abstimmen:** wie bei einer Dating-App: pro Tag drei Rezepte, jeder stimmt auf seinem Handy ab, gemeinsame Treffer werden automatisch geplant.
-- **Zutaten:** schickt die Zutaten der Woche auf die Einkaufsliste (ausführlicher unter [Einkauf](#einkauf)). **Woche leeren** unten entfernt alle Planungen der Woche.
+- **Einkaufen:** öffnet „Zutaten der Woche“ für die kommenden Abende der angezeigten Woche; der Einkaufswagen an einer Karte öffnet es nur für diesen Abend (ausführlicher unter [Einkauf](#einkauf)). Nichts landet ohne diesen Prüfschritt auf der Liste. **Woche leeren** unten entfernt alle Planungen der Woche.
 
 ### Heute
 
-- Zeigt das heutige Gericht mit **Rezept öffnen** und **Zutaten auf die Einkaufsliste**, darunter die nächsten Tage. Hat der andere das heutige Gericht geplant oder geändert, gibt es einen Hinweis und ein **neu** an der Karte.
+- Zeigt das heutige Gericht mit **Rezept öffnen** und **Zutaten auf die Einkaufsliste** (öffnet „Zutaten der Woche“ nur für heute), darunter die nächsten Tage. Hat der andere das heutige Gericht geplant oder geändert, gibt es einen Hinweis und ein **neu** an der Karte.
 - **Heute doch nicht – auf morgen schieben:** schiebt heute und die folgenden Tage einen Tag nach hinten und trägt für heute wahlweise „Auswärts essen“ ein oder lässt den Abend frei.
 - Ist nichts geplant: drei Vorschläge mit **Heute kochen** (nach denselben Regeln wie die Erinnerung), **Andere Vorschläge** und die Schnelloptionen.
 - **Wie war's?** fragt am Tag danach einmal nach Sternen. **Nicht nochmal** (1 Stern) sorgt dafür, dass das Rezept nicht mehr vorgeschlagen oder automatisch geplant wird. Bewertungen gehen auch an Mealie.
@@ -50,13 +50,13 @@ Kommt man zurück in die App (oder ist wieder online), laden Woche, Heute und Ei
 
 - **Eintragen:** Das Feld „Was fehlt?“ bleibt nach Enter offen, mehrere Einträge gehen mit Komma („Banane, Milch, Brot“). Ein kurzer Hinweis zeigt, in welcher Kategorie der Eintrag gelandet ist.
 - **Kategorien:** Vommeal sortiert Einträge automatisch in Obst & Gemüse, Fleisch & Fisch, Milchprodukte & Eier, Brot & Nudeln, Trockenware & Konserven, Tiefkühl, Getränke und Sonstiges (Deutsch, Englisch und Dänisch; das spezifischste Wort gewinnt, also Erdbeeren zu Obst, Zahnpasta zu Sonstiges). Kategorie antippen ändert sie; eigene Wörter pro Kategorie und die Reihenfolge der Kategorien stehen unter **Einstellungen → Einkaufsreihenfolge**.
-- **Zutaten der Woche:** sammelt die Zutaten aller geplanten Rezepte von heute bis Ende nächster Woche, ohne Mengen, gleiche Zutaten aus mehreren Rezepten zusammengefasst („für Linsen, Tajine“).
+- **Zutaten der Woche:** sammelt die Zutaten aller geplanten Rezepte von heute bis Ende nächster Woche (aus der Woche heraus nur für die angezeigte Woche, vom Einkaufswagen und von Heute nur für einen Abend), ohne Mengen, gleiche Zutaten aus mehreren Rezepten zusammengefasst („für Linsen, Tajine“).
   - Oben stehen die **Mahlzeiten** als Schalter („Sa · Linsen mit Spätzle · 4 von 6“). Eine Mahlzeit abschalten wählt ihre Zutaten ab; was eine andere Mahlzeit noch braucht, bleibt drin.
-  - Vommeal merkt sich, welche Mahlzeiten schon eingekauft sind, auch nach dem Verschieben und nach dem Leeren der Liste. Sie stehen abgewählt unter **Schon eingekauft** und lassen sich mit **Nicht gekauft** zurückholen.
-  - Einzelne Zutaten abwählen („haben wir“), **In den Vorrat** legt sie in den Vorrat, dann werden sie nie mehr vorausgewählt. Salz, Pfeffer und Wasser werden nie vorgeschlagen.
+  - Vommeal merkt sich, welche Mahlzeiten schon eingekauft sind, auch nach dem Verschieben und nach dem Leeren der Liste. Nach dem Abschalten einer Mahlzeit fragt Vommeal „Als schon eingekauft merken?“. Gemerkte Mahlzeiten stehen abgewählt unter **Schon eingekauft**; einschalten holt sie zurück.
+  - Einzelne Zutaten abwählen („haben wir“); bei abgewählten Zutaten legt **In den Vorrat** sie in den Vorrat, dann werden sie nie mehr vorausgewählt. Salz, Pfeffer und Wasser werden nie vorgeschlagen.
   - **N auf die Liste** übernimmt die Auswahl, danach bietet Vommeal **Abgleichen** mit Home Assistant an.
 - **Abgleichen:** gleicht mit der Home-Assistant-Todo-Liste ab (z. B. Google Keep) (siehe [Einkaufsliste und Home Assistant](#einkaufsliste-und-home-assistant)).
-- Im Menü **⋯**: **Heute-Zutaten**, **Liste kopieren** (als Text zum Teilen) und **Vorrat verwalten**. Löschen und „Erledigte entfernen“ lassen sich rückgängig machen, „Alles löschen“ fragt nach.
+- Im Menü **⋯**: **Liste kopieren** (als Text zum Teilen) und **Vorrat verwalten**. Löschen und „Erledigte entfernen“ lassen sich rückgängig machen, „Alles löschen“ fragt nach.
 - **Ohne Netz (z. B. im Supermarkt-Keller):** Das Handy merkt sich die zuletzt geladene Liste und zeigt sie mit „Offline · Stand 14:05“. Abhaken, Eintragen und Entfernen gehen weiter; die Änderungen warten auf dem Handy („2 Änderungen warten“) und werden gesendet, sobald wieder Verbindung da ist. Konnte die Liste nie geladen werden, zeigt Vommeal einen Fehler mit **Erneut laden** statt einer leeren Liste.
 - **App ohne Netz öffnen:** Die installierte App startet auch offline (Service Worker). Das klappt nur, wenn Vommeal über https erreichbar ist (z. B. per Tailscale mit HTTPS); über einfaches http im Heimnetz funktioniert alles, aber nur mit Verbindung.
 
