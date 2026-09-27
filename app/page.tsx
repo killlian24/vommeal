@@ -53,6 +53,11 @@ const LEFTOVERS = 'Reste'
 // tomorrow, the rest of the week slides along.
 const KEEP_OLD_BY_DEFAULT: string[] = [EATING_OUT, 'Bestellen']
 
+// One-time tip that cards can be dragged; gone for good once dismissed or used
+const DRAG_HINT_KEY = 'vommeal_hint_drag_done'
+const dragHintDone = () => { try { return localStorage.getItem(DRAG_HINT_KEY) === '1' } catch { return true } }
+const markDragHintDone = () => { try { localStorage.setItem(DRAG_HINT_KEY, '1') } catch { /* storage unavailable */ } }
+
 const ds = (d: Date) => format(d, 'yyyy-MM-dd')
 const fmt = (d: Date, pattern: string) => format(d, pattern, { locale: de })
 const mondayOf = (d: Date) => startOfWeek(d, { weekStartsOn: 1 })
@@ -141,6 +146,9 @@ export default function PlanPage() {
   const [saving, setSaving] = useState(false)
   const { show: showToast, error: showError, hide: hideToast } = useToast()
   const [earlierOpen, setEarlierOpen] = useState(false)
+  const [dragHintHidden, setDragHintHidden] = useState(true)
+  useEffect(() => { setDragHintHidden(dragHintDone()) }, [])
+  const dismissDragHint = () => { markDragHintDone(); setDragHintHidden(true) }
   const [autofilling, setAutofilling] = useState(false)
   const { user: currentUser, users, partner, askUser } = useCurrentUser()
   // Evenings the partner planned or changed since this phone last looked ("neu")
@@ -644,7 +652,7 @@ export default function PlanPage() {
   }
 
   const drag = useLongPressDrag({
-    onDrop: ({ id, to }: DragDrop) => { moveEntryTo(id, to, 'drag') },
+    onDrop: ({ id, to }: DragDrop) => { dismissDragHint(); moveEntryTo(id, to, 'drag') },
     canDrop: date => date >= todayStr,
   })
 
@@ -961,6 +969,17 @@ export default function PlanPage() {
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Tip for dragging, once there is something to drag */}
+      {!dragHintHidden && !loading && entries.filter(e => e.date >= todayStr).length >= 2 && (
+        <div role="note" className="flex items-center gap-2 pl-3 pr-1 py-1 rounded-xl border border-[#262626] bg-[#111] text-sm text-ink-soft">
+          <span className="flex-1 min-w-0">Tipp: Karte lange drücken und auf einen anderen Tag ziehen</span>
+          <button type="button" onClick={dismissDragHint} aria-label="Tipp ausblenden"
+            className={`${iconBtn} flex-shrink-0 text-ink-muted hover:text-white hover:bg-[#1c1c1c]`}>
+            <X size={16} />
+          </button>
         </div>
       )}
 
