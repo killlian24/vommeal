@@ -906,6 +906,7 @@ export default function PlanPage() {
 
   const title = isCurrentWeek ? 'Diese Woche' : isNextWeek ? 'Nächste Woche' : rangeLabel(weekStart, addDays(weekStart, 6))
   const subtitle = isCurrentWeek || isNextWeek ? rangeLabel(weekStart, addDays(weekStart, 6)) : `KW ${fmt(weekStart, 'I')}`
+  const shortRange = `${fmt(weekStart, 'd.M.')} bis ${fmt(addDays(weekStart, 6), 'd.M.')}`
 
   return (
     <div className="space-y-5">
@@ -940,31 +941,37 @@ export default function PlanPage() {
         )
       )}
 
-      {/* Header: title + week navigation */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-bold text-white truncate">{title}</h1>
-          <p className="flex items-center gap-1.5 text-sm text-ink-muted mt-0.5">
-            {subtitle}
-            {/* Who plans on this phone; changed in Einstellungen */}
-            {currentUser && <Avatar name={currentUser} users={users} size="xs" />}
-          </p>
+      {/* Header: title, then the week navigation in the date line (fits 320 px) */}
+      <div>
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="min-w-0 text-2xl font-bold text-white">{title}</h1>
+          {/* Who plans on this phone; changed in Einstellungen */}
+          {currentUser && <Avatar name={currentUser} users={users} size="md" />}
         </div>
-        <div className="flex items-center flex-shrink-0">
+        <div className="flex items-center gap-0.5 -ml-2 mt-0.5">
           <button onClick={() => goToWeek(addDays(weekStart, -7), 'nav')} aria-label="Vorherige Woche"
-            className={`${iconBtn} text-ink-muted hover:text-white hover:bg-[#1c1c1c]`}>
+            className={`${iconBtn} flex-shrink-0 text-ink-muted hover:text-white hover:bg-[#1c1c1c]`}>
             <ChevronLeft size={20} />
+          </button>
+          <p className="min-w-0 text-sm text-ink-muted text-center whitespace-nowrap">
+            {isCurrentWeek || isNextWeek ? (
+              <>
+                {/* "28.9. bis 4.10." where "28. Sep. bis 4. Okt." would not fit */}
+                <span className="min-[360px]:hidden">{shortRange}</span>
+                <span className="hidden min-[360px]:inline">{subtitle}</span>
+              </>
+            ) : subtitle}
+          </p>
+          <button onClick={() => goToWeek(addDays(weekStart, 7), 'nav')} aria-label="Nächste Woche"
+            className={`${iconBtn} flex-shrink-0 text-ink-muted hover:text-white hover:bg-[#1c1c1c]`}>
+            <ChevronRight size={20} />
           </button>
           {!isCurrentWeek && (
             <button onClick={() => goToWeek(currentMonday)}
-              className="min-h-[40px] px-3 rounded-lg text-sm font-medium bg-[#1c1c1c] hover:bg-[#252525] text-ink-soft hover:text-white transition-all border border-[#2a2a2a]">
+              className="ml-auto flex-shrink-0 min-h-[40px] px-2.5 min-[360px]:px-3 rounded-lg text-sm font-medium bg-[#1c1c1c] hover:bg-[#252525] text-ink-soft hover:text-white transition-all border border-[#2a2a2a]">
               Diese Woche
             </button>
           )}
-          <button onClick={() => goToWeek(addDays(weekStart, 7), 'nav')} aria-label="Nächste Woche"
-            className={`${iconBtn} text-ink-muted hover:text-white hover:bg-[#1c1c1c]`}>
-            <ChevronRight size={20} />
-          </button>
         </div>
       </div>
 
@@ -979,12 +986,13 @@ export default function PlanPage() {
         )}
         <div className="flex items-center gap-2">
           <div className="flex-1" />
-          <button onClick={openFunMode} className={secondaryBtn}>
-            <Vote size={16} /> Abstimmen
+          {/* Below 360 px icons only; the labels stay for screen readers */}
+          <button onClick={openFunMode} className={secondaryBtn} aria-label="Abstimmen">
+            <Vote size={16} /> <span className="hidden min-[360px]:inline">Abstimmen</span>
           </button>
           <button onClick={() => openIngredients(upcomingStartStr, endStr, 'week')} className={secondaryBtn}
-            title="Zutaten der kommenden Abende prüfen und auf die Einkaufsliste">
-            <ShoppingCart size={16} /> Einkaufen
+            title="Zutaten der kommenden Abende prüfen und auf die Einkaufsliste" aria-label="Einkaufen">
+            <ShoppingCart size={16} /> <span className="hidden min-[360px]:inline">Einkaufen</span>
           </button>
         </div>
       </div>

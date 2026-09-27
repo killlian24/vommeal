@@ -60,7 +60,7 @@ export default function Navigation() {
                 key={href}
                 href={href}
                 aria-current={active ? 'page' : undefined}
-                className={`flex-1 min-w-0 min-h-[52px] flex flex-col items-center justify-center gap-1 px-0.5 rounded-xl transition-all ${
+                className={`flex-auto basis-0 min-w-fit min-h-[52px] flex flex-col items-center justify-center gap-1 px-0.5 rounded-xl transition-all ${
                   active ? 'text-primary' : 'text-ink-muted'
                 }`}
               >
