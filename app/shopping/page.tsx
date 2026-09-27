@@ -13,6 +13,7 @@ import { todayIso } from '@/lib/dates'
 import { WeekIngredientsSheet } from '@/components/WeekIngredientsSheet'
 import { runHaSync, syncSummary, type SyncResult } from '@/lib/haSync'
 import { useServices } from '@/lib/useServices'
+import { mergeKey } from '@/lib/shoppingKey'
 import Link from 'next/link'
 import { CATEGORY_LABELS, DEFAULT_CATEGORY_ORDER, CATEGORIES, plural } from '@/lib/shoppingLabels'
 import { apiCall } from '@/lib/apiCall'
@@ -474,17 +475,27 @@ export default function ShoppingPage() {
     const added: ShoppingItem[] = []
     const failed: string[] = []
     const queued: ShoppingItem[] = []
+    // Already open on the list (also as singular / plural): not added twice
+    const already: string[] = []
+    const openKeys = new Set(items.filter(i => !i.checked).map(i => mergeKey(i.name)))
     let noConnection = offline
     beginMutation()
     for (const name of names) {
+      const key = mergeKey(name)
+      if (openKeys.has(key)) {
+        already.push(items.find(i => !i.checked && mergeKey(i.name) === key)?.name ?? name)
+        continue
+      }
+      openKeys.add(key)
       const id = newItemId()
       if (noConnection) {
         queueOp({ kind: 'add', id, name, checked: false })
         queued.push(offlineItem({ id, name, checked: false }))
         continue
       }
-      const res = await apiCall<ShoppingItem>('/api/shopping', { method: 'POST', body: { id, name } })
-      if (res.ok) added.push(res.data)
+      const res = await apiCall<ShoppingItem & { duplicate?: boolean }>('/api/shopping', { method: 'POST', body: { id, name } })
+      if (res.ok && res.data.duplicate) already.push(res.data.name) // the partner added it meanwhile
+      else if (res.ok) added.push(res.data)
       else if (res.status === 0) {
         noConnection = true
         goOffline()
@@ -497,15 +508,20 @@ export default function ShoppingPage() {
       setItems(prev => [...prev, ...added, ...queued.filter(q => !prev.some(i => i.id === q.id))])
       track('shopping_manual_add', { count: added.length + queued.length, offline: queued.length })
     }
-    if (queued.length > 0 && failed.length === 0) {
+    const alreadyText = already.length > 0
+      ? `${already.join(', ')} ${already.length === 1 ? 'steht' : 'stehen'} schon drauf`
+      : ''
+    if (already.length > 0 && added.length === 0 && queued.length === 0 && failed.length === 0) {
+      showToast(alreadyText)
+    } else if (queued.length > 0 && failed.length === 0) {
       showToast(queued.length === 1 ? `${queued[0].name} kommt auf die Liste, sobald wieder Verbindung da ist` : `${queued.length} Einträge kommen auf die Liste, sobald wieder Verbindung da ist`)
     } else if (failed.length > 0) {
       setNewItem(failed.join(', '))
       showError(`Nicht hinzugefügt: ${failed.join(', ')}`)
     } else if (added.length === 1) {
-      showToast(`${added[0].name} → ${CATEGORY_LABELS[added[0].category] || added[0].category}`)
+      showToast(`${added[0].name} → ${CATEGORY_LABELS[added[0].category] || added[0].category}${alreadyText ? ` · ${alreadyText}` : ''}`)
     } else if (added.length > 1) {
-      showToast(`${added.length} Einträge hinzugefügt`)
+      showToast(`${added.length} Einträge hinzugefügt${alreadyText ? ` · ${alreadyText}` : ''}`)
     }
   }
 

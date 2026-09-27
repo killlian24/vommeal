@@ -48,7 +48,7 @@ Kommt man zurück in die App (oder ist wieder online), laden Woche, Heute und Ei
 
 ### Einkauf
 
-- **Eintragen:** Das Feld „Was fehlt?“ bleibt nach Enter offen, mehrere Einträge gehen mit Komma („Banane, Milch, Brot“). Ein kurzer Hinweis zeigt, in welcher Kategorie der Eintrag gelandet ist.
+- **Eintragen:** Das Feld „Was fehlt?“ bleibt nach Enter offen, mehrere Einträge gehen mit Komma („Banane, Milch, Brot“). Ein kurzer Hinweis zeigt, in welcher Kategorie der Eintrag gelandet ist. Steht etwas schon offen auf der Liste, kommt es nicht doppelt dazu („Milch steht schon drauf“); einfache Mehrzahlformen zählen als dasselbe (Banane/Bananen, Zwiebel/Zwiebeln, Tomate/Tomaten, Ei/Eier), auch beim Zusammenfassen der Zutaten der Woche.
 - **Kategorien:** Vommeal sortiert Einträge automatisch in Obst & Gemüse, Fleisch & Fisch, Milchprodukte & Eier, Brot & Nudeln, Trockenware & Konserven, Tiefkühl, Getränke und Sonstiges (Deutsch, Englisch und Dänisch; das spezifischste Wort gewinnt, also Erdbeeren zu Obst, Zahnpasta zu Sonstiges). Einen Eintrag lange drücken ändert seine Kategorie; eigene Wörter pro Kategorie und die Reihenfolge der Kategorien stehen unter **Einstellungen → Einkaufsreihenfolge**.
 - **Zutaten der Woche:** sammelt die Zutaten aller geplanten Rezepte von heute bis Ende nächster Woche (aus der Woche heraus nur für die angezeigte Woche, vom Einkaufswagen und von Heute nur für einen Abend), ohne Mengen, gleiche Zutaten aus mehreren Rezepten zusammengefasst („für Linsen, Tajine“).
   - Oben stehen die **Mahlzeiten** als Schalter („Sa · Linsen mit Spätzle · 4 von 6“). Eine Mahlzeit abschalten wählt ihre Zutaten ab; was eine andere Mahlzeit noch braucht, bleibt drin.

@@ -15,6 +15,7 @@ vi.mock('@/lib/config', () => import('../lib/config'))
 vi.mock('@/lib/categorize', () => import('../lib/categorize'))
 vi.mock('@/lib/ha', () => import('../lib/ha'))
 vi.mock('@/lib/shoppingMeals', () => import('../lib/shoppingMeals'))
+vi.mock('@/lib/shoppingKey', () => import('../lib/shoppingKey'))
 
 const db = await import('../lib/db')
 const meals = await import('../lib/shoppingMeals')

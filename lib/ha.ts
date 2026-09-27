@@ -1,16 +1,10 @@
 import type { HomeAssistantConfig } from './config'
 import type { ShoppingItem } from './db'
+import { normalizeShoppingText } from './shoppingKey'
 
 export type HATodoItem = { summary: string; uid: string; status: string }
 
-export function normalizeShoppingText(value: string): string {
-  return value
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim()
-}
+export { normalizeShoppingText } from './shoppingKey'
 
 export function shoppingLabel(item: Pick<ShoppingItem, 'amount' | 'unit' | 'name'>): string {
   return [item.amount, item.unit, item.name].filter(Boolean).join(' ').trim()
