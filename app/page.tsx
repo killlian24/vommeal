@@ -62,6 +62,8 @@ function rangeLabel(start: Date, end: Date): string {
 }
 
 const mealName = (e: MealEntry) => e.recipe?.name || e.custom_meal_name || 'Essen'
+// Compare dish names loosely: case, surrounding and double spaces do not matter
+const normName = (s: string) => s.normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('de')
 const abende = (n: number) => `${n} ${n === 1 ? 'Abend' : 'Abende'}`
 const errorText = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback)
 
@@ -445,10 +447,28 @@ export default function PlanPage() {
     }
   }
 
+  // An existing recipe with the typed name, if any (avoids duplicates, also in Mealie)
+  const sameNameRecipe = (name: string) => {
+    const n = normName(name)
+    return n ? recipes.find(r => normName(r.name) === n) : undefined
+  }
+
+  // Enter never creates a recipe: it plans an existing one with that exact
+  // name, otherwise it does nothing and the buttons below decide.
+  const onCustomNameEnter = () => {
+    const existing = sameNameRecipe(customName)
+    if (existing) planMeal({ recipeId: existing.id, label: existing.name })
+  }
+
   // Free text → new recipe in Mealie (dinner category), then planned like any recipe.
   const createRecipeAndPlan = async () => {
     const name = customName.trim()
     if (!name || saving || creatingRecipe) return
+    const existing = sameNameRecipe(name)
+    if (existing) {
+      await planMeal({ recipeId: existing.id, label: `${existing.name}, Rezept gab es schon` })
+      return
+    }
     setCreatingRecipe(true)
     try {
       const res = await fetch('/api/recipes/create', {
@@ -1153,14 +1173,14 @@ export default function PlanPage() {
               <div className="space-y-2">
                 <input placeholder="Neues Gericht, z. B. Schnitzel…" value={customName}
                   onChange={e => setCustomName(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && customName.trim() && createRecipeAndPlan()}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); onCustomNameEnter() } }}
                   enterKeyHint="done"
                   className="text-base min-h-[44px]" />
                 {customName.trim() && (
                   <div className="flex gap-2">
                     <button onClick={createRecipeAndPlan} disabled={saving || creatingRecipe}
                       className="flex-1 min-h-[44px] px-3 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-50">
-                      {creatingRecipe ? 'Lege an…' : 'Als Rezept anlegen & planen'}
+                      {creatingRecipe ? 'Lege an…' : sameNameRecipe(customName) ? 'Vorhandenes Rezept planen' : 'Als Rezept anlegen & planen'}
                     </button>
                     <button onClick={() => planMeal({})} disabled={saving || creatingRecipe}
                       className="min-h-[44px] px-3 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm text-ink-soft flex-shrink-0 transition-all disabled:opacity-50">
@@ -1169,7 +1189,11 @@ export default function PlanPage() {
                   </div>
                 )}
                 {customName.trim() && (
-                  <p className="text-xs text-ink-hint">Das Rezept landet in Mealie. Zutaten und Schritte könnt ihr später dort ergänzen.</p>
+                  <p className="text-xs text-ink-hint">
+                    {sameNameRecipe(customName)
+                      ? `„${sameNameRecipe(customName)!.name}“ gibt es schon als Rezept und wird eingeplant.`
+                      : 'Das Rezept landet in Mealie. Zutaten und Schritte könnt ihr später dort ergänzen.'}
+                  </p>
                 )}
               </div>
 
