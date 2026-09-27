@@ -24,6 +24,8 @@ import {
   loadLastSeen, saveLastSeen, type Marks,
 } from '@/lib/partnerChanges'
 import { MoveSheet } from '@/components/MoveSheet'
+import { Sheet, SheetHeader, SheetTitle, SheetClose, sheetPanel } from '@/components/Sheet'
+import { useToast } from '@/components/Toast'
 
 type Recipe = {
   id: string; name: string; image_url: string; prep_time: number; cook_time: number
@@ -40,7 +42,6 @@ type MealEntry = {
   updated_by?: string
   recipe?: Recipe
 }
-type Toast = { msg: string; action?: { label: string; onClick: () => void } }
 type Picker = { date: string; replaceId?: string }
 
 const SERVINGS = 2
@@ -116,6 +117,7 @@ function MealThumb({ entry, recipe, size }: { entry?: MealEntry; recipe?: Recipe
 }
 
 const iconBtn = 'w-10 h-10 flex items-center justify-center rounded-lg transition-all'
+const finePointer = () => typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: fine)').matches
 // Highlight for the day row under a dragged card
 const dropBadge = 'absolute top-1.5 right-1.5 z-10 px-2 py-0.5 rounded-full bg-primary-solid text-white text-xs font-semibold pointer-events-none'
 const secondaryBtn = 'min-h-[40px] flex items-center justify-center gap-1.5 px-3 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-ink-soft hover:text-white text-sm font-medium transition-all disabled:opacity-50'
@@ -130,6 +132,7 @@ export default function PlanPage() {
   const [loadError, setLoadError] = useState('')
   const [picker, setPicker] = useState<Picker | null>(null)
   const [search, setSearch] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
   const [customName, setCustomName] = useState('')
   const [creatingRecipe, setCreatingRecipe] = useState(false)
   const [nextDayFree, setNextDayFree] = useState(false)
@@ -139,8 +142,7 @@ export default function PlanPage() {
   const [moveFor, setMoveFor] = useState<MealEntry | null>(null)
   const [moving, setMoving] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [toast, setToast] = useState<Toast | null>(null)
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const { show: showToast, error: showError, hide: hideToast } = useToast()
   const [earlierOpen, setEarlierOpen] = useState(false)
   const [autofilling, setAutofilling] = useState(false)
   const { user: currentUser, users, partner, askUser } = useCurrentUser()
@@ -180,16 +182,6 @@ export default function PlanPage() {
   const upcomingStartStr = startStr < todayStr ? todayStr : startStr
   const dow = getDay(now)
   const showPlanNextWeekCard = isCurrentWeek && (dow === 4 || dow === 5 || dow === 6 || dow === 0)
-
-  const showToast = (msg: string, opts?: { action?: Toast['action']; duration?: number }) => {
-    if (toastTimer.current) clearTimeout(toastTimer.current)
-    setToast({ msg, action: opts?.action })
-    toastTimer.current = setTimeout(() => setToast(null), opts?.duration ?? 2500)
-  }
-  const hideToast = () => {
-    if (toastTimer.current) clearTimeout(toastTimer.current)
-    setToast(null)
-  }
 
   const goToWeek = (monday: Date, source?: string) => {
     setWeekStart(monday)
@@ -307,10 +299,10 @@ export default function PlanPage() {
       saveMarks(currentUser, next)
       setMarks(next)
       const hint = partnerHint(planned, changed)
-      if (hint) showToast(hint, { duration: 4000 })
+      if (hint) showToast(hint)
       saveLastSeen(key, at)
     } catch { /* offline: try again on the next return */ }
-  }, [currentUser])
+  }, [currentUser, showToast])
 
   useEffect(() => {
     if (!currentUser) return
@@ -397,7 +389,6 @@ export default function PlanPage() {
   const offerReplace = (current: MealEntry, body: Record<string, unknown>, label: string) => {
     refresh()
     showToast(conflictText(current), {
-      duration: 8000,
       action: {
         label: 'Trotzdem ersetzen',
         onClick: async () => {
@@ -405,7 +396,7 @@ export default function PlanPage() {
           const res = await postEntry({ ...body, replace_id: current.id })
           const again = conflictEntry(res)
           if (again) { offerReplace(again, body, label); return }
-          if (!res.ok) { showToast(res.error); return }
+          if (!res.ok) { showError(res.error); return }
           track('plan_replace')
           refresh()
           showToast(`${fmt(parseISO(String(body.date)), 'EEEE')}: ${label}`)
@@ -429,7 +420,7 @@ export default function PlanPage() {
       const res = await postEntry({ ...body, ...(replaceId ? { replace_id: replaceId } : { expect_empty: true }) })
       const current = conflictEntry(res)
       if (current) { closePicker(); offerReplace(current, body, label); return }
-      if (!res.ok) { showToast(res.error); return }
+      if (!res.ok) { showError(res.error); return }
       track(replaceId ? 'plan_replace' : 'plan_add', replaceId ? {} : { quick: !!opts.quick })
 
       let leftovers = false
@@ -470,7 +461,7 @@ export default function PlanPage() {
       const label = opts.label || (opts.recipeId ? recipes.find(r => r.id === opts.recipeId)?.name || 'Rezept' : name)
       afterPlanChange(res.moves, createdId, `${label} · ${mealName(replaced)} → ${fmt(addDays(parseISO(date), 1), 'EEEEEE')}`)
     } catch (e) {
-      showToast(errorText(e, 'Konnte nicht gespeichert werden'))
+      showError(errorText(e, 'Konnte nicht gespeichert werden'))
     } finally {
       setSaving(false)
     }
@@ -507,14 +498,14 @@ export default function PlanPage() {
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok || !data?.id) {
-        showToast(data?.error || 'Rezept konnte nicht angelegt werden')
+        showError(data?.error || 'Rezept konnte nicht angelegt werden')
         return
       }
       setRecipes(prev => [...prev, data].sort((a, b) => a.name.localeCompare(b.name, 'de')))
       track('recipe_create', { from: 'picker', source: data.source })
       await planMeal({ recipeId: data.id, label: data.name })
     } catch {
-      showToast('Rezept konnte nicht angelegt werden')
+      showError('Rezept konnte nicht angelegt werden')
     } finally {
       setCreatingRecipe(false)
     }
@@ -522,7 +513,7 @@ export default function PlanPage() {
 
   // ---- Plan actions ------------------------------------------------------
 
-  // Optimistic removal with a 6 s undo window instead of a confirm dialog
+  // Optimistic removal with an 8 s undo window instead of a confirm dialog
   const removeEntry = async (id: string) => {
     const removed = entries.find(e => e.id === id)
     if (!removed) return
@@ -532,16 +523,15 @@ export default function PlanPage() {
     endOptimistic()
     if (!res.ok) {
       // 404: the partner removed or replaced it already; show the fresh state.
-      if (res.status === 404) { refresh(); showToast('Wurde inzwischen geändert'); return }
+      if (res.status === 404) { refresh(); showError('Wurde inzwischen geändert'); return }
       // Put back only this card, other changes since then stay.
       setEntries(prev => prev.some(e => e.id === id) ? prev : [...prev, removed].sort((a, b) => a.date.localeCompare(b.date)))
-      showToast(res.status === 0 ? `${NETWORK_ERROR}, ${mealName(removed)} bleibt` : res.error)
+      showError(res.status === 0 ? `${NETWORK_ERROR}, ${mealName(removed)} bleibt` : res.error)
       return
     }
     track('plan_remove')
     if (removed.date === todayStr) setTodayEntry(null)
-    showToast(`${mealName(removed)} entfernt`, {
-      duration: 6000,
+    showToast(`Entfernt: ${mealName(removed)}`, {
       action: {
         label: 'Rückgängig',
         onClick: async () => {
@@ -555,8 +545,8 @@ export default function PlanPage() {
           })
           const current = conflictEntry(r)
           if (r.ok) { refresh(); showToast('Wiederhergestellt') }
-          else if (current) { refresh(); showToast(`Nicht wiederhergestellt: ${conflictText(current)}`, { duration: 4000 }) }
-          else { showToast(r.status === 0 ? r.error : 'Konnte nicht wiederhergestellt werden') }
+          else if (current) { refresh(); showError(`Nicht wiederhergestellt: ${conflictText(current)}`) }
+          else { showError(r.status === 0 ? r.error : 'Konnte nicht wiederhergestellt werden') }
         },
       },
     })
@@ -564,12 +554,11 @@ export default function PlanPage() {
 
   // ---- Moving evenings ----------------------------------------------------
 
-  // Toast with a 6 s undo that restores the old dates (and removes an evening
+  // Toast with an 8 s undo that restores the old dates (and removes an evening
   // that was planned on the freed day).
   const afterPlanChange = (moves: PlanMove[], createdId: string | null | undefined, msg: string) => {
     refresh()
     showToast(msg, {
-      duration: 6000,
       action: {
         label: 'Rückgängig',
         onClick: async () => {
@@ -578,7 +567,7 @@ export default function PlanPage() {
             await undoPlanChange(moves, createdId, currentUser)
             showToast('Zurückgenommen')
           } catch (e) {
-            showToast(errorText(e, 'Konnte nicht zurückgenommen werden'))
+            showError(errorText(e, 'Konnte nicht zurückgenommen werden'))
           }
           refresh()
         },
@@ -597,7 +586,7 @@ export default function PlanPage() {
       setMoveFor(null)
       afterPlanChange(res.moves, res.filled?.id, 'Verschoben')
     } catch (e) {
-      showToast(errorText(e, 'Konnte nicht verschoben werden'))
+      showError(errorText(e, 'Konnte nicht verschoben werden'))
       refresh()
     } finally {
       setMoving(false)
@@ -620,7 +609,7 @@ export default function PlanPage() {
       afterPlanChange(moves, null, swap ? 'Getauscht' : 'Verschoben')
     } catch (e) {
       endOptimistic()
-      showToast(errorText(e, 'Konnte nicht verschoben werden'))
+      showError(errorText(e, 'Konnte nicht verschoben werden'))
       refresh()
     } finally {
       setMoving(false)
@@ -643,14 +632,13 @@ export default function PlanPage() {
         body: JSON.stringify({ start: upcomingStartStr, end: endStr, suggested_by: currentUser }),
       })
       const data = await res.json()
-      if (!res.ok || !data.ok) { showToast(data.error || 'Woche konnte nicht gefüllt werden'); return }
+      if (!res.ok || !data.ok) { showError(data.error || 'Woche konnte nicht gefüllt werden'); return }
       track('autofill', { filled: data.filled ?? 0 })
       if (!data.filled) { showToast('Alle Abende sind schon geplant'); return }
       const fresh = await refresh()
       loadNominations()
       const added = (fresh || []).filter(e => !before.has(e.id) && e.date >= upcomingStartStr)
       showToast(`${abende(data.filled)} gefüllt`, {
-        duration: 6000,
         action: added.length ? {
           label: 'Rückgängig',
           onClick: async () => {
@@ -659,12 +647,13 @@ export default function PlanPage() {
             const results = await Promise.all(added.map(e => apiCall(`/api/meal-plan/${e.id}`, { method: 'DELETE' })))
             refresh()
             const failed = results.find(r => !r.ok && r.status !== 404)
-            showToast(failed ? (failed.status === 0 ? failed.error : 'Konnte nicht zurückgenommen werden') : 'Zurückgenommen')
+            if (failed) showError(failed.status === 0 ? failed.error : 'Konnte nicht zurückgenommen werden')
+            else showToast('Zurückgenommen')
           },
         } : undefined,
       })
     } catch {
-      showToast('Woche konnte nicht gefüllt werden')
+      showError('Woche konnte nicht gefüllt werden')
     } finally {
       setAutofilling(false)
     }
@@ -678,7 +667,7 @@ export default function PlanPage() {
       fallback: 'Zutaten konnten nicht übernommen werden',
     })
     setAddingToList(null)
-    if (!res.ok) { showToast(res.error); return }
+    if (!res.ok) { showError(res.error); return }
     const added = res.data?.added ?? 0
     track('shopping_from_plan', { scope: 'day', added })
     showToast(added > 0 ? `${added} Zutaten auf die Einkaufsliste` : 'Schon alles auf der Liste')
@@ -693,7 +682,7 @@ export default function PlanPage() {
       fallback: 'Zutaten konnten nicht übernommen werden',
     })
     setAddingToList(null)
-    if (!res.ok) { showToast(res.error); return }
+    if (!res.ok) { showError(res.error); return }
     const added = res.data?.added ?? 0
     track('shopping_from_plan', { scope: 'week', added })
     showToast(added > 0 ? `${added} Zutaten auf die Einkaufsliste` : 'Schon alles auf der Liste')
@@ -715,13 +704,12 @@ export default function PlanPage() {
     const removed = plan.ok ? plan.data?.removed ?? [] : []
     const removedNoms = noms.ok ? noms.data?.removed ?? [] : []
     if (!plan.ok || !noms.ok) {
-      showToast(!plan.ok ? plan.error : noms.error)
+      showError(!plan.ok ? plan.error : noms.error)
       return
     }
     track('plan_clear', { removed: removed.length })
     const what = upcomingStartStr > startStr ? 'Rest der Woche' : 'Woche'
     showToast(removed.length > 0 ? `${what} geleert: ${abende(removed.length)}` : `${what} geleert`, {
-      duration: 8000,
       action: removed.length + removedNoms.length > 0 ? {
         label: 'Rückgängig',
         onClick: () => { hideToast(); restoreCleared(removed, removedNoms) },
@@ -743,8 +731,8 @@ export default function PlanPage() {
     await loadNominations()
     const taken = results.filter(r => r.status === 409).length
     const failed = results.find(r => !r.ok && r.status !== 409)
-    if (failed) showToast(failed.status === 0 ? failed.error : 'Konnte nicht wiederhergestellt werden')
-    else if (taken > 0) showToast(`${abende(taken)} inzwischen neu geplant, dort nichts überschrieben`, { duration: 4000 })
+    if (failed) showError(failed.status === 0 ? failed.error : 'Konnte nicht wiederhergestellt werden')
+    else if (taken > 0) showToast(`${abende(taken)} inzwischen neu geplant, dort nichts überschrieben`)
     else showToast('Wiederhergestellt')
   }
 
@@ -806,12 +794,12 @@ export default function PlanPage() {
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (data?.match) {
-          showToast(`❤️ Match: ${recipe.name} am ${fmt(parseISO(dateStr), 'EEEE')}!`, { duration: 4000 })
+          showToast(`❤️ Match: ${recipe.name} am ${fmt(parseISO(dateStr), 'EEEE')}!`)
           refresh()
           loadNominations()
         }
       })
-      .catch(() => showToast('Stimme konnte nicht gespeichert werden'))
+      .catch(() => showError('Stimme konnte nicht gespeichert werden'))
     pendingVotes.current.push(post)
   }
 
@@ -1119,124 +1107,118 @@ export default function PlanPage() {
 
       {/* Add / replace sheet */}
       {picker && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm"
-          onClick={e => { if (e.target === e.currentTarget) closePicker() }}>
-          <div className="w-full max-w-md max-h-[90dvh] flex flex-col bg-[#141414] border border-[#2a2a2a] rounded-t-2xl sm:rounded-2xl overflow-hidden shadow-2xl animate-slide-up pb-safe">
-            <div className="flex items-center justify-between pl-4 pr-2 py-2 border-b border-[#222] flex-shrink-0">
-              <div className="min-w-0">
-                <p className="font-semibold text-white">{picker.replaceId ? 'Gericht tauschen' : 'Abendessen planen'}</p>
-                <p className="text-sm text-ink-muted">{fmt(parseISO(picker.date), 'EEEE, d. MMMM')}</p>
-              </div>
-              <button onClick={closePicker} aria-label="Schließen"
-                className={`${iconBtn} text-ink-muted hover:text-white hover:bg-[#222]`}>
-                <X size={18} />
-              </button>
+        // With mouse and keyboard straight into the search; on a phone the
+        // keyboard would cover the quick options, so the sheet itself gets focus.
+        <Sheet onClose={closePicker} initialFocus={finePointer() ? searchRef : undefined}>
+          <SheetHeader
+            title={picker.replaceId ? 'Gericht tauschen' : 'Abendessen planen'}
+            subtitle={fmt(parseISO(picker.date), 'EEEE, d. MMMM')}
+          />
+
+          <div className="p-4 space-y-3 overflow-y-auto overscroll-contain">
+            {/* Replace mode: keep the old dish by moving it one day later */}
+            {picker.replaceId && (() => {
+              const replaced = entries.find(e => e.id === picker.replaceId)
+              if (!replaced) return null
+              const nextLabel = picker.date === todayStr ? 'morgen' : fmt(addDays(parseISO(picker.date), 1), 'EEEE')
+              const auto = keepOld === null && picker.date === todayStr
+              return (
+                <label className="flex items-center gap-3 min-h-[44px] px-3 py-2 rounded-xl bg-[#1a1a1a] border border-[#262626] cursor-pointer">
+                  <CalendarClock size={18} className="text-primary flex-shrink-0" />
+                  <span className="flex-1 text-sm text-ink-soft">
+                    {mealName(replaced)} nicht verwerfen, sondern auf {nextLabel} schieben
+                    <span className="block text-xs text-ink-hint">
+                      Der Rest rutscht mit{auto ? ' · bei Auswärts essen oder Bestellen automatisch' : ''}
+                    </span>
+                  </span>
+                  <input type="checkbox" checked={keepOld ?? false} onChange={e => setKeepOld(e.target.checked)}
+                    className="sr-only peer" />
+                  <span aria-hidden className="relative flex-shrink-0 w-11 h-6 rounded-full bg-[#333] peer-checked:bg-primary transition-colors after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5" />
+                </label>
+              )
+            })()}
+
+            {/* Quick options */}
+            <div className="grid grid-cols-2 gap-2">
+              {QUICK_MEALS.map(q => (
+                <button key={q.name} onClick={() => planMeal({ name: q.name, quick: true })} disabled={saving}
+                  className="min-h-[44px] flex items-center gap-2 px-3 rounded-xl bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm font-medium text-white text-left transition-all disabled:opacity-50">
+                  <span className="text-lg">{q.emoji}</span> {q.name}
+                </button>
+              ))}
             </div>
 
-            <div className="p-4 space-y-3 overflow-y-auto">
-              {/* Replace mode: keep the old dish by moving it one day later */}
-              {picker.replaceId && (() => {
-                const replaced = entries.find(e => e.id === picker.replaceId)
-                if (!replaced) return null
-                const nextLabel = picker.date === todayStr ? 'morgen' : fmt(addDays(parseISO(picker.date), 1), 'EEEE')
-                const auto = keepOld === null && picker.date === todayStr
-                return (
-                  <label className="flex items-center gap-3 min-h-[44px] px-3 py-2 rounded-xl bg-[#1a1a1a] border border-[#262626] cursor-pointer">
-                    <CalendarClock size={18} className="text-primary flex-shrink-0" />
-                    <span className="flex-1 text-sm text-ink-soft">
-                      {mealName(replaced)} nicht verwerfen, sondern auf {nextLabel} schieben
-                      <span className="block text-xs text-ink-hint">
-                        Der Rest rutscht mit{auto ? ' · bei Auswärts essen oder Bestellen automatisch' : ''}
-                      </span>
-                    </span>
-                    <input type="checkbox" checked={keepOld ?? false} onChange={e => setKeepOld(e.target.checked)}
-                      className="sr-only peer" />
-                    <span aria-hidden className="relative flex-shrink-0 w-11 h-6 rounded-full bg-[#333] peer-checked:bg-primary transition-colors after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5" />
-                  </label>
-                )
-              })()}
-
-              {/* Quick options */}
-              <div className="grid grid-cols-2 gap-2">
-                {QUICK_MEALS.map(q => (
-                  <button key={q.name} onClick={() => planMeal({ name: q.name, quick: true })} disabled={saving}
-                    className="min-h-[44px] flex items-center gap-2 px-3 rounded-xl bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm font-medium text-white text-left transition-all disabled:opacity-50">
-                    <span className="text-lg">{q.emoji}</span> {q.name}
+            {/* Free text: new recipe in Mealie (default) or just a note for the evening */}
+            <div className="space-y-2">
+              <input placeholder="Neues Gericht, z. B. Schnitzel…" value={customName}
+                onChange={e => setCustomName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); onCustomNameEnter() } }}
+                enterKeyHint="done"
+                className="text-base min-h-[44px]" />
+              {customName.trim() && (
+                <div className="flex gap-2">
+                  <button onClick={createRecipeAndPlan} disabled={saving || creatingRecipe}
+                    className="flex-1 min-h-[44px] px-3 rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-semibold transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none">
+                    {creatingRecipe ? 'Lege an…' : sameNameRecipe(customName) ? 'Vorhandenes Rezept planen' : 'Als Rezept anlegen & planen'}
                   </button>
-                ))}
-              </div>
-
-              {/* Free text: new recipe in Mealie (default) or just a note for the evening */}
-              <div className="space-y-2">
-                <input placeholder="Neues Gericht, z. B. Schnitzel…" value={customName}
-                  onChange={e => setCustomName(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); onCustomNameEnter() } }}
-                  enterKeyHint="done"
-                  className="text-base min-h-[44px]" />
-                {customName.trim() && (
-                  <div className="flex gap-2">
-                    <button onClick={createRecipeAndPlan} disabled={saving || creatingRecipe}
-                      className="flex-1 min-h-[44px] px-3 rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-semibold transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none">
-                      {creatingRecipe ? 'Lege an…' : sameNameRecipe(customName) ? 'Vorhandenes Rezept planen' : 'Als Rezept anlegen & planen'}
-                    </button>
-                    <button onClick={() => planMeal({})} disabled={saving || creatingRecipe}
-                      className="min-h-[44px] px-3 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm text-ink-soft flex-shrink-0 transition-all disabled:opacity-50">
-                      Nur Notiz
-                    </button>
-                  </div>
-                )}
-                {customName.trim() && (
-                  <p className="text-xs text-ink-hint">
-                    {sameNameRecipe(customName)
-                      ? `„${sameNameRecipe(customName)!.name}“ gibt es schon als Rezept und wird eingeplant.`
-                      : 'Das Rezept landet in Mealie. Zutaten und Schritte könnt ihr später dort ergänzen.'}
-                  </p>
-                )}
-              </div>
-
-              {/* Leftovers for tomorrow (not when tomorrow gets the old dish) */}
-              {nextDayFree && !keepOld && (
-                <label className="flex items-center gap-3 min-h-[44px] px-3 rounded-xl bg-[#1a1a1a] border border-[#262626] cursor-pointer">
-                  <span className="text-lg">🍲</span>
-                  <span className="flex-1 text-sm text-ink-soft">
-                    Reste für morgen einplanen
-                    <span className="block text-xs text-ink-hint">{fmt(addDays(parseISO(picker.date), 1), 'EEEE')} ist noch frei</span>
-                  </span>
-                  <input type="checkbox" checked={addLeftovers} onChange={e => setAddLeftovers(e.target.checked)}
-                    className="sr-only peer" />
-                  <span aria-hidden className="relative w-11 h-6 rounded-full bg-[#333] peer-checked:bg-primary transition-colors after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5" />
-                </label>
+                  <button onClick={() => planMeal({})} disabled={saving || creatingRecipe}
+                    className="min-h-[44px] px-3 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm text-ink-soft flex-shrink-0 transition-all disabled:opacity-50">
+                    Nur Notiz
+                  </button>
+                </div>
               )}
+              {customName.trim() && (
+                <p className="text-xs text-ink-hint">
+                  {sameNameRecipe(customName)
+                    ? `„${sameNameRecipe(customName)!.name}“ gibt es schon als Rezept und wird eingeplant.`
+                    : 'Das Rezept landet in Mealie. Zutaten und Schritte könnt ihr später dort ergänzen.'}
+                </p>
+              )}
+            </div>
 
-              {/* Recipe search */}
-              <div className="relative">
-                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-hint" />
-                <input placeholder="Rezepte suchen…" value={search} onChange={e => setSearch(e.target.value)}
-                  className="pl-9 text-base min-h-[44px]" />
-              </div>
-              <div className="space-y-1">
-                {filteredRecipes.length === 0 && <p className="text-center text-ink-muted text-sm py-4">Keine Rezepte gefunden</p>}
-                {filteredRecipes.map(r => {
-                  const mins = (r.prep_time || 0) + (r.cook_time || 0)
-                  return (
-                    <button key={r.id} onClick={() => planMeal({ recipeId: r.id })} disabled={saving}
-                      className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-[#1e1e1e] border border-transparent hover:border-[#2a2a2a] text-left transition-all disabled:opacity-50">
-                      <MealThumb recipe={r} size="w-10 h-10" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-white truncate">{r.name}</p>
-                        <p className="text-xs text-ink-hint">
-                          {r.effort === 'quick' ? '⚡ schnell' : r.effort === 'involved' ? 'aufwendig' : r.source === 'mealie' ? 'Mealie' : 'Eigenes Rezept'}
-                          {mins ? ` · ${mins} Min.` : ''}
-                        </p>
-                      </div>
-                      {r.rating ? <StarRating rating={r.rating} size={11} /> : null}
-                    </button>
-                  )
-                })}
-              </div>
+            {/* Leftovers for tomorrow (not when tomorrow gets the old dish) */}
+            {nextDayFree && !keepOld && (
+              <label className="flex items-center gap-3 min-h-[44px] px-3 rounded-xl bg-[#1a1a1a] border border-[#262626] cursor-pointer">
+                <span className="text-lg">🍲</span>
+                <span className="flex-1 text-sm text-ink-soft">
+                  Reste für morgen einplanen
+                  <span className="block text-xs text-ink-hint">{fmt(addDays(parseISO(picker.date), 1), 'EEEE')} ist noch frei</span>
+                </span>
+                <input type="checkbox" checked={addLeftovers} onChange={e => setAddLeftovers(e.target.checked)}
+                  className="sr-only peer" />
+                <span aria-hidden className="relative w-11 h-6 rounded-full bg-[#333] peer-checked:bg-primary transition-colors after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5" />
+              </label>
+            )}
+
+            {/* Recipe search */}
+            <div className="relative">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-hint" />
+              <input ref={searchRef} placeholder="Rezepte suchen…"
+                value={search} onChange={e => setSearch(e.target.value)}
+                className="pl-9 text-base min-h-[44px]" />
+            </div>
+            <div className="space-y-1">
+              {filteredRecipes.length === 0 && <p className="text-center text-ink-muted text-sm py-4">Keine Rezepte gefunden</p>}
+              {filteredRecipes.map(r => {
+                const mins = (r.prep_time || 0) + (r.cook_time || 0)
+                return (
+                  <button key={r.id} onClick={() => planMeal({ recipeId: r.id })} disabled={saving}
+                    className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-[#1e1e1e] border border-transparent hover:border-[#2a2a2a] text-left transition-all disabled:opacity-50">
+                    <MealThumb recipe={r} size="w-10 h-10" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-white truncate">{r.name}</p>
+                      <p className="text-xs text-ink-hint">
+                        {r.effort === 'quick' ? '⚡ schnell' : r.effort === 'involved' ? 'aufwendig' : r.source === 'mealie' ? 'Mealie' : 'Eigenes Rezept'}
+                        {mins ? ` · ${mins} Min.` : ''}
+                      </p>
+                    </div>
+                    {r.rating ? <StarRating rating={r.rating} size={11} /> : null}
+                  </button>
+                )
+              })}
             </div>
           </div>
-        </div>
+        </Sheet>
       )}
 
       {/* Verschieben sheet */}
@@ -1252,19 +1234,20 @@ export default function PlanPage() {
         />
       )}
 
-      {/* Swipen overlay */}
+      {/* Swipen overlay: one sheet whose content changes (each screen returns
+          a <Sheet> at this spot, so the dialog stays open between them).
+          A tap next to it does not end the voting, Escape does. */}
       {funMode && (() => {
         const emptyDays = funDays
 
         if (emptyDays.length === 0) return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-            <div className="bg-[#141414] border border-[#2a2a2a] rounded-2xl p-8 max-w-sm w-full text-center">
-              <div className="text-4xl mb-4">🎉</div>
-              <p className="text-white font-semibold text-lg">Alles geplant!</p>
-              <p className="text-ink-muted text-sm mt-1 mb-6">Diese Woche gibt es nichts mehr zu swipen.</p>
-              <button onClick={closeFunMode} className="min-h-[44px] px-6 rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-medium">Fertig</button>
-            </div>
-          </div>
+          <Sheet onClose={closeFunMode} closeOnScrim={false} placement="center"
+            className="bg-[#141414] border border-[#2a2a2a] rounded-2xl p-8 max-w-sm w-full text-center">
+            <div className="text-4xl mb-4">🎉</div>
+            <SheetTitle className="text-white font-semibold text-lg">Alles geplant!</SheetTitle>
+            <p className="text-ink-muted text-sm mt-1 mb-6">Diese Woche gibt es nichts mehr zu swipen.</p>
+            <button onClick={closeFunMode} className="min-h-[44px] px-6 rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-medium">Fertig</button>
+          </Sheet>
         )
 
         // Results screen after voting all days
@@ -1281,54 +1264,49 @@ export default function PlanPage() {
           })
 
           return (
-            <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm sm:p-4">
-              <div className="w-full max-w-sm bg-[#141414] border border-[#2a2a2a] rounded-t-2xl sm:rounded-2xl overflow-hidden shadow-2xl animate-slide-up max-h-[90dvh] flex flex-col pb-safe">
-                <div className="flex items-center justify-between pl-4 pr-2 py-2 border-b border-[#222] flex-shrink-0">
-                  <p className="font-semibold text-white">Eure Stimmen</p>
-                  <button onClick={closeFunMode} aria-label="Schließen" className={`${iconBtn} text-ink-muted hover:text-white hover:bg-[#222]`}><X size={18} /></button>
-                </div>
-                <div className="overflow-y-auto flex-1 divide-y divide-[#1a1a1a]">
-                  {byDate.map(({ dateStr, day, myNoms, partnerNoms, matchId, confirmed }) => (
-                    <div key={dateStr} className="px-4 py-3">
-                      <p className="text-sm text-ink-muted font-medium mb-2">{fmt(day, 'EEEE, d. MMMM')}</p>
-                      {confirmed ? (
-                        <div className="flex items-center gap-2 text-green-400 text-sm">
-                          <span>✓</span>
-                          <span className="font-medium">{mealName(confirmed)}</span>
-                        </div>
-                      ) : myNoms.length === 0 && partnerNoms.length === 0 ? (
-                        <p className="text-sm text-ink-hint">Noch keine Stimmen für diesen Tag</p>
-                      ) : matchId ? (
-                        <div className="flex items-center gap-2 text-pink-400 text-sm">
-                          <Heart size={12} className="fill-pink-400 flex-shrink-0" />
-                          <span className="font-medium">{myNoms.find(n => n.recipe_id === matchId)?.recipe?.name}</span>
-                          <span className="text-xs text-ink-muted">Match!</span>
-                        </div>
-                      ) : (
-                        <div className="space-y-2">
-                          <p className="text-xs text-amber-300">Kein Match – wählt eins:</p>
-                          {[...myNoms, ...partnerNoms.filter(n => !myNoms.find(m => m.recipe_id === n.recipe_id))].slice(0, 4).map(n => (
-                            <button key={n.id} onClick={() => resolveConflict(dateStr, n.recipe_id)}
-                              className="w-full min-h-[44px] flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-left transition-all">
-                              <MealThumb recipe={n.recipe} size="w-8 h-8" />
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm text-white font-medium truncate">{n.recipe?.name}</p>
-                                <p className="text-xs text-ink-hint">
-                                  {myNoms.find(m => m.recipe_id === n.recipe_id) ? 'deine Wahl' : `Wahl von ${partner}`}
-                                </p>
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <div className="px-4 py-3 border-t border-[#1a1a1a] flex-shrink-0">
-                  <button onClick={closeFunMode} className="w-full min-h-[44px] rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-medium transition-all">Fertig</button>
-                </div>
+            <Sheet onClose={closeFunMode} closeOnScrim={false} className={sheetPanel('max-w-sm')}>
+              <SheetHeader title="Eure Stimmen" />
+              <div className="overflow-y-auto overscroll-contain flex-1 divide-y divide-[#1a1a1a]">
+                {byDate.map(({ dateStr, day, myNoms, partnerNoms, matchId, confirmed }) => (
+                  <div key={dateStr} className="px-4 py-3">
+                    <p className="text-sm text-ink-muted font-medium mb-2">{fmt(day, 'EEEE, d. MMMM')}</p>
+                    {confirmed ? (
+                      <div className="flex items-center gap-2 text-green-400 text-sm">
+                        <span>✓</span>
+                        <span className="font-medium">{mealName(confirmed)}</span>
+                      </div>
+                    ) : myNoms.length === 0 && partnerNoms.length === 0 ? (
+                      <p className="text-sm text-ink-hint">Noch keine Stimmen für diesen Tag</p>
+                    ) : matchId ? (
+                      <div className="flex items-center gap-2 text-pink-400 text-sm">
+                        <Heart size={12} className="fill-pink-400 flex-shrink-0" />
+                        <span className="font-medium">{myNoms.find(n => n.recipe_id === matchId)?.recipe?.name}</span>
+                        <span className="text-xs text-ink-muted">Match!</span>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <p className="text-xs text-amber-300">Kein Match – wählt eins:</p>
+                        {[...myNoms, ...partnerNoms.filter(n => !myNoms.find(m => m.recipe_id === n.recipe_id))].slice(0, 4).map(n => (
+                          <button key={n.id} onClick={() => resolveConflict(dateStr, n.recipe_id)}
+                            className="w-full min-h-[44px] flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-left transition-all">
+                            <MealThumb recipe={n.recipe} size="w-8 h-8" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm text-white font-medium truncate">{n.recipe?.name}</p>
+                              <p className="text-xs text-ink-hint">
+                                {myNoms.find(m => m.recipe_id === n.recipe_id) ? 'deine Wahl' : `Wahl von ${partner}`}
+                              </p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
-            </div>
+              <div className="px-4 py-3 border-t border-[#1a1a1a] flex-shrink-0">
+                <button onClick={closeFunMode} className="w-full min-h-[44px] rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-medium transition-all">Fertig</button>
+              </div>
+            </Sheet>
           )
         }
 
@@ -1339,63 +1317,59 @@ export default function PlanPage() {
         const recipe = cards[funCardIndex]
 
         return (
-          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm">
-            <div className="w-full max-w-sm bg-[#141414] border border-[#2a2a2a] rounded-t-2xl sm:rounded-2xl overflow-hidden shadow-2xl animate-slide-up pb-safe">
-              <div className="flex items-center justify-between pl-4 pr-2 py-2 border-b border-[#222]">
-                <div>
-                  <p className="text-xs text-ink-muted font-medium">
-                    Tag {funDayIndex + 1}/{emptyDays.length} · Karte {funCardIndex + 1}/{CARDS_PER_DAY}
-                  </p>
-                  <p className="text-sm font-semibold text-white">{fmt(currentDay, 'EEEE, d. MMMM')}</p>
-                </div>
-                <button onClick={closeFunMode} aria-label="Schließen" className={`${iconBtn} text-ink-muted hover:text-white hover:bg-[#222]`}>
-                  <X size={18} />
-                </button>
+          <Sheet onClose={closeFunMode} closeOnScrim={false} className={sheetPanel('max-w-sm')}>
+            <div className="flex items-center justify-between pl-4 pr-2 py-2 border-b border-[#222] flex-shrink-0">
+              <div>
+                <p className="text-xs text-ink-muted font-medium">
+                  Tag {funDayIndex + 1}/{emptyDays.length} · Karte {funCardIndex + 1}/{CARDS_PER_DAY}
+                </p>
+                <SheetTitle className="text-sm font-semibold text-white">{fmt(currentDay, 'EEEE, d. MMMM')}</SheetTitle>
               </div>
-
-              <div className="flex gap-1 px-4 pt-2">
-                {cards.map((_, i) => (
-                  <div key={i} className={`h-1 flex-1 rounded-full transition-all ${
-                    i < funCardIndex ? 'bg-primary' : i === funCardIndex ? 'bg-primary/50' : 'bg-[#2a2a2a]'
-                  }`} />
-                ))}
-              </div>
-
-              {recipe ? (
-                <>
-                  {recipe.image_url ? (
-                    <div className="relative h-48 overflow-hidden mt-2">
-                      <Image src={recipe.image_url} alt="" fill className="object-cover" unoptimized />
-                      <div className="absolute inset-0 bg-gradient-to-t from-[#141414] via-transparent to-transparent" />
-                    </div>
-                  ) : (
-                    <div className="h-28 mt-2 bg-[#1a1a1a] flex items-center justify-center text-5xl">🍽️</div>
-                  )}
-                  <div className="px-4 py-3">
-                    <p className="text-base font-semibold text-white leading-tight">{recipe.name}</p>
-                    <div className="flex items-center gap-3 mt-1 text-sm text-ink-muted">
-                      {(recipe.prep_time || recipe.cook_time) ? <span>⏱ {(recipe.prep_time || 0) + (recipe.cook_time || 0)} Min.</span> : null}
-                      {recipe.effort === 'quick' ? <span>⚡ schnell</span> : null}
-                      {recipe.rating ? <StarRating rating={recipe.rating} size={12} /> : null}
-                    </div>
-                  </div>
-
-                  <div className="px-4 pb-4 grid grid-cols-2 gap-3">
-                    <button onClick={() => funVote(recipe, false)}
-                      className="min-h-[52px] flex items-center justify-center gap-2 rounded-xl bg-[#1c1c1c] hover:bg-red-500/10 border border-[#2a2a2a] hover:border-red-500/30 text-ink-soft hover:text-red-400 transition-all text-base font-medium">
-                      <XCircle size={18} /> Nein
-                    </button>
-                    <button onClick={() => funVote(recipe, true)}
-                      className="min-h-[52px] flex items-center justify-center gap-2 rounded-xl border bg-green-500/15 border-green-500/30 text-green-400 hover:bg-green-500/25 transition-all text-base font-medium">
-                      <Heart size={18} /> Ja!
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <p className="px-4 py-8 text-center text-sm text-ink-muted">Keine Rezepte vorhanden.</p>
-              )}
+              <SheetClose />
             </div>
-          </div>
+
+            <div className="flex gap-1 px-4 pt-2">
+              {cards.map((_, i) => (
+                <div key={i} className={`h-1 flex-1 rounded-full transition-all ${
+                  i < funCardIndex ? 'bg-primary' : i === funCardIndex ? 'bg-primary/50' : 'bg-[#2a2a2a]'
+                }`} />
+              ))}
+            </div>
+
+            {recipe ? (
+              <>
+                {recipe.image_url ? (
+                  <div className="relative h-48 overflow-hidden mt-2">
+                    <Image src={recipe.image_url} alt="" fill className="object-cover" unoptimized />
+                    <div className="absolute inset-0 bg-gradient-to-t from-[#141414] via-transparent to-transparent" />
+                  </div>
+                ) : (
+                  <div className="h-28 mt-2 bg-[#1a1a1a] flex items-center justify-center text-5xl">🍽️</div>
+                )}
+                <div className="px-4 py-3">
+                  <p className="text-base font-semibold text-white leading-tight">{recipe.name}</p>
+                  <div className="flex items-center gap-3 mt-1 text-sm text-ink-muted">
+                    {(recipe.prep_time || recipe.cook_time) ? <span>⏱ {(recipe.prep_time || 0) + (recipe.cook_time || 0)} Min.</span> : null}
+                    {recipe.effort === 'quick' ? <span>⚡ schnell</span> : null}
+                    {recipe.rating ? <StarRating rating={recipe.rating} size={12} /> : null}
+                  </div>
+                </div>
+
+                <div className="px-4 pb-4 grid grid-cols-2 gap-3">
+                  <button onClick={() => funVote(recipe, false)}
+                    className="min-h-[52px] flex items-center justify-center gap-2 rounded-xl bg-[#1c1c1c] hover:bg-red-500/10 border border-[#2a2a2a] hover:border-red-500/30 text-ink-soft hover:text-red-400 transition-all text-base font-medium">
+                    <XCircle size={18} /> Nein
+                  </button>
+                  <button onClick={() => funVote(recipe, true)}
+                    className="min-h-[52px] flex items-center justify-center gap-2 rounded-xl border bg-green-500/15 border-green-500/30 text-green-400 hover:bg-green-500/25 transition-all text-base font-medium">
+                    <Heart size={18} /> Ja!
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p className="px-4 py-8 text-center text-sm text-ink-muted">Keine Rezepte vorhanden.</p>
+            )}
+          </Sheet>
         )
       })()}
 
@@ -1413,128 +1387,89 @@ export default function PlanPage() {
           ...partnerNoms.filter(n => !myNoms.find(m => m.recipe_id === n.recipe_id)),
         ].filter((n, i, arr) => arr.findIndex(x => x.recipe_id === n.recipe_id) === i)
         return (
-          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/70 backdrop-blur-sm"
-            onClick={e => { if (e.target === e.currentTarget) setSettleDate(null) }}>
-            <div className="w-full max-w-sm bg-[#141414] border border-[#2a2a2a] rounded-t-2xl sm:rounded-2xl overflow-hidden shadow-2xl animate-slide-up pb-safe">
-              <div className="flex items-center justify-between pl-4 pr-2 py-2 border-b border-[#222]">
-                <div>
-                  <p className="font-semibold text-white">
-                    {matchNom ? '❤️ Ihr mögt beide' : '⚖️ Kein Match – wählt eins'}
-                  </p>
-                  <p className="text-sm text-ink-muted">{fmt(parseISO(settleDate), 'EEEE, d. MMMM')}</p>
-                </div>
-                <button onClick={() => setSettleDate(null)} aria-label="Schließen" className={`${iconBtn} text-ink-muted hover:text-white hover:bg-[#222]`}>
-                  <X size={18} />
-                </button>
-              </div>
-              <div className="p-4 space-y-2">
-                {allPicks.map(n => {
-                  const isMine = !!myNoms.find(m => m.recipe_id === n.recipe_id)
-                  const isMatch = isMine && partnerIds.has(n.recipe_id)
-                  return (
-                    <button key={n.recipe_id} onClick={() => resolveConflict(settleDate, n.recipe_id)}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-left transition-all ${
-                        isMatch
-                          ? 'bg-pink-500/15 border-pink-500/30 hover:bg-pink-500/25'
-                          : 'bg-[#1c1c1c] border-[#2a2a2a] hover:bg-[#252525]'
-                      }`}>
-                      <MealThumb recipe={n.recipe} size="w-10 h-10" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm text-white font-medium truncate">{n.recipe?.name}</p>
-                        <p className="text-xs text-ink-hint">
-                          {isMatch ? '❤️ ihr beide' : isMine ? 'deine Wahl' : `Wahl von ${partner}`}
-                        </p>
-                      </div>
-                      {isMatch && <Heart size={14} className="text-pink-400 fill-pink-400 flex-shrink-0" />}
-                    </button>
-                  )
-                })}
-              </div>
+          <Sheet onClose={() => setSettleDate(null)} className={sheetPanel('max-w-sm')}>
+            <SheetHeader
+              title={matchNom ? '❤️ Ihr mögt beide' : '⚖️ Kein Match – wählt eins'}
+              subtitle={fmt(parseISO(settleDate), 'EEEE, d. MMMM')}
+            />
+            <div className="p-4 space-y-2 overflow-y-auto overscroll-contain">
+              {allPicks.map(n => {
+                const isMine = !!myNoms.find(m => m.recipe_id === n.recipe_id)
+                const isMatch = isMine && partnerIds.has(n.recipe_id)
+                return (
+                  <button key={n.recipe_id} onClick={() => resolveConflict(settleDate, n.recipe_id)}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-left transition-all ${
+                      isMatch
+                        ? 'bg-pink-500/15 border-pink-500/30 hover:bg-pink-500/25'
+                        : 'bg-[#1c1c1c] border-[#2a2a2a] hover:bg-[#252525]'
+                    }`}>
+                    <MealThumb recipe={n.recipe} size="w-10 h-10" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-white font-medium truncate">{n.recipe?.name}</p>
+                      <p className="text-xs text-ink-hint">
+                        {isMatch ? '❤️ ihr beide' : isMine ? 'deine Wahl' : `Wahl von ${partner}`}
+                      </p>
+                    </div>
+                    {isMatch && <Heart size={14} className="text-pink-400 fill-pink-400 flex-shrink-0" />}
+                  </button>
+                )
+              })}
             </div>
-          </div>
+          </Sheet>
         )
       })()}
 
       {/* Swipen: day picker */}
       {funDayPicker && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm"
-          onClick={e => { if (e.target === e.currentTarget) setFunDayPicker(false) }}>
-          <div className="w-full max-w-sm bg-[#141414] border border-[#2a2a2a] rounded-t-2xl sm:rounded-2xl overflow-hidden shadow-2xl animate-slide-up pb-safe">
-            <div className="flex items-center justify-between pl-4 pr-2 py-2 border-b border-[#222]">
-              <div>
-                <p className="font-semibold text-white">Swipen</p>
-                <p className="text-sm text-ink-muted">Für welche Abende?</p>
-              </div>
-              <button onClick={() => setFunDayPicker(false)} aria-label="Schließen"
-                className={`${iconBtn} text-ink-muted hover:text-white hover:bg-[#222]`}>
-                <X size={18} />
-              </button>
-            </div>
-            <div className="p-4 space-y-2">
-              {days.map(day => {
-                const s = ds(day)
-                const hasEntry = !!entries.find(e => e.date === s)
-                const isPast = s < todayStr
-                const disabled = hasEntry || isPast
-                const selected = funSelectedDates.has(s)
-                return (
-                  <button
-                    key={s}
-                    onClick={() => {
-                      if (disabled) return
-                      setFunSelectedDates(prev => {
-                        const next = new Set(prev)
-                        if (next.has(s)) next.delete(s)
-                        else next.add(s)
-                        return next
-                      })
-                    }}
-                    disabled={disabled}
-                    aria-pressed={selected}
-                    className={`w-full min-h-[44px] flex items-center justify-between px-3 rounded-xl border transition-all ${
-                      disabled
-                        ? 'border-[#1e1e1e] bg-[#0f0f0f] opacity-40 cursor-not-allowed'
-                        : selected
-                          ? 'border-primary/50 bg-primary/10 text-white'
-                          : 'border-[#2a2a2a] bg-[#1a1a1a] text-ink-soft hover:text-white hover:border-[#333]'
-                    }`}
-                  >
-                    <span className="text-sm font-medium">{fmt(day, 'EEEE')}</span>
-                    <span className="text-xs text-ink-muted">
-                      {hasEntry ? 'schon geplant' : isPast ? 'vorbei' : fmt(day, 'd. MMM')}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-            <div className="p-4 pt-0">
-              <button
-                onClick={startFunMode}
-                disabled={funSelectedDates.size === 0}
-                className="w-full min-h-[48px] rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none"
-              >
-                Los geht&apos;s – {abende(funSelectedDates.size)} 🎲
-              </button>
-            </div>
+        <Sheet onClose={() => setFunDayPicker(false)} className={sheetPanel('max-w-sm')}>
+          <SheetHeader title="Swipen" subtitle="Für welche Abende?" />
+          <div className="p-4 space-y-2 overflow-y-auto overscroll-contain">
+            {days.map(day => {
+              const s = ds(day)
+              const hasEntry = !!entries.find(e => e.date === s)
+              const isPast = s < todayStr
+              const disabled = hasEntry || isPast
+              const selected = funSelectedDates.has(s)
+              return (
+                <button
+                  key={s}
+                  onClick={() => {
+                    if (disabled) return
+                    setFunSelectedDates(prev => {
+                      const next = new Set(prev)
+                      if (next.has(s)) next.delete(s)
+                      else next.add(s)
+                      return next
+                    })
+                  }}
+                  disabled={disabled}
+                  aria-pressed={selected}
+                  className={`w-full min-h-[44px] flex items-center justify-between px-3 rounded-xl border transition-all ${
+                    disabled
+                      ? 'border-[#1e1e1e] bg-[#0f0f0f] opacity-40 cursor-not-allowed'
+                      : selected
+                        ? 'border-primary/50 bg-primary/10 text-white'
+                        : 'border-[#2a2a2a] bg-[#1a1a1a] text-ink-soft hover:text-white hover:border-[#333]'
+                  }`}
+                >
+                  <span className="text-sm font-medium">{fmt(day, 'EEEE')}</span>
+                  <span className="text-xs text-ink-muted">
+                    {hasEntry ? 'schon geplant' : isPast ? 'vorbei' : fmt(day, 'd. MMM')}
+                  </span>
+                </button>
+              )
+            })}
           </div>
-        </div>
-      )}
-
-      {/* Toast */}
-      {toast && (
-        // Centred by a full-width wrapper: the slide-up animation sets `transform`,
-        // which would otherwise cancel a translate-based centring.
-        <div className="fixed inset-x-0 bottom-24 md:bottom-6 md:left-56 z-[60] flex justify-center px-4 pointer-events-none">
-          <div role="status" className="pointer-events-auto flex items-center gap-2 pl-4 pr-1.5 min-h-[44px] max-w-full bg-[#1e1e1e] border border-[#333] rounded-full text-sm text-white shadow-xl animate-slide-up whitespace-nowrap">
-            <span className={`truncate ${toast.action ? '' : 'pr-2.5'}`}>{toast.msg}</span>
-            {toast.action && (
-              <button onClick={toast.action.onClick}
-                className="min-h-[40px] px-3 rounded-full text-primary font-semibold hover:bg-white/5 transition-colors flex-shrink-0">
-                {toast.action.label}
-              </button>
-            )}
+          <div className="p-4 pt-0">
+            <button
+              onClick={startFunMode}
+              disabled={funSelectedDates.size === 0}
+              className="w-full min-h-[48px] rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none"
+            >
+              Los geht&apos;s – {abende(funSelectedDates.size)} 🎲
+            </button>
           </div>
-        </div>
+        </Sheet>
       )}
     </div>
   )

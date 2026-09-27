@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import { Avatar, avatarColor } from '@/components/Avatar'
+import { Sheet } from '@/components/Sheet'
 
 // Who is using this phone. One place for the whole app: every page knows the
 // person before it writes, nobody silently becomes profile 1. The choice is
@@ -111,11 +112,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   )
 }
 
-// Full-screen "Wer bist du?" on first use of a phone
+// Full-screen "Wer bist du?" on first use of a phone; only a choice closes it
 function WhoAreYou({ users, onPick }: { users: string[]; onPick: (name: string) => void }) {
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="who-title"
-      className="fixed inset-0 z-[70] flex flex-col items-center justify-center bg-[#0a0a0a]">
+    <Sheet onClose={() => {}} dismissible={false} placement="fullscreen" labelledBy="who-title"
+      className="relative flex flex-col items-center justify-center bg-[#0a0a0a]">
       <div className="absolute inset-0 pointer-events-none" style={{
         background: 'radial-gradient(ellipse 60% 40% at 50% 50%, rgba(249,115,22,0.08) 0%, transparent 70%)'
       }} />
@@ -151,6 +152,6 @@ function WhoAreYou({ users, onPick }: { users: string[]; onPick: (name: string) 
           })}
         </div>
       </div>
-    </div>
+    </Sheet>
   )
 }

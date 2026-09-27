@@ -3,6 +3,7 @@ import './globals.css'
 import Navigation from '@/components/Navigation'
 import { UserProvider } from '@/components/UserProvider'
 import { ServiceWorker } from '@/components/ServiceWorker'
+import { ToastProvider } from '@/components/Toast'
 
 export const metadata: Metadata = {
   title: 'Vommeal',
@@ -40,16 +41,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="mobile-web-app-capable" content="yes" />
       </head>
       <body className="min-h-screen flex flex-col">
-        <UserProvider>
-          <div className="flex flex-col min-h-screen md:flex-row overflow-x-hidden">
-            <Navigation />
-            <main className="flex-1 md:ml-56 pb-tabbar min-w-0">
-              <div className="max-w-4xl mx-auto px-4 pt-page pb-6 page-enter w-full">
-                {children}
-              </div>
-            </main>
-          </div>
-        </UserProvider>
+        <ToastProvider>
+          <UserProvider>
+            <div className="flex flex-col min-h-screen md:flex-row overflow-x-hidden">
+              <Navigation />
+              <main className="flex-1 md:ml-56 pb-tabbar min-w-0">
+                <div className="max-w-4xl mx-auto px-4 pt-page pb-6 page-enter w-full">
+                  {children}
+                </div>
+              </main>
+            </div>
+          </UserProvider>
+        </ToastProvider>
         <ServiceWorker />
       </body>
     </html>

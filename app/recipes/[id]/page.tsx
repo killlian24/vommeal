@@ -6,7 +6,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { ArrowLeft, Clock, Users, ExternalLink, Edit2, Trash2, Save, X, Plus, CookingPot, Zap, ChefHat } from 'lucide-react'
 import { StarRating } from '@/components/StarRating'
-import CookMode, { FewIngredientsHint } from '@/components/CookMode'
+import CookMode, { FewIngredientsHint, readCookProgress } from '@/components/CookMode'
 import { track } from '@/lib/track'
 import { apiCall } from '@/lib/apiCall'
 
@@ -56,8 +56,11 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
     setLoading(true)
     setLoadError('')
     const res = await apiCall<Recipe>(`/api/recipes/${id}`, { fallback: 'Rezept konnte nicht geladen werden' })
-    if (res.ok) setRecipe(res.data)
-    else setLoadError(res.status === 404 ? 'gone' : res.error)
+    if (res.ok) {
+      setRecipe(res.data)
+      // Reloaded while cooking: straight back to the step
+      if (readCookProgress(id)?.open) setCooking(true)
+    } else setLoadError(res.status === 404 ? 'gone' : res.error)
     setLoading(false)
   }, [id])
 
@@ -591,6 +594,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
           instructions={recipe.instructions}
           mealieUrl={mealieUrl}
           fromMealie={recipe.source === 'mealie'}
+          recipeId={recipe.id}
           onClose={() => setCooking(false)}
         />
       )}

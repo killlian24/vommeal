@@ -8,6 +8,8 @@ import {
 import { format, startOfWeek, addDays, parseISO, isToday } from 'date-fns'
 import { de } from 'date-fns/locale'
 import { track } from '@/lib/track'
+import { useToast } from '@/components/Toast'
+import { Sheet, SheetTitle, SheetClose } from '@/components/Sheet'
 import { apiCall } from '@/lib/apiCall'
 import { useRefreshOnResume } from '@/lib/useRefreshOnResume'
 import { categorizeWithRules } from '@/lib/categoryRules'
@@ -36,11 +38,6 @@ type SyncResult = {
   needsCategory?: number
   restored?: number
   error?: string
-}
-
-type Toast = {
-  msg: string
-  action?: { label: string; onClick: () => void }
 }
 
 type ReviewItem = {
@@ -97,7 +94,6 @@ const CATEGORY_LABELS: Record<string, string> = {
 const DEFAULT_CATEGORY_ORDER = ['produce', 'meat', 'dairy', 'bakery', 'pantry', 'frozen', 'beverages', 'other']
 const CATEGORIES = ['produce', 'meat', 'dairy', 'bakery', 'pantry', 'frozen', 'beverages', 'other']
 
-const UNDO_MS = 6000
 const ERROR_MS = 6000
 const SEARCH_THRESHOLD = 8
 // While the list is open it picks up the partner's changes this often
@@ -177,8 +173,8 @@ export default function ShoppingPage() {
   const [staples, setStaples] = useState<PantryStaple[]>([])
   const [newStaple, setNewStaple] = useState('')
   const [search, setSearch] = useState('')
-  const [toast, setToast] = useState<Toast | null>(null)
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const { show: showToast, error: showErrorToast, hide: hideToast } = useToast()
+  const showError = (msg: string) => showErrorToast(msg, { duration: ERROR_MS })
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null)
   const [lastSync, setLastSync] = useState<SyncResult | null>(null)
   const [review, setReview] = useState<Review | null>(null)
@@ -199,37 +195,11 @@ export default function ShoppingPage() {
   const mutations = useRef({ pending: 0, gen: 0 })
   const flushing = useRef(false)
 
-  const hideToast = () => {
-    if (toastTimer.current) clearTimeout(toastTimer.current)
-    toastTimer.current = null
-    setToast(null)
-  }
-
-  const showToast = (msg: string, opts: { duration?: number; action?: Toast['action'] } = {}) => {
-    if (toastTimer.current) clearTimeout(toastTimer.current)
-    setToast({ msg, action: opts.action })
-    toastTimer.current = setTimeout(() => {
-      toastTimer.current = null
-      setToast(null)
-    }, opts.duration ?? 2500)
-  }
-
-  // Clear any pending toast timer on unmount
-  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current) }, [])
-
-  // Lock page scroll while the review sheet is open; Escape closes sheet / menu.
-  useEffect(() => {
-    if (!review) return
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => { document.body.style.overflow = prev }
-  }, [review])
-
+  // Escape closes the menu (the review sheet handles Escape itself)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       setMenuOpen(false)
-      setReview(r => (r && (r.phase === 'saving' || r.phase === 'sending') ? r : null))
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -376,11 +346,11 @@ export default function ShoppingPage() {
     }
     if (res.status === 404) {
       setItems(prev => prev.filter(i => i.id !== id))
-      showToast(`„${item.name}“ wurde inzwischen entfernt`, { duration: ERROR_MS })
+      showError(`Inzwischen entfernt: ${item.name}`)
       return
     }
     revertItem(id, { checked: !checked })
-    showToast('Eintrag konnte nicht geändert werden', { duration: ERROR_MS })
+    showError('Eintrag konnte nicht geändert werden')
   }
 
   const changeCategory = async (id: string, category: string) => {
@@ -396,7 +366,7 @@ export default function ShoppingPage() {
       if (!res.ok) throw new Error('category update failed')
       setEditingCategoryId(null)
     } catch {
-      showToast('Kategorie konnte nicht geändert werden', { duration: ERROR_MS })
+      showError('Kategorie konnte nicht geändert werden')
       if (previousCategory !== undefined) revertItem(id, { category: previousCategory })
     } finally {
       endMutation()
@@ -426,9 +396,9 @@ export default function ShoppingPage() {
         const have = new Set(prev.map(i => i.id))
         return [...prev, ...restored.filter(i => !have.has(i.id))]
       })
-      showToast(restored.length === 1 ? `„${restored[0].name}“ ist wieder da` : `${restored.length} Einträge sind wieder da`)
+      showToast(restored.length === 1 ? `Wieder da: ${restored[0].name}` : `${restored.length} Einträge sind wieder da`)
     } catch {
-      showToast('Wiederherstellen hat nicht geklappt', { duration: ERROR_MS })
+      showError('Wiederherstellen hat nicht geklappt')
       load(false)
     }
   }
@@ -440,14 +410,13 @@ export default function ShoppingPage() {
     // Offline: an item added offline just leaves the queue, others are removed later
     if (offline || readQueue().some(op => op.id === id)) {
       queueOp({ kind: 'delete', id })
-      showToast(`„${item.name}“ entfernt`)
+      showToast(`Entfernt: ${item.name}`)
       return
     }
     beginMutation()
     const pending = fetch(`/api/shopping/${id}`, { method: 'DELETE' })
     pending.finally(endMutation).catch(() => {})
-    showToast(`„${item.name}“ entfernt`, {
-      duration: UNDO_MS,
+    showToast(`Entfernt: ${item.name}`, {
       action: { label: 'Rückgängig', onClick: () => { hideToast(); restoreItems([item], pending) } },
     })
     try {
@@ -455,7 +424,7 @@ export default function ShoppingPage() {
       if (!res.ok) throw new Error('delete failed')
     } catch {
       setItems(prev => prev.some(i => i.id === id) ? prev : [...prev, item])
-      showToast('Eintrag konnte nicht entfernt werden', { duration: ERROR_MS })
+      showError('Eintrag konnte nicht entfernt werden')
     }
   }
 
@@ -467,7 +436,6 @@ export default function ShoppingPage() {
     const pending = fetch('/api/shopping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'clear_checked' }) })
     pending.finally(endMutation).catch(() => {})
     showToast(`${plural(removed.length, 'erledigter Eintrag', 'erledigte Einträge')} entfernt`, {
-      duration: UNDO_MS,
       action: { label: 'Rückgängig', onClick: () => { hideToast(); restoreItems(removed, pending) } },
     })
     try {
@@ -478,7 +446,7 @@ export default function ShoppingPage() {
         const have = new Set(prev.map(i => i.id))
         return [...prev, ...removed.filter(i => !have.has(i.id))]
       })
-      showToast('Erledigte konnten nicht entfernt werden', { duration: ERROR_MS })
+      showError('Erledigte konnten nicht entfernt werden')
     }
   }
 
@@ -493,7 +461,7 @@ export default function ShoppingPage() {
       showToast('Liste gelöscht')
     } catch {
       setItems(previous)
-      showToast('Liste konnte nicht gelöscht werden', { duration: ERROR_MS })
+      showError('Liste konnte nicht gelöscht werden')
     } finally {
       endMutation()
     }
@@ -515,10 +483,10 @@ export default function ShoppingPage() {
         showToast(`${plural(data.added + (data.merged ?? 0), 'Zutat', 'Zutaten')} für heute auf der Liste`)
         load(false)
       } else {
-        showToast('Nichts hinzuzufügen – kein Rezept für heute geplant oder schon auf der Liste', { duration: 4000 })
+        showToast('Nichts hinzuzufügen – kein Rezept für heute geplant oder schon auf der Liste')
       }
     } catch {
-      showToast('Heute-Zutaten konnten nicht hinzugefügt werden', { duration: ERROR_MS })
+      showError('Heute-Zutaten konnten nicht hinzugefügt werden')
     }
     setAddingTonight(false)
   }
@@ -537,7 +505,7 @@ export default function ShoppingPage() {
         : [...prev, staple].sort((a, b) => a.name.localeCompare(b.name, 'de')))
       return staple
     } catch {
-      showToast('Konnte nicht zum Vorrat hinzugefügt werden', { duration: ERROR_MS })
+      showError('Konnte nicht zum Vorrat hinzugefügt werden')
       return null
     }
   }
@@ -560,7 +528,7 @@ export default function ShoppingPage() {
       if (!res.ok) throw new Error('pantry delete failed')
     } catch {
       setStaples(previous)
-      showToast('Konnte nicht aus dem Vorrat entfernt werden', { duration: ERROR_MS })
+      showError('Konnte nicht aus dem Vorrat entfernt werden')
     }
   }
 
@@ -605,7 +573,7 @@ export default function ShoppingPage() {
       await load(false)
       showToast(result.msg ? `Abgeglichen: ${result.msg}` : 'Keep ist schon aktuell')
     } else {
-      showToast(result.msg, { duration: ERROR_MS })
+      showError(result.msg)
     }
     setSyncing(false)
   }
@@ -682,7 +650,7 @@ export default function ShoppingPage() {
     } catch {
       setSel(before.sel)
       setReview(r => r && { ...r, meals: before.review.meals, markedBought: before.review.markedBought })
-      showToast('Konnte nicht gespeichert werden', { duration: ERROR_MS })
+      showError('Konnte nicht gespeichert werden')
     } finally {
       setMarkBusy(null)
     }
@@ -706,7 +674,7 @@ export default function ShoppingPage() {
       return { on: prev.on, overrides }
     })
     setReview(r => r && { ...r, items: r.items.map(i => i.key === item.key ? { ...i, status: 'staple' } : i) })
-    showToast(`„${item.name}“ ist jetzt im Vorrat`)
+    showToast(`Jetzt im Vorrat: ${item.name}`)
   }
 
   const commitReview = async () => {
@@ -797,10 +765,10 @@ export default function ShoppingPage() {
       track('shopping_manual_add', { count: added.length + queued.length, offline: queued.length })
     }
     if (queued.length > 0 && failed.length === 0) {
-      showToast(queued.length === 1 ? `${queued[0].name} kommt auf die Liste, sobald wieder Verbindung da ist` : `${queued.length} Einträge kommen auf die Liste, sobald wieder Verbindung da ist`, { duration: 4000 })
+      showToast(queued.length === 1 ? `${queued[0].name} kommt auf die Liste, sobald wieder Verbindung da ist` : `${queued.length} Einträge kommen auf die Liste, sobald wieder Verbindung da ist`)
     } else if (failed.length > 0) {
       setNewItem(failed.join(', '))
-      showToast(`Nicht hinzugefügt: ${failed.join(', ')}`, { duration: ERROR_MS })
+      showError(`Nicht hinzugefügt: ${failed.join(', ')}`)
     } else if (added.length === 1) {
       showToast(`${added[0].name} → ${CATEGORY_LABELS[added[0].category] || added[0].category}`)
     } else if (added.length > 1) {
@@ -831,7 +799,7 @@ export default function ShoppingPage() {
       await navigator.clipboard.writeText(text.trim())
       showToast('Liste kopiert')
     } catch {
-      showToast('Kopieren hat nicht geklappt', { duration: ERROR_MS })
+      showError('Kopieren hat nicht geklappt')
     }
   }
 
@@ -1305,263 +1273,238 @@ export default function ShoppingPage() {
 
       {/* Review sheet: Zutaten der Woche */}
       {review && (
-        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center">
-          <div className="absolute inset-0 bg-black/70" onClick={closeReview} aria-hidden="true" />
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="review-title"
-            className="relative w-full md:max-w-lg max-h-[88dvh] flex flex-col bg-[#121212] border-t md:border border-[#2a2a2a] rounded-t-2xl md:rounded-2xl shadow-2xl animate-slide-up"
-          >
-            {/* Sheet header */}
-            <div className="flex items-start justify-between gap-2 px-4 pt-4 pb-3 border-b border-[#222]">
-              <div className="min-w-0">
-                <h2 id="review-title" className="text-lg font-bold text-white">Zutaten der Woche</h2>
-                <p className="text-sm text-[#9a9a9a]">
-                  Heute bis {format(parseISO(review.end), 'EEEEEE d. MMM', { locale: de })}
-                  {review.phase === 'select' && review.items.length > 0 && !allBought && ' · Abwählen, was ihr habt'}
-                </p>
-              </div>
-              <button
-                onClick={closeReview}
-                aria-label="Schließen"
-                disabled={review.phase === 'saving' || review.phase === 'sending'}
-                className={`${iconBtn} -mr-2 -mt-1 text-[#9a9a9a] hover:text-white disabled:opacity-40`}
-              >
-                <X size={20} />
-              </button>
+        // Cannot be closed while adding or sending
+        <Sheet
+          onClose={closeReview}
+          dismissible={review.phase !== 'saving' && review.phase !== 'sending'}
+          centerFrom="md"
+          className="[--sheet-max:88dvh] w-full md:max-w-lg flex flex-col bg-[#121212] border-t md:border border-[#2a2a2a] rounded-t-2xl md:rounded-2xl shadow-2xl"
+        >
+          {/* Sheet header */}
+          <div className="flex items-start justify-between gap-2 px-4 pt-4 pb-3 border-b border-[#222] flex-shrink-0">
+            <div className="min-w-0">
+              <SheetTitle className="text-lg font-bold text-white">Zutaten der Woche</SheetTitle>
+              <p className="text-sm text-[#9a9a9a]">
+                Heute bis {format(parseISO(review.end), 'EEEEEE d. MMM', { locale: de })}
+                {review.phase === 'select' && review.items.length > 0 && !allBought && ' · Abwählen, was ihr habt'}
+              </p>
             </div>
+            <SheetClose
+              disabled={review.phase === 'saving' || review.phase === 'sending'}
+              size={20}
+              className="-mr-2 -mt-1"
+            />
+          </div>
 
-            {/* Sheet body */}
-            <div className="flex-1 overflow-y-auto overscroll-contain px-2 py-2">
-              {review.phase === 'loading' && (
-                <div className="space-y-2 p-2">
-                  {Array.from({ length: 6 }).map((_, i) => <div key={i} className="skeleton h-12 rounded-lg" />)}
+          {/* Sheet body */}
+          <div className="flex-1 overflow-y-auto overscroll-contain px-2 py-2">
+            {review.phase === 'loading' && (
+              <div className="space-y-2 p-2">
+                {Array.from({ length: 6 }).map((_, i) => <div key={i} className="skeleton h-12 rounded-lg" />)}
+              </div>
+            )}
+
+            {review.error && (
+              <p className="m-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{review.error}</p>
+            )}
+
+            {(review.phase === 'select' || review.phase === 'saving') && !review.error && (
+              review.meals.length === 0 ? (
+                <div className="text-center px-4 py-10">
+                  <p className="text-[#d0d0d0]">Keine Rezepte mit Zutaten geplant.</p>
+                  <p className="text-sm text-[#8a8a8a] mt-1">Reste, Auswärts essen und Bestellen brauchen keine Zutaten.</p>
                 </div>
-              )}
-
-              {review.error && (
-                <p className="m-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{review.error}</p>
-              )}
-
-              {(review.phase === 'select' || review.phase === 'saving') && !review.error && (
-                review.meals.length === 0 ? (
-                  <div className="text-center px-4 py-10">
-                    <p className="text-[#d0d0d0]">Keine Rezepte mit Zutaten geplant.</p>
-                    <p className="text-sm text-[#8a8a8a] mt-1">Reste, Auswärts essen und Bestellen brauchen keine Zutaten.</p>
-                  </div>
-                ) : allBought ? (
-                  <div className="text-center px-4 py-10">
-                    <CircleCheck size={36} className="mx-auto text-primary mb-3" />
-                    <p className="text-[#e5e5e5]">Alles für die geplanten Mahlzeiten ist schon eingekauft</p>
-                    <p className="text-sm text-[#9a9a9a] mt-1">Neu geplante Gerichte tauchen hier auf.</p>
-                    <button
-                      type="button"
-                      onClick={showAllMeals}
-                      className="mt-3 min-h-[44px] px-3 text-sm font-medium text-primary underline underline-offset-4 hover:text-primary-hover"
-                    >
-                      Trotzdem anzeigen
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    {/* Meals: switch whole dishes on / off */}
-                    <section aria-labelledby="review-meals" className="px-2 pt-1 pb-3">
-                      <h3 id="review-meals" className="pb-1.5 text-sm font-semibold text-white">Mahlzeiten</h3>
-                      {openMeals.length > 0 && (
-                        <div className="rounded-xl border border-[#262626] bg-[#171717] divide-y divide-[#232323]">
-                          {openMeals.map(meal => renderMealRow(meal))}
+              ) : allBought ? (
+                <div className="text-center px-4 py-10">
+                  <CircleCheck size={36} className="mx-auto text-primary mb-3" />
+                  <p className="text-[#e5e5e5]">Alles für die geplanten Mahlzeiten ist schon eingekauft</p>
+                  <p className="text-sm text-[#9a9a9a] mt-1">Neu geplante Gerichte tauchen hier auf.</p>
+                  <button
+                    type="button"
+                    onClick={showAllMeals}
+                    className="mt-3 min-h-[44px] px-3 text-sm font-medium text-primary underline underline-offset-4 hover:text-primary-hover"
+                  >
+                    Trotzdem anzeigen
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {/* Meals: switch whole dishes on / off */}
+                  <section aria-labelledby="review-meals" className="px-2 pt-1 pb-3">
+                    <h3 id="review-meals" className="pb-1.5 text-sm font-semibold text-white">Mahlzeiten</h3>
+                    {openMeals.length > 0 && (
+                      <div className="rounded-xl border border-[#262626] bg-[#171717] divide-y divide-[#232323]">
+                        {openMeals.map(meal => renderMealRow(meal))}
+                      </div>
+                    )}
+                    {boughtMeals.length > 0 && (
+                      <>
+                        <p className="pt-3 pb-1.5 text-xs font-semibold uppercase tracking-wide text-[#9a9a9a]">Schon eingekauft</p>
+                        <div className="rounded-xl border border-[#222] bg-[#141414] divide-y divide-[#202020]">
+                          {boughtMeals.map(meal => renderMealRow(meal))}
                         </div>
-                      )}
-                      {boughtMeals.length > 0 && (
-                        <>
-                          <p className="pt-3 pb-1.5 text-xs font-semibold uppercase tracking-wide text-[#9a9a9a]">Schon eingekauft</p>
-                          <div className="rounded-xl border border-[#222] bg-[#141414] divide-y divide-[#202020]">
-                            {boughtMeals.map(meal => renderMealRow(meal))}
-                          </div>
-                        </>
-                      )}
-                    </section>
+                      </>
+                    )}
+                  </section>
 
-                    <h3 className="px-2 pt-1 text-sm font-semibold text-white">Zutaten</h3>
-                    {reviewGroups.length === 0 ? (
-                      <p className="px-2 py-4 text-sm text-[#9a9a9a]">
-                        {review.items.length === 0
-                          ? 'In Mealie sind für diese Gerichte keine Zutaten hinterlegt.'
-                          : sel.on.size > 0
-                            ? 'Für die eingeschalteten Gerichte ist nichts mehr einzukaufen.'
-                            : 'Keine Mahlzeit eingeschaltet – schalte oben ein Gericht ein.'}
-                      </p>
-                    ) : (
-                      reviewGroups.map(group => (
-                        <div key={group.cat} className="mb-2">
-                          <p className="px-2 pt-2 pb-1 text-xs font-semibold uppercase tracking-wide text-[#8a8a8a]">
-                            {CATEGORY_LABELS[group.cat] || group.cat}
-                          </p>
-                          {group.items.map(item => {
-                            const isOnList = item.status === 'on_list'
-                            const itemSelected = isSelected(item, sel)
-                            const forMeals = activeMealIds(item, sel)
-                            const mealsOff = !item.meal_plan_ids.some(id => sel.on.has(id))
-                            const tag = isOnList ? 'schon drauf'
-                              : itemSelected ? ''
-                                : item.status === 'staple' ? 'Vorrat'
-                                  : mealsOff && !sel.overrides.has(item.key) ? 'Gericht aus' : 'haben wir'
-                            return (
-                              <div key={item.key} className="flex items-center gap-1">
+                  <h3 className="px-2 pt-1 text-sm font-semibold text-white">Zutaten</h3>
+                  {reviewGroups.length === 0 ? (
+                    <p className="px-2 py-4 text-sm text-[#9a9a9a]">
+                      {review.items.length === 0
+                        ? 'In Mealie sind für diese Gerichte keine Zutaten hinterlegt.'
+                        : sel.on.size > 0
+                          ? 'Für die eingeschalteten Gerichte ist nichts mehr einzukaufen.'
+                          : 'Keine Mahlzeit eingeschaltet – schalte oben ein Gericht ein.'}
+                    </p>
+                  ) : (
+                    reviewGroups.map(group => (
+                      <div key={group.cat} className="mb-2">
+                        <p className="px-2 pt-2 pb-1 text-xs font-semibold uppercase tracking-wide text-[#8a8a8a]">
+                          {CATEGORY_LABELS[group.cat] || group.cat}
+                        </p>
+                        {group.items.map(item => {
+                          const isOnList = item.status === 'on_list'
+                          const itemSelected = isSelected(item, sel)
+                          const forMeals = activeMealIds(item, sel)
+                          const mealsOff = !item.meal_plan_ids.some(id => sel.on.has(id))
+                          const tag = isOnList ? 'schon drauf'
+                            : itemSelected ? ''
+                              : item.status === 'staple' ? 'Vorrat'
+                                : mealsOff && !sel.overrides.has(item.key) ? 'Gericht aus' : 'haben wir'
+                          return (
+                            <div key={item.key} className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => !isOnList && toggleReviewItem(item)}
+                                disabled={isOnList || review.phase === 'saving'}
+                                aria-pressed={isOnList ? undefined : itemSelected}
+                                className="flex-1 min-w-0 min-h-[52px] flex items-center gap-3 px-2 py-2 rounded-lg text-left hover:bg-[#1a1a1a] disabled:hover:bg-transparent"
+                              >
+                                <span className={`w-[22px] h-[22px] flex-shrink-0 rounded-md border-2 flex items-center justify-center transition-colors ${
+                                  itemSelected ? 'bg-primary border-primary' : isOnList ? 'border-[#3a3a3a] bg-[#262626]' : 'border-[#6b6b6b]'
+                                }`}>
+                                  {itemSelected && <Check size={13} className="text-white" strokeWidth={3} />}
+                                  {isOnList && <Check size={13} className="text-[#8a8a8a]" strokeWidth={3} />}
+                                </span>
+                                <span className="flex-1 min-w-0">
+                                  <span className={`block text-[15px] leading-snug ${itemSelected ? 'text-white' : 'text-[#9a9a9a]'}`}>
+                                    {item.name}
+                                  </span>
+                                  <span className="block text-[13px] leading-snug text-[#8a8a8a] line-clamp-2">
+                                    {datedMealsLabel(item.meals.filter(m => forMeals.includes(m.meal_plan_id)))}
+                                  </span>
+                                </span>
+                                {tag && (
+                                  <span className="flex-shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-[#222] border border-[#333] text-[#a5a5a5]">
+                                    {tag}
+                                  </span>
+                                )}
+                              </button>
+                              {item.status === 'new' && (
                                 <button
                                   type="button"
-                                  onClick={() => !isOnList && toggleReviewItem(item)}
-                                  disabled={isOnList || review.phase === 'saving'}
-                                  aria-pressed={isOnList ? undefined : itemSelected}
-                                  className="flex-1 min-w-0 min-h-[52px] flex items-center gap-3 px-2 py-2 rounded-lg text-left hover:bg-[#1a1a1a] disabled:hover:bg-transparent"
+                                  onClick={() => markAlwaysThere(item)}
+                                  disabled={stapleBusy === item.key || review.phase === 'saving'}
+                                  title="Zum Vorrat hinzufügen – wird künftig nicht mehr vorausgewählt"
+                                  className="flex-shrink-0 min-h-[40px] px-2 rounded-lg text-xs text-[#9a9a9a] underline decoration-[#444] underline-offset-2 hover:text-white hover:bg-[#1a1a1a] disabled:opacity-50"
                                 >
-                                  <span className={`w-[22px] h-[22px] flex-shrink-0 rounded-md border-2 flex items-center justify-center transition-colors ${
-                                    itemSelected ? 'bg-primary border-primary' : isOnList ? 'border-[#3a3a3a] bg-[#262626]' : 'border-[#6b6b6b]'
-                                  }`}>
-                                    {itemSelected && <Check size={13} className="text-white" strokeWidth={3} />}
-                                    {isOnList && <Check size={13} className="text-[#8a8a8a]" strokeWidth={3} />}
-                                  </span>
-                                  <span className="flex-1 min-w-0">
-                                    <span className={`block text-[15px] leading-snug ${itemSelected ? 'text-white' : 'text-[#9a9a9a]'}`}>
-                                      {item.name}
-                                    </span>
-                                    <span className="block text-[13px] leading-snug text-[#8a8a8a] line-clamp-2">
-                                      {datedMealsLabel(item.meals.filter(m => forMeals.includes(m.meal_plan_id)))}
-                                    </span>
-                                  </span>
-                                  {tag && (
-                                    <span className="flex-shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-[#222] border border-[#333] text-[#a5a5a5]">
-                                      {tag}
-                                    </span>
-                                  )}
+                                  Immer da
                                 </button>
-                                {item.status === 'new' && (
-                                  <button
-                                    type="button"
-                                    onClick={() => markAlwaysThere(item)}
-                                    disabled={stapleBusy === item.key || review.phase === 'saving'}
-                                    title="Zum Vorrat hinzufügen – wird künftig nicht mehr vorausgewählt"
-                                    className="flex-shrink-0 min-h-[40px] px-2 rounded-lg text-xs text-[#9a9a9a] underline decoration-[#444] underline-offset-2 hover:text-white hover:bg-[#1a1a1a] disabled:opacity-50"
-                                  >
-                                    Immer da
-                                  </button>
-                                )}
-                              </div>
-                            )
-                          })}
-                        </div>
-                      ))
-                    )}
-                  </>
-                )
-              )}
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ))
+                  )}
+                </>
+              )
+            )}
 
-              {(review.phase === 'added' || review.phase === 'sending' || review.phase === 'sent') && (
-                <div className="px-4 py-8 text-center space-y-2">
-                  <CircleCheck size={40} className="mx-auto text-primary" />
-                  <p className="text-lg font-semibold text-white">
-                    {plural(review.added ?? selectedCount, 'Zutat', 'Zutaten')} auf der Liste
+            {(review.phase === 'added' || review.phase === 'sending' || review.phase === 'sent') && (
+              <div className="px-4 py-8 text-center space-y-2">
+                <CircleCheck size={40} className="mx-auto text-primary" />
+                <p className="text-lg font-semibold text-white">
+                  {plural(review.added ?? selectedCount, 'Zutat', 'Zutaten')} auf der Liste
+                </p>
+                {review.phase !== 'sent' && (
+                  <p className="text-sm text-[#9a9a9a]">Jetzt an Keep senden, damit ihr sie beim Einkaufen habt.</p>
+                )}
+                {review.sendResult && (
+                  <p className={`text-sm ${review.sendResult.ok ? 'text-[#9fb8a1]' : 'text-red-300'}`}>
+                    {review.sendResult.msg}
                   </p>
-                  {review.phase !== 'sent' && (
-                    <p className="text-sm text-[#9a9a9a]">Jetzt an Keep senden, damit ihr sie beim Einkaufen habt.</p>
-                  )}
-                  {review.sendResult && (
-                    <p className={`text-sm ${review.sendResult.ok ? 'text-[#9fb8a1]' : 'text-red-300'}`}>
-                      {review.sendResult.msg}
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
+          </div>
 
-            {/* Sheet footer */}
-            <div className="px-4 pt-3 border-t border-[#222] pb-[max(1rem,env(safe-area-inset-bottom))]">
-              {(review.phase === 'select' || review.phase === 'saving' || review.phase === 'loading') && (
-                review.phase !== 'loading' && (review.meals.length === 0 || allBought || canFinish) ? (
-                  <button
-                    onClick={closeReview}
-                    className={canFinish || (allBought && review.markedBought.length > 0)
-                      ? 'w-full min-h-[48px] rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold transition-colors'
-                      : 'w-full min-h-[48px] rounded-xl bg-[#1c1c1c] border border-[#2a2a2a] text-[#e5e5e5] text-base font-medium'}
-                  >
-                    {canFinish || (allBought && review.markedBought.length > 0) ? 'Fertig' : 'Schließen'}
-                  </button>
-                ) : (
-                  <button
-                    onClick={commitReview}
-                    disabled={selectedCount === 0 || review.phase !== 'select'}
-                    className="w-full min-h-[48px] rounded-xl bg-primary-solid hover:bg-primary-solidHover disabled:bg-[#2a2a2a] disabled:text-[#9a9a9a] text-white text-base font-semibold transition-colors"
-                  >
-                    {review.phase === 'saving'
-                      ? 'Wird hinzugefügt …'
-                      : review.phase === 'loading'
-                        ? 'Lädt …'
-                        : selectedCount === 0 ? 'Nichts ausgewählt' : `${selectedCount} auf die Liste`}
-                  </button>
-                )
-              )}
-              {(review.phase === 'added' || review.phase === 'sending') && (
-                <div className="flex gap-2">
-                  <button
-                    onClick={closeReview}
-                    disabled={review.phase === 'sending'}
-                    className="min-h-[48px] px-4 rounded-xl bg-[#1c1c1c] border border-[#2a2a2a] text-[#e5e5e5] text-base disabled:opacity-60"
-                  >
-                    Später
-                  </button>
+          {/* Sheet footer */}
+          <div className="px-4 pt-3 border-t border-[#222] pb-[max(1rem,env(safe-area-inset-bottom))]">
+            {(review.phase === 'select' || review.phase === 'saving' || review.phase === 'loading') && (
+              review.phase !== 'loading' && (review.meals.length === 0 || allBought || canFinish) ? (
+                <button
+                  onClick={closeReview}
+                  className={canFinish || (allBought && review.markedBought.length > 0)
+                    ? 'w-full min-h-[48px] rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold transition-colors'
+                    : 'w-full min-h-[48px] rounded-xl bg-[#1c1c1c] border border-[#2a2a2a] text-[#e5e5e5] text-base font-medium'}
+                >
+                  {canFinish || (allBought && review.markedBought.length > 0) ? 'Fertig' : 'Schließen'}
+                </button>
+              ) : (
+                <button
+                  onClick={commitReview}
+                  disabled={selectedCount === 0 || review.phase !== 'select'}
+                  className="w-full min-h-[48px] rounded-xl bg-primary-solid hover:bg-primary-solidHover disabled:bg-[#2a2a2a] disabled:text-[#9a9a9a] text-white text-base font-semibold transition-colors"
+                >
+                  {review.phase === 'saving'
+                    ? 'Wird hinzugefügt …'
+                    : review.phase === 'loading'
+                      ? 'Lädt …'
+                      : selectedCount === 0 ? 'Nichts ausgewählt' : `${selectedCount} auf die Liste`}
+                </button>
+              )
+            )}
+            {(review.phase === 'added' || review.phase === 'sending') && (
+              <div className="flex gap-2">
+                <button
+                  onClick={closeReview}
+                  disabled={review.phase === 'sending'}
+                  className="min-h-[48px] px-4 rounded-xl bg-[#1c1c1c] border border-[#2a2a2a] text-[#e5e5e5] text-base disabled:opacity-60"
+                >
+                  Später
+                </button>
+                <button
+                  onClick={sendToKeep}
+                  disabled={review.phase === 'sending'}
+                  className="flex-1 min-h-[48px] flex items-center justify-center gap-2 rounded-xl bg-primary-solid hover:bg-primary-solidHover disabled:opacity-80 text-white text-base font-semibold transition-colors"
+                >
+                  {review.phase === 'sending'
+                    ? <><RefreshCw size={17} className="animate-spin" /> Wird gesendet …</>
+                    : <><Send size={17} /> An Keep senden</>}
+                </button>
+              </div>
+            )}
+            {review.phase === 'sent' && (
+              <div className="flex gap-2">
+                {!review.sendResult?.ok && (
                   <button
                     onClick={sendToKeep}
-                    disabled={review.phase === 'sending'}
-                    className="flex-1 min-h-[48px] flex items-center justify-center gap-2 rounded-xl bg-primary-solid hover:bg-primary-solidHover disabled:opacity-80 text-white text-base font-semibold transition-colors"
+                    className="flex-1 min-h-[48px] rounded-xl bg-[#1c1c1c] border border-[#2a2a2a] text-[#e5e5e5] text-base"
                   >
-                    {review.phase === 'sending'
-                      ? <><RefreshCw size={17} className="animate-spin" /> Wird gesendet …</>
-                      : <><Send size={17} /> An Keep senden</>}
+                    Nochmal senden
                   </button>
-                </div>
-              )}
-              {review.phase === 'sent' && (
-                <div className="flex gap-2">
-                  {!review.sendResult?.ok && (
-                    <button
-                      onClick={sendToKeep}
-                      className="flex-1 min-h-[48px] rounded-xl bg-[#1c1c1c] border border-[#2a2a2a] text-[#e5e5e5] text-base"
-                    >
-                      Nochmal senden
-                    </button>
-                  )}
-                  <button
-                    onClick={closeReview}
-                    className="flex-1 min-h-[48px] rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold"
-                  >
-                    Fertig
-                  </button>
-                </div>
-              )}
-            </div>
+                )}
+                <button
+                  onClick={closeReview}
+                  className="flex-1 min-h-[48px] rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold"
+                >
+                  Fertig
+                </button>
+              </div>
+            )}
           </div>
-        </div>
-      )}
-
-      {/* Toast */}
-      {toast && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="fixed bottom-24 md:bottom-6 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-3 w-max max-w-[calc(100vw-2rem)] px-4 py-2.5 bg-[#1e1e1e] border border-[#333] rounded-lg text-sm text-white shadow-xl animate-slide-up whitespace-normal"
-        >
-          <span className="min-w-0 break-words">{toast.msg}</span>
-          {toast.action && (
-            <button
-              type="button"
-              onClick={toast.action.onClick}
-              className="flex-shrink-0 min-h-[40px] px-1 text-primary font-semibold hover:underline"
-            >
-              {toast.action.label}
-            </button>
-          )}
-        </div>
+        </Sheet>
       )}
     </div>
   )

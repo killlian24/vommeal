@@ -13,6 +13,7 @@ import { track } from '@/lib/track'
 import { apiCall } from '@/lib/apiCall'
 import { inDinnerCategory, pickSuggestions as pickFrom } from '@/lib/suggest'
 import { useCurrentUser } from '@/components/UserProvider'
+import { useToast } from '@/components/Toast'
 import { useRefreshOnResume } from '@/lib/useRefreshOnResume'
 import {
   partnerChanges, changedBy, responseTime, addMarks, dropMarks, loadMarks, saveMarks, loadLastSeen, saveLastSeen,
@@ -98,16 +99,9 @@ export default function TonightPage() {
   const [seen, setSeen] = useState<Set<string>>(new Set())
   const [dinnerCategory, setDinnerCategory] = useState('')
   const [ratePrompt, setRatePrompt] = useState<MealEntry | null>(null)
-  const [toast, setToast] = useState<{ msg: string; action?: { label: string; onClick: () => void } } | null>(null)
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const { show: showToast, error: showError, hide: hideToast } = useToast()
   // "Heute doch nicht": null = closed, 'ask' = choose what tonight becomes
   const [postpone, setPostpone] = useState<null | 'ask' | 'busy'>(null)
-
-  const showToast = (msg: string, opts?: { action?: { label: string; onClick: () => void }; duration?: number }) => {
-    if (toastTimer.current) clearTimeout(toastTimer.current)
-    setToast({ msg, action: opts?.action })
-    toastTimer.current = setTimeout(() => setToast(null), opts?.duration ?? 2500)
-  }
 
   const loadEntries = useCallback(async (): Promise<MealEntry[]> => {
     const now = new Date()
@@ -175,11 +169,11 @@ export default function TonightPage() {
       marks = addMarks(marks, [fresh.id], Date.now())
       saveMarks(currentUser, marks)
       const name = fresh.recipe?.name || fresh.custom_meal_name || 'etwas'
-      showToast(`${changedBy(fresh)} hat für heute Abend ${name} geplant`, { duration: 4000 })
+      showToast(`${changedBy(fresh)} hat für heute Abend ${name} geplant`)
     }
     setTonightNew(!!tonight && !!marks[tonight.id])
     saveLastSeen(key, loadedAt.current)
-  }, [currentUser])
+  }, [currentUser, showToast])
 
   useEffect(() => {
     if (!loading) checkTonight(entries)
@@ -226,7 +220,7 @@ export default function TonightPage() {
       fallback: 'Einkaufsliste nicht erreichbar',
     })
     setAddingDate(null)
-    if (!res.ok) { showToast(res.error); return }
+    if (!res.ok) { showError(res.error); return }
     const added = res.data?.added ?? 0
     if (added > 0) showToast(`${added} Zutaten auf die Einkaufsliste gesetzt`)
     else showToast('Schon auf der Liste oder keine Zutaten hinterlegt')
@@ -260,19 +254,17 @@ export default function TonightPage() {
         const who = current.suggested_by && current.suggested_by !== currentUser ? `${current.suggested_by} hat` : 'Es ist'
         const name = current.recipe?.name || current.custom_meal_name || 'etwas anderes'
         showToast(`${who} inzwischen ${name} geplant`, {
-          duration: 8000,
           action: {
             label: 'Trotzdem ersetzen',
             onClick: () => {
-              if (toastTimer.current) clearTimeout(toastTimer.current)
-              setToast(null)
+              hideToast()
               planToday(payload, key, current.id)
             },
           },
         })
         return false
       }
-      if (!res.ok) { showToast(res.error); return false }
+      if (!res.ok) { showError(res.error); return false }
       await loadEntries().catch(() => {})
       window.scrollTo({ top: 0, behavior: 'smooth' })
       return true
@@ -302,17 +294,15 @@ export default function TonightPage() {
       await loadEntries()
       setPostpone(null)
       showToast('Auf morgen geschoben', {
-        duration: 6000,
         action: {
           label: 'Rückgängig',
           onClick: async () => {
-            if (toastTimer.current) clearTimeout(toastTimer.current)
-            setToast(null)
+            hideToast()
             try {
               await undoPlanChange(res.moves, res.filled?.id, currentUser)
               showToast('Zurückgenommen')
             } catch (e) {
-              showToast(e instanceof Error ? e.message : 'Konnte nicht zurückgenommen werden')
+              showError(e instanceof Error ? e.message : 'Konnte nicht zurückgenommen werden')
             }
             await loadEntries().catch(() => {})
           },
@@ -320,7 +310,7 @@ export default function TonightPage() {
       })
     } catch (e) {
       setPostpone('ask')
-      showToast(e instanceof Error ? e.message : 'Konnte nicht verschoben werden')
+      showError(e instanceof Error ? e.message : 'Konnte nicht verschoben werden')
     }
   }
 
@@ -355,17 +345,15 @@ export default function TonightPage() {
 
     apply(patch)
     const res = await send(patch)
-    if (!res.ok) { apply(undoPatch); askAgain(); showToast(res.error); return }
+    if (!res.ok) { apply(undoPatch); askAgain(); showError(res.error); return }
     track('rating_prompt', { choice, stars: choice === 'stars' ? stars : null, recipe_id: entry.recipe_id })
     showToast(choice === 'never' ? 'Alles klar, kommt nicht mehr vor' : 'Danke fürs Bewerten!', {
-      duration: 6000,
       action: {
         label: 'Rückgängig',
         onClick: async () => {
-          if (toastTimer.current) clearTimeout(toastTimer.current)
-          setToast(null)
+          hideToast()
           const r = await send(undoPatch)
-          if (!r.ok) { showToast(r.error); return }
+          if (!r.ok) { showError(r.error); return }
           apply(undoPatch)
           askAgain()
           showToast('Zurückgenommen')
@@ -676,22 +664,6 @@ export default function TonightPage() {
               </div>
             )
           })}
-        </div>
-      )}
-
-      {/* Toast */}
-      {toast && (
-        // Full-width wrapper for centring: the slide-up animation sets `transform`.
-        <div className="fixed inset-x-0 bottom-24 md:bottom-6 md:left-56 z-50 flex justify-center px-4 pointer-events-none">
-          <div role="status" className="pointer-events-auto flex items-center gap-2 pl-4 pr-1.5 min-h-[44px] max-w-full bg-[#1e1e1e] border border-[#333] rounded-full text-sm text-white shadow-xl animate-slide-up whitespace-nowrap">
-            <span className={`truncate ${toast.action ? '' : 'pr-2.5'}`}>{toast.msg}</span>
-            {toast.action && (
-              <button onClick={toast.action.onClick}
-                className="min-h-[40px] px-3 rounded-full text-primary font-semibold hover:bg-white/5 transition-colors flex-shrink-0">
-                {toast.action.label}
-              </button>
-            )}
-          </div>
         </div>
       )}
     </div>
