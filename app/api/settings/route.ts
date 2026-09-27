@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSetting, setSetting } from '@/lib/db'
 import {
   getConfigSourceFlags, sanitizeUrl, DEFAULTED_SETTING_KEYS, getSettingWithDefault, normalizeSettingValue,
+  getMealieConfig, getHomeAssistantConfig,
 } from '@/lib/config'
 import { requireAdmin } from '@/lib/admin'
 import { DEFAULT_NOTIFY_TEXTS } from '@/lib/notifyTemplates'
@@ -26,6 +27,11 @@ export async function GET() {
     dinner_category: getSetting('dinner_category') || '',
     category_order: getSetting('category_order') || '',
     custom_category_keywords: getSetting('custom_category_keywords') || '{}',
+    // Complete connections (address and token, for HA also the list), so pages can hide what needs them
+    mealie_configured: !!getMealieConfig(),
+    // The server's own time zone, for showing the build time as the server sees it
+    server_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    ha_configured: !!getHomeAssistantConfig(),
     // Notifications, time zone, nightly sync (always strings; defaults when unset)
     ...Object.fromEntries(DEFAULTED_SETTING_KEYS.map(key => [key, getSettingWithDefault(key)])),
     // Built-in texts shown when notify_text_* is empty, keyed by kind (daily_planned, daily_empty, weekly).

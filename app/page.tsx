@@ -4,23 +4,38 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { format, startOfWeek, addDays, isToday, parseISO, getDay } from 'date-fns'
 import { de } from 'date-fns/locale'
 import {
-  ChevronLeft, ChevronRight, ChevronDown, Plus, X, Search, ShoppingCart, RefreshCw,
-  Zap, Dices, Heart, XCircle, ArrowLeftRight, ArrowRight, CalendarClock,
+  ChevronLeft, ChevronRight, ChevronDown, Plus, X, Search, ShoppingCart,
+  Zap, Vote, Heart, XCircle, ArrowLeftRight, ArrowRight, CalendarClock, StickyNote,
+  MoreHorizontal, BookOpen, Trash2,
 } from 'lucide-react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { StarRating } from '@/components/StarRating'
-import { Avatar, avatarColor } from '@/components/Avatar'
+import { Avatar } from '@/components/Avatar'
+import { useCurrentUser } from '@/components/UserProvider'
 import { track } from '@/lib/track'
 import { QUICK_MEALS, EATING_OUT, quickMealEmoji } from '@/lib/quickMeals'
-import { planMove, applyMoves, type PlanMove } from '@/lib/planMoves'
+import { planMove, applyMoves, addDaysIso, type PlanMove } from '@/lib/planMoves'
+import { votePool } from '@/lib/votePool'
+import { RECENT_DAYS } from '@/lib/suggest'
 import { shiftPlan, movePlanEntry, undoPlanChange } from '@/lib/planApi'
+import { apiCall, NETWORK_ERROR } from '@/lib/apiCall'
 import { useLongPressDrag, type DragDrop } from '@/lib/useLongPressDrag'
+import { useRefreshOnResume } from '@/lib/useRefreshOnResume'
+import {
+  partnerChanges, partnerHint, responseTime, addMarks, dropMarks, loadMarks, saveMarks,
+  loadLastSeen, saveLastSeen, type Marks,
+} from '@/lib/partnerChanges'
 import { MoveSheet } from '@/components/MoveSheet'
+import { WeekIngredientsSheet } from '@/components/WeekIngredientsSheet'
+import { Sheet, SheetHeader, SheetTitle, SheetClose, sheetPanel } from '@/components/Sheet'
+import { useToast } from '@/components/Toast'
+import { dayLabel, shortDay, relativeWeekday, rangeLabel as dateRange } from '@/lib/dates'
 
 type Recipe = {
   id: string; name: string; image_url: string; prep_time: number; cook_time: number
   source: string; rating: number | null; effort?: 'quick' | 'involved' | null
+  never_again?: boolean
 }
 type Nomination = { id: string; date: string; recipe_id: string; user_name: string; recipe?: Recipe }
 type MealEntry = {
@@ -29,17 +44,23 @@ type MealEntry = {
   servings: number; notes: string
   status: 'suggested' | 'approved'; suggested_by: string
   created_at?: string
+  updated_at?: string
+  updated_by?: string
   recipe?: Recipe
 }
-type Toast = { msg: string; action?: { label: string; onClick: () => void } }
 type Picker = { date: string; replaceId?: string }
 
 const SERVINGS = 2
 const CARDS_PER_DAY = 3
 const LEFTOVERS = 'Reste'
-// Replacing today's dinner with one of these keeps the old dish by default
-// (it moves to tomorrow, the rest of the week slides along).
+// Replacing today's dinner with one of these keeps the old dish: it moves to
+// tomorrow, the rest of the week slides along.
 const KEEP_OLD_BY_DEFAULT: string[] = [EATING_OUT, 'Bestellen']
+
+// One-time tip that cards can be dragged; gone for good once dismissed or used
+const DRAG_HINT_KEY = 'vommeal_hint_drag_done'
+const dragHintDone = () => { try { return localStorage.getItem(DRAG_HINT_KEY) === '1' } catch { return true } }
+const markDragHintDone = () => { try { localStorage.setItem(DRAG_HINT_KEY, '1') } catch { /* storage unavailable */ } }
 
 const ds = (d: Date) => format(d, 'yyyy-MM-dd')
 const fmt = (d: Date, pattern: string) => format(d, pattern, { locale: de })
@@ -53,43 +74,23 @@ function defaultWeekStart(now = new Date()): Date {
   return dow === 5 || dow === 6 || dow === 0 ? addDays(monday, 7) : monday
 }
 
-// "22.–28. Sep." or "29. Sep. – 5. Okt."
-function rangeLabel(start: Date, end: Date): string {
-  return start.getMonth() === end.getMonth()
-    ? `${fmt(start, 'd.')}–${fmt(end, 'd. MMM')}`
-    : `${fmt(start, 'd. MMM')} – ${fmt(end, 'd. MMM')}`
-}
+// "22. bis 28. Sep." or "29. Sep. bis 5. Okt."
+const rangeLabel = (start: Date, end: Date) => dateRange(ds(start), ds(end))
 
 const mealName = (e: MealEntry) => e.recipe?.name || e.custom_meal_name || 'Essen'
+// Compare dish names loosely: case, surrounding and double spaces do not matter
+const normName = (s: string) => s.normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('de')
 const abende = (n: number) => `${n} ${n === 1 ? 'Abend' : 'Abende'}`
 const errorText = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback)
 
-// SQLite stores created_at as "YYYY-MM-DD HH:MM:SS" in UTC; the API may also
-// return a full ISO string for freshly created rows. Normalise to a timestamp.
-function parseCreatedAt(value: string | undefined): number {
-  if (!value) return 0
-  const iso = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value) ? value.replace(' ', 'T') + 'Z' : value
-  const t = Date.parse(iso)
-  return Number.isNaN(t) ? 0 : t
-}
-
-// Deterministic shuffle seeded by a string — both partners get the same cards per day
-function seededShuffle<T>(arr: T[], seed: string): T[] {
-  const copy = [...arr]
-  let h = 0
-  for (let i = 0; i < seed.length; i++) { h = Math.imul(31, h) + seed.charCodeAt(i) | 0 }
-  for (let i = copy.length - 1; i > 0; i--) {
-    h = Math.imul(1664525, h) + 1013904223 | 0
-    const j = Math.abs(h) % (i + 1)
-    ;[copy[i], copy[j]] = [copy[j], copy[i]]
-  }
-  return copy
+async function fetchRangeAt(start: string, end: string): Promise<{ data: MealEntry[]; at: number }> {
+  const res = await fetch(`/api/meal-plan?start=${start}&end=${end}`)
+  if (!res.ok) throw new Error('meal plan load failed')
+  return { data: await res.json(), at: responseTime(res) }
 }
 
 async function fetchRange(start: string, end: string): Promise<MealEntry[]> {
-  const res = await fetch(`/api/meal-plan?start=${start}&end=${end}`)
-  if (!res.ok) throw new Error('meal plan load failed')
-  return res.json()
+  return (await fetchRangeAt(start, end)).data
 }
 
 // Recipe image, quick-meal emoji or a plate as fallback
@@ -109,9 +110,64 @@ function MealThumb({ entry, recipe, size }: { entry?: MealEntry; recipe?: Recipe
   )
 }
 
-const iconBtn = 'w-10 h-10 flex items-center justify-center rounded-lg transition-all'
+// Card for Abstimmen that can be swiped: right = Ja, left = Nein. Vertical
+// moves stay page scrolling (touch-action: pan-y); a short drag snaps back.
+const SWIPE_VOTE_PX = 90
+function SwipeCard({ onVote, children }: { onVote: (yes: boolean) => void; children: React.ReactNode }) {
+  const [dx, setDx] = useState(0)
+  const [leaving, setLeaving] = useState<0 | 1 | -1>(0)
+  const [dragging, setDragging] = useState(false)
+  const drag = useRef<{ id: number; x: number; y: number; horizontal: boolean | null } | null>(null)
+  const onDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (leaving || (e.pointerType === 'mouse' && e.button !== 0)) return
+    drag.current = { id: e.pointerId, x: e.clientX, y: e.clientY, horizontal: null }
+  }
+  const onMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = drag.current
+    if (!d || d.id !== e.pointerId) return
+    const mx = e.clientX - d.x
+    const my = e.clientY - d.y
+    if (d.horizontal === null && Math.hypot(mx, my) > 8) {
+      d.horizontal = Math.abs(mx) > Math.abs(my)
+      if (d.horizontal) { e.currentTarget.setPointerCapture(e.pointerId); setDragging(true) }
+    }
+    if (d.horizontal) setDx(mx)
+  }
+  const onUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = drag.current
+    if (!d || d.id !== e.pointerId) return
+    drag.current = null
+    setDragging(false)
+    if (d.horizontal && Math.abs(dx) >= SWIPE_VOTE_PX) {
+      const dir = dx > 0 ? 1 : -1
+      setLeaving(dir)
+      window.setTimeout(() => onVote(dir === 1), 160)
+    } else setDx(0)
+  }
+  const shift = leaving ? leaving * 480 : dx
+  const yes = Math.max(0, Math.min(1, dx / SWIPE_VOTE_PX))
+  const no = Math.max(0, Math.min(1, -dx / SWIPE_VOTE_PX))
+  return (
+    <div onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={() => { drag.current = null; setDragging(false); setDx(0) }}
+      className="relative mt-2 select-none touch-pan-y cursor-grab active:cursor-grabbing"
+      style={{
+        transform: `translateX(${shift}px) rotate(${shift / 24}deg)`,
+        transition: dragging ? 'none' : 'transform 160ms ease-out',
+      }}>
+      {children}
+      <span aria-hidden style={{ opacity: yes }}
+        className="absolute top-3 left-3 px-2.5 py-1 rounded-lg border-2 border-green-400 text-green-300 text-sm font-bold bg-black/50 pointer-events-none">JA</span>
+      <span aria-hidden style={{ opacity: no }}
+        className="absolute top-3 right-3 px-2.5 py-1 rounded-lg border-2 border-red-400 text-red-300 text-sm font-bold bg-black/50 pointer-events-none">NEIN</span>
+    </div>
+  )
+}
+
+// 40 px to look at, 44 px to hit (the ::after overhangs by 2 px)
+const iconBtn = 'relative after:absolute after:-inset-0.5 w-10 h-10 flex items-center justify-center rounded-lg transition-all'
+const finePointer = () => typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: fine)').matches
 // Highlight for the day row under a dragged card
-const dropBadge = 'absolute top-1.5 right-1.5 z-10 px-2 py-0.5 rounded-full bg-primary text-white text-xs font-semibold pointer-events-none'
+const dropBadge = 'absolute top-1.5 right-1.5 z-10 px-2 py-0.5 rounded-full bg-primary-solid text-white text-xs font-semibold pointer-events-none'
 const secondaryBtn = 'min-h-[40px] flex items-center justify-center gap-1.5 px-3 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-ink-soft hover:text-white text-sm font-medium transition-all disabled:opacity-50'
 
 export default function PlanPage() {
@@ -123,24 +179,27 @@ export default function PlanPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [picker, setPicker] = useState<Picker | null>(null)
+  // The planner's one field: searches recipes, or names a new dish
   const [search, setSearch] = useState('')
-  const [customName, setCustomName] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
   const [creatingRecipe, setCreatingRecipe] = useState(false)
   const [nextDayFree, setNextDayFree] = useState(false)
   const [addLeftovers, setAddLeftovers] = useState(false)
-  // Replace mode: keep the old dish by shifting it one day later (null = default)
-  const [keepOld, setKeepOld] = useState<boolean | null>(null)
   const [moveFor, setMoveFor] = useState<MealEntry | null>(null)
+  // Action sheet of a planned card (tap on the card or its ⋯)
+  const [actionsFor, setActionsFor] = useState<MealEntry | null>(null)
   const [moving, setMoving] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [toast, setToast] = useState<Toast | null>(null)
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const { show: showToast, error: showError, hide: hideToast } = useToast()
   const [earlierOpen, setEarlierOpen] = useState(false)
+  const [dragHintHidden, setDragHintHidden] = useState(true)
+  useEffect(() => { setDragHintHidden(dragHintDone()) }, [])
+  const dismissDragHint = () => { markDragHintDone(); setDragHintHidden(true) }
   const [autofilling, setAutofilling] = useState(false)
-  const [currentUser, setCurrentUser] = useState('')
-  const [users, setUsers] = useState<string[]>([])
-  const [showUserPicker, setShowUserPicker] = useState(false)
-  // Fun mode ("Swipen")
+  const { user: currentUser, users, partner, askUser } = useCurrentUser()
+  // Evenings the partner planned or changed since this phone last looked ("neu")
+  const [marks, setMarks] = useState<Marks>({})
+  // Voting ("Abstimmen")
   const [funMode, setFunMode] = useState(false)
   const [funDayPicker, setFunDayPicker] = useState(false)
   const [funSelectedDates, setFunSelectedDates] = useState<Set<string>>(new Set())
@@ -149,10 +208,22 @@ export default function PlanPage() {
   const [funCardIndex, setFunCardIndex] = useState(0)
   const [funDone, setFunDone] = useState(false)
   const pendingVotes = useRef<Promise<unknown>[]>([])
+  // Plans from 21 days ago to the end of the week, loaded when voting starts:
+  // the cards follow the suggestion rules and stay the same while voting
+  const [voteEntries, setVoteEntries] = useState<MealEntry[] | null>(null)
+  // Days this phone voted on in this round, for the partner's status
+  const [votedDates, setVotedDates] = useState<string[]>([])
   const [settleDate, setSettleDate] = useState<string | null>(null)
-  const [addingToList, setAddingToList] = useState<string | null>(null)
+  // "Zutaten der Woche" sheet for the week on screen or one evening
+  const [ingredients, setIngredients] = useState<{ start: string; end: string; source: 'week' | 'card' } | null>(null)
+  const [clearing, setClearing] = useState(false)
   // How next week was opened on load; tracked once the profile is known
   const pendingOpenSource = useRef<string | null>(null)
+  // Week whose cards are on screen: skeletons only when another week loads
+  const shownWeek = useRef<string | null>(null)
+  // Optimistic card changes still on their way: background refreshes must
+  // not paint the older server state over them.
+  const optimistic = useRef({ pending: 0, gen: 0 })
 
   const now = new Date()
   const todayStr = ds(now)
@@ -169,23 +240,13 @@ export default function PlanPage() {
   const dow = getDay(now)
   const showPlanNextWeekCard = isCurrentWeek && (dow === 4 || dow === 5 || dow === 6 || dow === 0)
 
-  const showToast = (msg: string, opts?: { action?: Toast['action']; duration?: number }) => {
-    if (toastTimer.current) clearTimeout(toastTimer.current)
-    setToast({ msg, action: opts?.action })
-    toastTimer.current = setTimeout(() => setToast(null), opts?.duration ?? 2500)
-  }
-  const hideToast = () => {
-    if (toastTimer.current) clearTimeout(toastTimer.current)
-    setToast(null)
-  }
-
   const goToWeek = (monday: Date, source?: string) => {
     setWeekStart(monday)
     setEarlierOpen(false)
     if (source && ds(monday) === nextWeekStr) track('week_next_open', { source })
   }
 
-  // Load users + resolve identity from #hash or localStorage; honour ?week=next
+  // Load recipes; honour ?week=next (who is using the phone: UserProvider)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     if (params.get('week') === 'next') {
@@ -199,31 +260,8 @@ export default function PlanPage() {
 
     const loadInitial = async () => {
       try {
-        const [settingsRes, recipesRes] = await Promise.all([
-          fetch('/api/settings'),
-          fetch('/api/recipes'),
-        ])
-        if (!settingsRes.ok || !recipesRes.ok) throw new Error('initial load failed')
-
-        const s = await settingsRes.json()
-        const u = [s.user1_name, s.user2_name].filter(Boolean)
-        setUsers(u)
-
-        // Hash takes priority: /#susi or /#kilian
-        const hash = window.location.hash.replace('#', '').trim().toLowerCase()
-        const fromHash = u.find((name: string) => name.toLowerCase() === hash)
-        if (fromHash) {
-          setCurrentUser(fromHash)
-          localStorage.setItem('vommeal_user', fromHash)
-        } else {
-          const stored = localStorage.getItem('vommeal_user')
-          if (stored && u.includes(stored)) {
-            setCurrentUser(stored)
-          } else if (u.length > 0) {
-            setShowUserPicker(true)
-          }
-        }
-
+        const recipesRes = await fetch('/api/recipes')
+        if (!recipesRes.ok) throw new Error('initial load failed')
         setRecipes(await recipesRes.json())
       } catch {
         setLoadError('Vommeal konnte nicht geladen werden. Bitte Verbindung prüfen und neu laden.')
@@ -233,38 +271,42 @@ export default function PlanPage() {
     loadInitial()
   }, [])
 
-  const selectUser = (name: string) => {
-    setCurrentUser(name)
-    localStorage.setItem('vommeal_user', name)
-    setShowUserPicker(false)
+  // Nothing is written without knowing who plans (asks "Wer bist du?" first).
+  const ensureUser = () => {
+    if (currentUser || users.length === 0) return true
+    askUser()
+    return false
   }
 
-  const switchUser = () => {
-    const other = users.find(u => u !== currentUser)
-    if (other) selectUser(other)
-  }
-
-  const loadEntries = useCallback(async (): Promise<MealEntry[] | null> => {
-    setLoading(true)
-    setLoadError('')
+  // Skeletons only for the first load of a week; afterwards (after an action
+  // or when coming back to the app) the cards update in place.
+  // `background`: a refresh nobody asked for; it never shows errors and
+  // drops its result when an optimistic change happened meanwhile.
+  const loadEntries = useCallback(async (opts: { background?: boolean } = {}): Promise<MealEntry[] | null> => {
+    const firstLoad = shownWeek.current !== startStr
+    if (firstLoad) { setLoading(true); setLoadError('') }
+    const gen = optimistic.current.gen
     try {
       const data = await fetchRange(startStr, endStr)
+      if (opts.background && (optimistic.current.pending > 0 || optimistic.current.gen !== gen)) return null
       setEntries(data)
+      shownWeek.current = startStr
+      setLoadError('')
       return data
     } catch {
-      setLoadError('Diese Woche konnte nicht geladen werden.')
+      if (firstLoad) setLoadError('Diese Woche konnte nicht geladen werden.')
       return null
     } finally {
-      setLoading(false)
+      if (firstLoad) setLoading(false)
     }
   }, [startStr, endStr])
 
-  const loadNominations = useCallback(async () => {
+  const loadNominations = useCallback(async (opts: { background?: boolean } = {}) => {
     try {
       const res = await fetch(`/api/nominations?start=${startStr}&end=${endStr}`)
       if (res.ok) setNominations(await res.json())
     } catch {
-      setLoadError('Stimmen konnten nicht geladen werden.')
+      if (!opts.background) setLoadError('Stimmen konnten nicht geladen werden.')
     }
   }, [startStr, endStr])
 
@@ -282,6 +324,10 @@ export default function PlanPage() {
     return data
   }, [loadEntries, loadToday])
 
+  // Around optimistic card changes (remove, move)
+  const beginOptimistic = () => { optimistic.current.pending++; optimistic.current.gen++ }
+  const endOptimistic = () => { optimistic.current.pending = Math.max(0, optimistic.current.pending - 1) }
+
   useEffect(() => { loadEntries(); loadNominations() }, [loadEntries, loadNominations])
   useEffect(() => { loadToday() }, [loadToday])
 
@@ -294,32 +340,72 @@ export default function PlanPage() {
       .catch(() => setNextWeekPlanned(null))
   }, [showPlanNextWeekCard, entries])
 
-  // "New since last visit": evenings the partner planned (this week or next)
-  // since this user last opened the plan. Runs once per user.
+  // "Neu": evenings the partner planned or changed (this week or next) since
+  // this phone last looked. Runs when the plan opens and when the app comes
+  // back; marked cards keep a "neu" badge until seen or for 24 h.
+  const checkPartnerChanges = useCallback(async () => {
+    if (!currentUser) return
+    const key = `vommeal_lastseen_${currentUser}`
+    const lastSeen = loadLastSeen(key)
+    const monday = mondayOf(new Date())
+    try {
+      const { data, at } = await fetchRangeAt(ds(new Date()), ds(addDays(monday, 13)))
+      const { planned, changed } = partnerChanges(data, currentUser, lastSeen)
+      const fresh = [...planned, ...changed].map(e => e.id)
+      const next = addMarks(loadMarks(currentUser), fresh, Date.now())
+      saveMarks(currentUser, next)
+      setMarks(next)
+      const hint = partnerHint(planned, changed)
+      if (hint) showToast(hint)
+      saveLastSeen(key, at)
+    } catch { /* offline: try again on the next return */ }
+  }, [currentUser, showToast])
+
   useEffect(() => {
     if (!currentUser) return
     if (pendingOpenSource.current) {
       track('week_next_open', { source: pendingOpenSource.current })
       pendingOpenSource.current = null
     }
-    const key = `vommeal_lastseen_${currentUser}`
-    let lastSeen = 0
-    try { lastSeen = Date.parse(localStorage.getItem(key) || '') || 0 } catch { /* storage unavailable */ }
-    const monday = mondayOf(new Date())
-    fetchRange(ds(new Date()), ds(addDays(monday, 13)))
-      .then(data => {
-        const fresh = data.filter(e =>
-          e.suggested_by && e.suggested_by !== currentUser && parseCreatedAt(e.created_at) > lastSeen
-        )
-        if (lastSeen > 0 && fresh.length > 0) {
-          showToast(`${fresh[0].suggested_by} hat ${abende(fresh.length)} geplant`, { duration: 4000 })
-        }
-        try { localStorage.setItem(key, new Date().toISOString()) } catch { /* storage unavailable */ }
-      })
-      .catch(() => {})
+    setMarks(loadMarks(currentUser))
+    checkPartnerChanges()
+  }, [currentUser, checkPartnerChanges])
+
+  // Leaving the page (other app, other tab) counts as having seen the
+  // cards of the week on screen: their "neu" badges go.
+  const entriesRef = useRef(entries)
+  entriesRef.current = entries
+  useEffect(() => {
+    if (!currentUser) return
+    const markSeen = () => {
+      const ids = entriesRef.current.map(e => e.id)
+      const next = dropMarks(loadMarks(currentUser), ids)
+      saveMarks(currentUser, next)
+    }
+    const onHide = () => {
+      if (document.visibilityState !== 'hidden') return
+      markSeen()
+      setMarks(loadMarks(currentUser))
+    }
+    document.addEventListener('visibilitychange', onHide)
+    return () => { document.removeEventListener('visibilitychange', onHide); markSeen() }
   }, [currentUser])
 
+  // Back in the app: the partner may have planned meanwhile. Updates in
+  // place, open sheets stay open.
+  useRefreshOnResume(() => {
+    loadEntries({ background: true })
+    loadToday()
+    loadNominations({ background: true })
+    checkPartnerChanges()
+  })
+
   const getEntry = (date: Date) => entries.find(e => e.date === ds(date))
+  // "heute", "morgen" or "Mittwoch" for "Anderes Gericht für …"
+  const forDay = (date: string) => {
+    const w = relativeWeekday(date, todayStr)
+    return w === 'Heute' || w === 'Morgen' ? w.toLowerCase() : w
+  }
 
   // In the current week, days before today collapse into a compact list
   const pastDays = isCurrentWeek ? days.filter(d => ds(d) < todayStr) : []
@@ -329,8 +415,9 @@ export default function PlanPage() {
   // ---- Picker -------------------------------------------------------------
 
   const openPicker = async (date: string, replaceId?: string) => {
+    if (!ensureUser()) return
     setPicker({ date, replaceId })
-    setSearch(''); setCustomName(''); setAddLeftovers(false); setNextDayFree(false); setKeepOld(null)
+    setSearch(''); setAddLeftovers(false); setNextDayFree(false)
     const next = ds(addDays(parseISO(date), 1))
     if (next >= startStr && next <= endStr) {
       setNextDayFree(!entries.find(e => e.date === next))
@@ -339,43 +426,101 @@ export default function PlanPage() {
     }
   }
 
-  const closePicker = () => { setPicker(null); setSearch(''); setCustomName(''); setAddLeftovers(false) }
+  const closePicker = () => { setPicker(null); setSearch(''); setAddLeftovers(false) }
 
+  // Plans send what they expect on that evening (`expect_empty` or
+  // `replace_id`); the server answers 409 with the current entry instead of
+  // overwriting what the partner planned in the meantime.
   const postEntry = (body: Record<string, unknown>) =>
-    fetch('/api/meal-plan', {
+    apiCall<MealEntry>('/api/meal-plan', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ meal_type: 'dinner', servings: SERVINGS, status: 'approved', suggested_by: currentUser, ...body }),
+      body: { meal_type: 'dinner', servings: SERVINGS, status: 'approved', suggested_by: currentUser, ...body },
+      fallback: 'Konnte nicht gespeichert werden',
     })
+
+  const conflictEntry = (res: { status: number; data: unknown }): MealEntry | null =>
+    res.status === 409 ? ((res.data as { current?: MealEntry } | null)?.current ?? null) : null
+
+  // "Susi hat inzwischen Shakshuka geplant"
+  const conflictText = (current: MealEntry) =>
+    current.suggested_by && current.suggested_by !== currentUser
+      ? `${current.suggested_by} hat inzwischen ${mealName(current)} geplant`
+      : `Inzwischen ist ${mealName(current)} geplant`
+
+  // After a 409: show the fresh state and offer to replace it anyway.
+  const offerReplace = (current: MealEntry, body: Record<string, unknown>, label: string) => {
+    refresh()
+    showToast(conflictText(current), {
+      action: {
+        label: 'Trotzdem ersetzen',
+        onClick: async () => {
+          hideToast()
+          const res = await postEntry({ ...body, replace_id: current.id })
+          const again = conflictEntry(res)
+          if (again) { offerReplace(again, body, label); return }
+          if (!res.ok) { showError(res.error); return }
+          track('plan_replace')
+          refresh()
+          replacedToast(current, res.data, label)
+        },
+      },
+    })
+  }
+
+  // "Ersetzt: Linsen durch Pizza" with an undo that puts the old dish back,
+  // but only while the new one is still there (replace_id guard).
+  const replacedToast = (old: MealEntry, created: MealEntry, label: string, leftovers?: MealEntry | null) => {
+    showToast(`Ersetzt: ${mealName(old)} durch ${label}`, {
+      action: {
+        label: 'Rückgängig',
+        onClick: async () => {
+          hideToast()
+          const r = await postEntry({
+            id: old.id, date: old.date, recipe_id: old.recipe_id, custom_meal_name: old.custom_meal_name,
+            servings: old.servings || SERVINGS, notes: old.notes, suggested_by: old.suggested_by, replace_id: created.id,
+          })
+          if (leftovers) await apiCall(`/api/meal-plan/${leftovers.id}`, { method: 'DELETE' })
+          refresh()
+          const current = conflictEntry(r)
+          if (r.ok) { track('plan_replace_undo'); showToast(`Wieder da: ${mealName(old)}`) }
+          else if (current) showError(`Nicht zurückgenommen: ${conflictText(current)}`)
+          else showError(r.status === 0 ? r.error : 'Konnte nicht zurückgenommen werden')
+        },
+      },
+    })
+  }
 
   const planMeal = async (opts: { recipeId?: string; name?: string; quick?: boolean; label?: string }) => {
     if (!picker || saving) return
     const { date, replaceId } = picker
-    const name = opts.name ?? customName.trim()
+    const name = opts.name ?? search.trim()
     if (!opts.recipeId && !name) return
     const replaced = replaceId ? entries.find(e => e.id === replaceId) : undefined
-    const keep = !!replaced && (keepOld ?? (date === todayStr && !!opts.quick && KEEP_OLD_BY_DEFAULT.includes(name)))
+    const keep = !!replaced && date === todayStr && !!opts.quick && KEEP_OLD_BY_DEFAULT.includes(name)
     if (replaced && keep) { await replaceKeepingOld(replaced, opts, name); return }
-    setSaving(true)
-    const res = await postEntry({ date, recipe_id: opts.recipeId || null, custom_meal_name: opts.recipeId ? null : name })
-    if (!res.ok) {
-      setSaving(false)
-      showToast('Konnte nicht gespeichert werden')
-      return
-    }
-    track(replaceId ? 'plan_replace' : 'plan_add', replaceId ? {} : { quick: !!opts.quick })
-
-    let leftovers = false
-    if (addLeftovers && nextDayFree && !opts.quick && !keep) {
-      const next = ds(addDays(parseISO(date), 1))
-      const r = await postEntry({ date: next, recipe_id: null, custom_meal_name: LEFTOVERS })
-      if (r.ok) { leftovers = true; track('plan_leftovers') }
-    }
-    setSaving(false)
-    closePicker()
-    refresh()
     const label = opts.label || (opts.recipeId ? recipes.find(r => r.id === opts.recipeId)?.name || 'Rezept' : name)
-    showToast(leftovers ? `${label} + Reste morgen` : `${fmt(parseISO(date), 'EEEE')}: ${label}`)
+    const body = { date, recipe_id: opts.recipeId || null, custom_meal_name: opts.recipeId ? null : name }
+    setSaving(true)
+    try {
+      const res = await postEntry({ ...body, ...(replaceId ? { replace_id: replaceId } : { expect_empty: true }) })
+      const current = conflictEntry(res)
+      if (current) { closePicker(); offerReplace(current, body, label); return }
+      if (!res.ok) { showError(res.error); return }
+      track(replaceId ? 'plan_replace' : 'plan_add', replaceId ? {} : { quick: !!opts.quick })
+
+      let leftovers: MealEntry | null = null
+      if (addLeftovers && nextDayFree && !opts.quick && !keep) {
+        const next = ds(addDays(parseISO(date), 1))
+        const r = await postEntry({ date: next, recipe_id: null, custom_meal_name: LEFTOVERS, expect_empty: true })
+        if (r.ok) { leftovers = r.data; track('plan_leftovers') }
+      }
+      closePicker()
+      refresh()
+      if (replaced) replacedToast(replaced, res.data, label, leftovers)
+      else showToast(leftovers ? `${label} + Reste morgen` : `${fmt(parseISO(date), 'EEEE')}: ${label}`)
+    } finally {
+      setSaving(false)
+    }
   }
 
   // Replace, but keep the old dish: it (and the evenings right after it) move
@@ -387,12 +532,14 @@ export default function PlanPage() {
       const res = await shiftPlan({ from: date, days: 1, fill: opts.quick ? name : null, suggested_by: currentUser })
       let createdId = res.filled?.id ?? null
       if (!opts.quick) {
-        const r = await postEntry({ date, recipe_id: opts.recipeId || null, custom_meal_name: opts.recipeId ? null : name })
+        // The shift just freed this evening; anything there now came from elsewhere.
+        const r = await postEntry({ date, recipe_id: opts.recipeId || null, custom_meal_name: opts.recipeId ? null : name, expect_empty: true })
         if (!r.ok) {
-          await undoPlanChange(res.moves).catch(() => {})
-          throw new Error('Konnte nicht gespeichert werden')
+          await undoPlanChange(res.moves, null, currentUser).catch(() => {})
+          const current = conflictEntry(r)
+          throw new Error(current ? conflictText(current) : r.error)
         }
-        createdId = (await r.json()).id ?? null
+        createdId = r.data.id ?? null
       }
       track('plan_replace')
       track('plan_shift', { days: 1, filled: true, via: 'picker' })
@@ -400,16 +547,34 @@ export default function PlanPage() {
       const label = opts.label || (opts.recipeId ? recipes.find(r => r.id === opts.recipeId)?.name || 'Rezept' : name)
       afterPlanChange(res.moves, createdId, `${label} · ${mealName(replaced)} → ${fmt(addDays(parseISO(date), 1), 'EEEEEE')}`)
     } catch (e) {
-      showToast(errorText(e, 'Konnte nicht gespeichert werden'))
+      showError(errorText(e, 'Konnte nicht gespeichert werden'))
     } finally {
       setSaving(false)
     }
   }
 
+  // An existing recipe with the typed name, if any (avoids duplicates, also in Mealie)
+  const sameNameRecipe = (name: string) => {
+    const n = normName(name)
+    return n ? recipes.find(r => normName(r.name) === n) : undefined
+  }
+
+  // Enter never creates a recipe: it plans the first match of the list
+  // (an exact name comes first), otherwise it does nothing.
+  const onSearchEnter = () => {
+    const first = filteredRecipes[0]
+    if (first) planMeal({ recipeId: first.id, label: first.name })
+  }
+
   // Free text → new recipe in Mealie (dinner category), then planned like any recipe.
   const createRecipeAndPlan = async () => {
-    const name = customName.trim()
+    const name = search.trim()
     if (!name || saving || creatingRecipe) return
+    const existing = sameNameRecipe(name)
+    if (existing) {
+      await planMeal({ recipeId: existing.id, label: `${existing.name}, Rezept gab es schon` })
+      return
+    }
     setCreatingRecipe(true)
     try {
       const res = await fetch('/api/recipes/create', {
@@ -419,14 +584,14 @@ export default function PlanPage() {
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok || !data?.id) {
-        showToast(data?.error || 'Rezept konnte nicht angelegt werden')
+        showError(data?.error || 'Rezept konnte nicht angelegt werden')
         return
       }
       setRecipes(prev => [...prev, data].sort((a, b) => a.name.localeCompare(b.name, 'de')))
       track('recipe_create', { from: 'picker', source: data.source })
       await planMeal({ recipeId: data.id, label: data.name })
     } catch {
-      showToast('Rezept konnte nicht angelegt werden')
+      showError('Rezept konnte nicht angelegt werden')
     } finally {
       setCreatingRecipe(false)
     }
@@ -434,33 +599,40 @@ export default function PlanPage() {
 
   // ---- Plan actions ------------------------------------------------------
 
-  // Optimistic removal with a 6 s undo window instead of a confirm dialog
+  // Optimistic removal with an 8 s undo window instead of a confirm dialog
   const removeEntry = async (id: string) => {
     const removed = entries.find(e => e.id === id)
     if (!removed) return
     setEntries(prev => prev.filter(e => e.id !== id))
-    const res = await fetch(`/api/meal-plan/${id}`, { method: 'DELETE' })
-    if (!res.ok) { loadEntries(); showToast('Konnte nicht entfernt werden'); return }
+    beginOptimistic()
+    const res = await apiCall(`/api/meal-plan/${id}`, { method: 'DELETE', fallback: 'Konnte nicht entfernt werden' })
+    endOptimistic()
+    if (!res.ok) {
+      // 404: the partner removed or replaced it already; show the fresh state.
+      if (res.status === 404) { refresh(); showError('Wurde inzwischen geändert'); return }
+      // Put back only this card, other changes since then stay.
+      setEntries(prev => prev.some(e => e.id === id) ? prev : [...prev, removed].sort((a, b) => a.date.localeCompare(b.date)))
+      showError(res.status === 0 ? `${NETWORK_ERROR}, ${mealName(removed)} bleibt` : res.error)
+      return
+    }
     track('plan_remove')
     if (removed.date === todayStr) setTodayEntry(null)
-    showToast(`${mealName(removed)} entfernt`, {
-      duration: 6000,
+    showToast(`Entfernt: ${mealName(removed)}`, {
       action: {
         label: 'Rückgängig',
         onClick: async () => {
           hideToast()
-          const r = await fetch('/api/meal-plan', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: removed.id, date: removed.date, meal_type: removed.meal_type,
-              recipe_id: removed.recipe_id, custom_meal_name: removed.custom_meal_name,
-              servings: removed.servings || SERVINGS, notes: removed.notes,
-              status: 'approved', suggested_by: removed.suggested_by,
-            }),
+          // Only onto a still free evening: never overwrite a newer plan.
+          const r = await postEntry({
+            id: removed.id, date: removed.date,
+            recipe_id: removed.recipe_id, custom_meal_name: removed.custom_meal_name,
+            servings: removed.servings || SERVINGS, notes: removed.notes,
+            suggested_by: removed.suggested_by, expect_empty: true,
           })
+          const current = conflictEntry(r)
           if (r.ok) { refresh(); showToast('Wiederhergestellt') }
-          else { showToast('Konnte nicht wiederhergestellt werden') }
+          else if (current) { refresh(); showError(`Nicht wiederhergestellt: ${conflictText(current)}`) }
+          else { showError(r.status === 0 ? r.error : 'Konnte nicht wiederhergestellt werden') }
         },
       },
     })
@@ -468,21 +640,20 @@ export default function PlanPage() {
 
   // ---- Moving evenings ----------------------------------------------------
 
-  // Toast with a 6 s undo that restores the old dates (and removes an evening
+  // Toast with an 8 s undo that restores the old dates (and removes an evening
   // that was planned on the freed day).
   const afterPlanChange = (moves: PlanMove[], createdId: string | null | undefined, msg: string) => {
     refresh()
     showToast(msg, {
-      duration: 6000,
       action: {
         label: 'Rückgängig',
         onClick: async () => {
           hideToast()
           try {
-            await undoPlanChange(moves, createdId)
+            await undoPlanChange(moves, createdId, currentUser)
             showToast('Zurückgenommen')
           } catch (e) {
-            showToast(errorText(e, 'Konnte nicht zurückgenommen werden'))
+            showError(errorText(e, 'Konnte nicht zurückgenommen werden'))
           }
           refresh()
         },
@@ -501,7 +672,7 @@ export default function PlanPage() {
       setMoveFor(null)
       afterPlanChange(res.moves, res.filled?.id, 'Verschoben')
     } catch (e) {
-      showToast(errorText(e, 'Konnte nicht verschoben werden'))
+      showError(errorText(e, 'Konnte nicht verschoben werden'))
       refresh()
     } finally {
       setMoving(false)
@@ -514,14 +685,17 @@ export default function PlanPage() {
     const local = planMove(entries, id, to)
     if (local.ok) setEntries(prev => applyMoves(prev, local.moves))
     setMoving(true)
+    beginOptimistic()
     try {
-      const { moves } = await movePlanEntry(id, to)
+      const { moves } = await movePlanEntry(id, to, currentUser)
+      endOptimistic()
       const swap = moves.length > 1
       track(via === 'drag' ? 'plan_drag' : 'plan_move', { swap })
       setMoveFor(null)
       afterPlanChange(moves, null, swap ? 'Getauscht' : 'Verschoben')
     } catch (e) {
-      showToast(errorText(e, 'Konnte nicht verschoben werden'))
+      endOptimistic()
+      showError(errorText(e, 'Konnte nicht verschoben werden'))
       refresh()
     } finally {
       setMoving(false)
@@ -529,12 +703,12 @@ export default function PlanPage() {
   }
 
   const drag = useLongPressDrag({
-    onDrop: ({ id, to }: DragDrop) => { moveEntryTo(id, to, 'drag') },
+    onDrop: ({ id, to }: DragDrop) => { dismissDragHint(); moveEntryTo(id, to, 'drag') },
     canDrop: date => date >= todayStr,
   })
 
   const autofillWeek = async () => {
-    if (!currentUser) { setShowUserPicker(true); return }
+    if (!currentUser) { askUser(); return }
     setAutofilling(true)
     const before = new Set(entries.map(e => e.id))
     try {
@@ -544,97 +718,116 @@ export default function PlanPage() {
         body: JSON.stringify({ start: upcomingStartStr, end: endStr, suggested_by: currentUser }),
       })
       const data = await res.json()
-      if (!res.ok || !data.ok) { showToast(data.error || 'Woche konnte nicht gefüllt werden'); return }
+      if (!res.ok || !data.ok) { showError(data.error || 'Woche konnte nicht gefüllt werden'); return }
       track('autofill', { filled: data.filled ?? 0 })
       if (!data.filled) { showToast('Alle Abende sind schon geplant'); return }
       const fresh = await refresh()
       loadNominations()
       const added = (fresh || []).filter(e => !before.has(e.id) && e.date >= upcomingStartStr)
       showToast(`${abende(data.filled)} gefüllt`, {
-        duration: 6000,
         action: added.length ? {
           label: 'Rückgängig',
           onClick: async () => {
             hideToast()
-            await Promise.all(added.map(e => fetch(`/api/meal-plan/${e.id}`, { method: 'DELETE' })))
+            // 404 = already removed or replaced by the partner: nothing to undo there.
+            const results = await Promise.all(added.map(e => apiCall(`/api/meal-plan/${e.id}`, { method: 'DELETE' })))
             refresh()
-            showToast('Zurückgenommen')
+            const failed = results.find(r => !r.ok && r.status !== 404)
+            if (failed) showError(failed.status === 0 ? failed.error : 'Konnte nicht zurückgenommen werden')
+            else showToast('Zurückgenommen')
           },
         } : undefined,
       })
     } catch {
-      showToast('Woche konnte nicht gefüllt werden')
+      showError('Woche konnte nicht gefüllt werden')
     } finally {
       setAutofilling(false)
     }
   }
 
-  const addToList = async (date: string) => {
-    setAddingToList(date)
-    try {
-      const res = await fetch('/api/shopping', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'add_date', date }),
-      })
-      const data = await res.json()
-      track('shopping_from_plan', { scope: 'day', added: data.added ?? 0 })
-      showToast(data.added > 0 ? `${data.added} Zutaten auf die Einkaufsliste` : 'Schon alles auf der Liste')
-    } catch {
-      showToast('Zutaten konnten nicht übernommen werden')
-    } finally {
-      setAddingToList(null)
-    }
+  // Every way to the shopping list goes through the review sheet: "Einkaufen"
+  // for the evenings of the week on screen, the cart for one evening.
+  const openIngredients = (start: string, end: string, source: 'week' | 'card') => {
+    if (start > end) { showToast('Diese Woche ist schon vorbei'); return }
+    track('shopping_from_plan', { scope: source === 'week' ? 'week' : 'day' })
+    setIngredients({ start, end, source })
   }
 
-  const generateShopping = async () => {
-    if (upcomingStartStr > endStr) { showToast('Diese Woche ist schon vorbei'); return }
-    setAddingToList('week')
-    try {
-      const res = await fetch('/api/shopping', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'generate', start: upcomingStartStr, end: endStr }),
-      })
-      const data = await res.json()
-      track('shopping_from_plan', { scope: 'week', added: data.added ?? 0 })
-      showToast(data.added > 0 ? `${data.added} Zutaten auf die Einkaufsliste` : 'Schon alles auf der Liste')
-    } catch {
-      showToast('Zutaten konnten nicht übernommen werden')
-    } finally {
-      setAddingToList(null)
-    }
-  }
-
+  // Clears from today on only: past evenings are history (14-day rule,
+  // "Wie war's?"). No confirm, but an undo that restores onto free evenings.
   const clearWeek = async () => {
-    if (!confirm(`Alle Gerichte und Stimmen für ${rangeLabel(weekStart, addDays(weekStart, 6))} löschen? Das kann nicht rückgängig gemacht werden.`)) return
-    await Promise.all([
-      fetch(`/api/meal-plan?start=${startStr}&end=${endStr}`, { method: 'DELETE' }),
-      fetch(`/api/nominations?start=${startStr}&end=${endStr}`, { method: 'DELETE' }),
+    if (clearing || upcomingStartStr > endStr) return
+    setClearing(true)
+    const range = `start=${upcomingStartStr}&end=${endStr}`
+    const [plan, noms] = await Promise.all([
+      apiCall<{ removed?: MealEntry[] }>(`/api/meal-plan?${range}`, { method: 'DELETE', fallback: 'Woche konnte nicht geleert werden' }),
+      apiCall<{ removed?: Nomination[] }>(`/api/nominations?${range}`, { method: 'DELETE', fallback: 'Stimmen konnten nicht gelöscht werden' }),
     ])
+    setClearing(false)
     await refresh()
     await loadNominations()
-    showToast('Woche geleert')
+    const removed = plan.ok ? plan.data?.removed ?? [] : []
+    const removedNoms = noms.ok ? noms.data?.removed ?? [] : []
+    if (!plan.ok || !noms.ok) {
+      showError(!plan.ok ? plan.error : noms.error)
+      return
+    }
+    track('plan_clear', { removed: removed.length })
+    const what = upcomingStartStr > startStr ? 'Rest der Woche' : 'Woche'
+    showToast(removed.length > 0 ? `${what} geleert: ${abende(removed.length)}` : `${what} geleert`, {
+      action: removed.length + removedNoms.length > 0 ? {
+        label: 'Rückgängig',
+        onClick: () => { hideToast(); restoreCleared(removed, removedNoms) },
+      } : undefined,
+    })
   }
 
-  // ---- Fun mode ("Swipen") -------------------------------------------------
+  // Undo for "Woche leeren": each evening only comes back if it is still free.
+  const restoreCleared = async (removed: MealEntry[], removedNoms: Nomination[]) => {
+    const results = await Promise.all(removed.map(e => postEntry({
+      id: e.id, date: e.date, recipe_id: e.recipe_id, custom_meal_name: e.custom_meal_name,
+      servings: e.servings || SERVINGS, notes: e.notes, suggested_by: e.suggested_by, expect_empty: true,
+    })))
+    await Promise.all(removedNoms.map(n => apiCall('/api/nominations', {
+      method: 'POST',
+      body: { date: n.date, recipe_id: n.recipe_id, user_name: n.user_name },
+    })))
+    await refresh()
+    await loadNominations()
+    const taken = results.filter(r => r.status === 409).length
+    const failed = results.find(r => !r.ok && r.status !== 409)
+    if (failed) showError(failed.status === 0 ? failed.error : 'Konnte nicht wiederhergestellt werden')
+    else if (taken > 0) showToast(`${abende(taken)} inzwischen neu geplant, dort nichts überschrieben`)
+    else showToast('Wiederhergestellt')
+  }
 
+  // ---- Voting ("Abstimmen") ------------------------------------------------
+
+  // Same cards on both phones (seeded by the date), same rules as the suggestions
   const getCardsForDate = (dateStr: string): Recipe[] =>
-    seededShuffle(recipes, dateStr).slice(0, CARDS_PER_DAY)
+    votePool(recipes, voteEntries ?? entries, {
+      date: dateStr, today: todayStr, rangeStart: startStr, rangeEnd: endStr, count: CARDS_PER_DAY,
+    })
 
   const openFunMode = () => {
-    if (!currentUser) { setShowUserPicker(true); return }
+    if (!currentUser) { askUser(); return }
     // Pre-select empty days that are still ahead of us
     setFunSelectedDates(new Set(freeUpcoming.map(ds)))
     setFunDayPicker(true)
     track('fun_open')
   }
 
-  const startFunMode = () => {
+  const startFunMode = async () => {
     setFunDayPicker(false)
     setFunDayIndex(0)
     setFunCardIndex(0)
     setFunDone(false)
+    setVotedDates([])
+    try {
+      setVoteEntries(await fetchRange(addDaysIso(todayStr, -RECENT_DAYS), endStr > todayStr ? endStr : todayStr))
+    } catch {
+      setVoteEntries(null) // offline: the week on screen still keeps planned dishes out
+    }
     setFunMode(true)
   }
 
@@ -655,17 +848,20 @@ export default function PlanPage() {
 
   const advanceFunCard = () => {
     const nextCard = funCardIndex + 1
-    if (nextCard < CARDS_PER_DAY) { setFunCardIndex(nextCard); return }
+    if (nextCard < getCardsForDate(ds(funDays[funDayIndex])).length) { setFunCardIndex(nextCard); return }
     const nextDay = funDayIndex + 1
     if (nextDay >= funDays.length) finishFunMode()
     else { setFunDayIndex(nextDay); setFunCardIndex(0) }
   }
 
-  // Each "Ja" is saved immediately so closing Swipen mid-way loses nothing
+  // Each "Ja" is saved immediately so closing Abstimmen mid-way loses nothing
   const funVote = (recipe: Recipe, yes: boolean) => {
     const dateStr = ds(funDays[funDayIndex])
     track('fun_vote', { yes })
     advanceFunCard()
+    setVotedDates(prev => prev.includes(dateStr) ? prev : [...prev, dateStr])
+    // The partner's votes for this day, for the line under the card
+    loadNominations({ background: true })
     if (!yes) return
     const post = fetch('/api/nominations', {
       method: 'POST',
@@ -674,13 +870,14 @@ export default function PlanPage() {
     })
       .then(r => r.ok ? r.json() : null)
       .then(data => {
+        loadNominations({ background: true })
         if (data?.match) {
-          showToast(`❤️ Match: ${recipe.name} am ${fmt(parseISO(dateStr), 'EEEE')}!`, { duration: 4000 })
+          showToast(`❤️ Match: ${recipe.name} am ${fmt(parseISO(dateStr), 'EEEE')}!`)
           refresh()
           loadNominations()
         }
       })
-      .catch(() => showToast('Stimme konnte nicht gespeichert werden'))
+      .catch(() => showError('Stimme konnte nicht gespeichert werden'))
     pendingVotes.current.push(post)
   }
 
@@ -700,54 +897,24 @@ export default function PlanPage() {
     setSettleDate(null)
   }
 
-  const filteredRecipes = recipes.filter(r =>
-    r.name.toLowerCase().includes(search.toLowerCase())
-  )
+  // Exact name first, then names starting with the text, then the rest
+  const query = normName(search)
+  const matchRank = (r: Recipe) => {
+    const n = normName(r.name)
+    return n === query ? 0 : n.startsWith(query) ? 1 : 2
+  }
+  // The dish being replaced is not offered again
+  const replacedRecipeId = picker?.replaceId ? entries.find(e => e.id === picker.replaceId)?.recipe_id : null
+  const filteredRecipes = recipes
+    .filter(r => r.id !== replacedRecipeId && normName(r.name).includes(query))
+    .sort((a, b) => matchRank(a) - matchRank(b))
 
-  const partner = users.find(u => u !== currentUser) || 'Partner'
   const title = isCurrentWeek ? 'Diese Woche' : isNextWeek ? 'Nächste Woche' : rangeLabel(weekStart, addDays(weekStart, 6))
   const subtitle = isCurrentWeek || isNextWeek ? rangeLabel(weekStart, addDays(weekStart, 6)) : `KW ${fmt(weekStart, 'I')}`
+  const shortRange = `${fmt(weekStart, 'd.M.')} bis ${fmt(addDays(weekStart, 6), 'd.M.')}`
 
   return (
     <div className="space-y-5">
-      {/* Who are you? — full-screen picker */}
-      {showUserPicker && users.length > 0 && (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#0a0a0a]">
-          <div className="absolute inset-0 pointer-events-none" style={{
-            background: 'radial-gradient(ellipse 60% 40% at 50% 50%, rgba(249,115,22,0.08) 0%, transparent 70%)'
-          }} />
-
-          <div className="relative z-10 flex flex-col items-center px-6 w-full max-w-sm animate-slide-up">
-            <div className="w-12 h-12 rounded-2xl bg-primary flex items-center justify-center mb-8 shadow-lg shadow-primary/20">
-              <span className="text-xl">🍽️</span>
-            </div>
-
-            <h1 className="text-2xl font-bold text-white mb-1 tracking-tight">Wer bist du?</h1>
-            <p className="text-sm text-ink-muted mb-10 text-center">
-              Tipp: Lesezeichen auf <span className="text-ink-soft font-mono">/#deinname</span> überspringt diese Frage
-            </p>
-
-            <div className="w-full space-y-3">
-              {users.map(u => {
-                const color = avatarColor(u, users)
-                return (
-                  <button key={u} onClick={() => selectUser(u)}
-                    className="w-full group relative flex items-center gap-4 px-5 py-4 rounded-2xl transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
-                    style={{ background: `${color}1f`, border: `1px solid ${color}40`, boxShadow: `0 0 24px ${color}26` }}>
-                    <Avatar name={u} users={users} size="xl" />
-                    <div className="flex-1 text-left">
-                      <p className="text-base font-semibold text-white">{u}</p>
-                      <p className="text-xs text-ink-muted mt-0.5">Weiter als {u}</p>
-                    </div>
-                    <span className="text-ink-muted group-hover:text-white transition-colors text-lg">→</span>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
       {loadError && (
         <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
           {loadError}
@@ -779,27 +946,37 @@ export default function PlanPage() {
         )
       )}
 
-      {/* Header: title + week navigation */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-bold text-white truncate">{title}</h1>
-          <p className="text-sm text-ink-muted mt-0.5">{subtitle}</p>
+      {/* Header: title, then the week navigation in the date line (fits 320 px) */}
+      <div>
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="min-w-0 text-2xl font-bold text-white">{title}</h1>
+          {/* Who plans on this phone; changed in Einstellungen */}
+          {currentUser && <Avatar name={currentUser} users={users} size="md" />}
         </div>
-        <div className="flex items-center flex-shrink-0">
+        <div className="flex items-center gap-0.5 -ml-2 mt-0.5">
           <button onClick={() => goToWeek(addDays(weekStart, -7), 'nav')} aria-label="Vorherige Woche"
-            className={`${iconBtn} text-ink-muted hover:text-white hover:bg-[#1c1c1c]`}>
+            className={`${iconBtn} flex-shrink-0 text-ink-muted hover:text-white hover:bg-[#1c1c1c]`}>
             <ChevronLeft size={20} />
+          </button>
+          <p className="min-w-0 text-sm text-ink-muted text-center whitespace-nowrap">
+            {isCurrentWeek || isNextWeek ? (
+              <>
+                {/* "28.9. bis 4.10." where "28. Sep. bis 4. Okt." would not fit */}
+                <span className="min-[360px]:hidden">{shortRange}</span>
+                <span className="hidden min-[360px]:inline">{subtitle}</span>
+              </>
+            ) : subtitle}
+          </p>
+          <button onClick={() => goToWeek(addDays(weekStart, 7), 'nav')} aria-label="Nächste Woche"
+            className={`${iconBtn} flex-shrink-0 text-ink-muted hover:text-white hover:bg-[#1c1c1c]`}>
+            <ChevronRight size={20} />
           </button>
           {!isCurrentWeek && (
             <button onClick={() => goToWeek(currentMonday)}
-              className="min-h-[40px] px-3 rounded-lg text-sm font-medium bg-[#1c1c1c] hover:bg-[#252525] text-ink-soft hover:text-white transition-all border border-[#2a2a2a]">
-              Heute
+              className="ml-auto flex-shrink-0 min-h-[40px] px-2.5 min-[360px]:px-3 rounded-lg text-sm font-medium bg-[#1c1c1c] hover:bg-[#252525] text-ink-soft hover:text-white transition-all border border-[#2a2a2a]">
+              Diese Woche
             </button>
           )}
-          <button onClick={() => goToWeek(addDays(weekStart, 7), 'nav')} aria-label="Nächste Woche"
-            className={`${iconBtn} text-ink-muted hover:text-white hover:bg-[#1c1c1c]`}>
-            <ChevronRight size={20} />
-          </button>
         </div>
       </div>
 
@@ -807,27 +984,20 @@ export default function PlanPage() {
       <div className="space-y-2">
         {!loading && freeUpcoming.length > 0 && (
           <button onClick={autofillWeek} disabled={autofilling}
-            className="w-full min-h-[48px] flex items-center justify-center gap-2 px-4 rounded-xl bg-primary hover:bg-primary-hover text-white text-base font-semibold shadow-lg shadow-primary/10 transition-all disabled:opacity-60">
+            className="w-full min-h-[48px] flex items-center justify-center gap-2 px-4 rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold shadow-lg shadow-primary/10 transition-all disabled:opacity-60">
             <Zap size={18} className={autofilling ? 'animate-pulse' : ''} />
             {autofilling ? 'Wird gefüllt…' : `${freeUpcoming.length} ${freeUpcoming.length === 1 ? 'freien Abend' : 'freie Abende'} füllen`}
           </button>
         )}
         <div className="flex items-center gap-2">
-          {currentUser && (
-            <button onClick={switchUser} title={`Zu ${partner} wechseln`} aria-label={`Angemeldet als ${currentUser}, zu ${partner} wechseln`}
-              className="min-h-[40px] flex items-center gap-1.5 px-2.5 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] transition-all">
-              <Avatar name={currentUser} users={users} />
-              <span className="text-sm text-ink-soft">{currentUser}</span>
-              <RefreshCw size={12} className="text-ink-hint" />
-            </button>
-          )}
           <div className="flex-1" />
-          <button onClick={openFunMode} className={secondaryBtn}>
-            <Dices size={16} /> Swipen
+          {/* Below 360 px icons only; the labels stay for screen readers */}
+          <button onClick={openFunMode} className={secondaryBtn} aria-label="Abstimmen">
+            <Vote size={16} /> <span className="hidden min-[360px]:inline">Abstimmen</span>
           </button>
-          <button onClick={generateShopping} disabled={addingToList === 'week'} className={secondaryBtn}
-            title="Zutaten der kommenden Abende auf die Einkaufsliste">
-            <ShoppingCart size={16} /> Zutaten
+          <button onClick={() => openIngredients(upcomingStartStr, endStr, 'week')} className={secondaryBtn}
+            title="Zutaten der kommenden Abende prüfen und auf die Einkaufsliste" aria-label="Einkaufen">
+            <ShoppingCart size={16} /> <span className="hidden min-[360px]:inline">Einkaufen</span>
           </button>
         </div>
       </div>
@@ -853,7 +1023,7 @@ export default function PlanPage() {
                 const dateStr = ds(day)
                 return (
                   <div key={dateStr} className="flex items-center gap-3 px-3 py-2 text-sm">
-                    <span className="w-16 flex-shrink-0 text-ink-hint font-medium">{fmt(day, 'EEE d.')}</span>
+                    <span className="w-16 flex-shrink-0 text-ink-hint font-medium">{shortDay(dateStr)}</span>
                     {entry ? (
                       entry.recipe_id ? (
                         <Link href={`/recipes/${entry.recipe_id}`} className="flex-1 min-w-0 truncate text-ink-muted hover:text-white transition-colors">
@@ -876,6 +1046,17 @@ export default function PlanPage() {
         </div>
       )}
 
+      {/* Tip for dragging, once there is something to drag */}
+      {!dragHintHidden && !loading && entries.filter(e => e.date >= todayStr).length >= 2 && (
+        <div role="note" className="flex items-center gap-2 pl-3 pr-1 py-1 rounded-xl border border-[#262626] bg-[#111] text-sm text-ink-soft">
+          <span className="flex-1 min-w-0">Tipp: Karte lange drücken und auf einen anderen Tag ziehen</span>
+          <button type="button" onClick={dismissDragHint} aria-label="Tipp ausblenden"
+            className={`${iconBtn} flex-shrink-0 text-ink-muted hover:text-white hover:bg-[#1c1c1c]`}>
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
       {/* Days (planned cards can be long-pressed and dragged onto another day) */}
       <div ref={drag.containerRef} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
         {cardDays.map(day => {
@@ -883,7 +1064,6 @@ export default function PlanPage() {
           const dateStr = ds(day)
           const today = isToday(day)
           const past = dateStr < todayStr
-          const dayLabel = today ? 'Heute' : fmt(day, 'EEEE')
           const dropOver = drag.overDate === dateStr
 
           if (loading) {
@@ -892,62 +1072,57 @@ export default function PlanPage() {
 
           if (entry) {
             const lifted = drag.dragId === entry.id
+            const hasThumb = !!entry.recipe?.image_url || !!quickMealEmoji(entry.custom_meal_name)
+            // A tap opens the actions, a long press starts dragging (useLongPressDrag
+            // swallows the click that ends a drag); the dish name opens the recipe.
             return (
               <div key={dateStr} data-drop-date={dateStr} {...drag.bind(entry.id, dateStr, !past)}
-                className={`relative rounded-xl border overflow-hidden select-none [-webkit-touch-callout:none] ${
+                onClick={() => setActionsFor(entry)}
+                className={`relative rounded-xl border overflow-hidden select-none cursor-pointer [-webkit-touch-callout:none] ${
                   dropOver ? 'border-primary bg-primary/10 ring-2 ring-primary/60'
-                    : today ? 'border-primary/50 bg-[#141414]' : 'border-[#232323] bg-[#141414]'
+                    : today ? 'border-primary/50 bg-[#141414] hover:bg-[#171717]' : 'border-[#232323] bg-[#141414] hover:bg-[#171717]'
                 } ${lifted ? 'shadow-2xl shadow-black/80 ring-2 ring-primary/70 cursor-grabbing' : ''}`}>
                 {dropOver && <span className={dropBadge}>tauschen</span>}
-                <div className="flex items-center gap-3 p-2.5 pb-1">
-                  <MealThumb entry={entry} size="w-14 h-14" />
-                  <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-3 py-2 pl-2.5 pr-1">
+                  {hasThumb && <MealThumb entry={entry} size="w-14 h-14" />}
+                  <div className="flex-1 min-w-0 py-0.5">
                     <p className={`text-xs font-semibold ${today ? 'text-primary' : 'text-ink-muted'}`}>
-                      {dayLabel} <span className="font-normal text-ink-hint">{fmt(day, 'd.M.')}</span>
+                      {dayLabel(dateStr, todayStr)}
+                      {marks[entry.id] && (
+                        <span title={`Neu von ${entry.updated_by || entry.suggested_by}`}
+                          className="ml-1.5 inline-flex items-center gap-1 align-middle px-1.5 rounded-full bg-primary/15 text-[10px] font-semibold leading-4 text-primary">
+                          <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-primary" />neu
+                        </span>
+                      )}
                     </p>
                     {entry.recipe_id ? (
-                      <Link href={`/recipes/${entry.recipe_id}`} draggable={false}
+                      <Link href={`/recipes/${entry.recipe_id}`} draggable={false} onClick={e => e.stopPropagation()}
                         className="block text-[15px] font-semibold text-white leading-snug line-clamp-2 hover:text-primary transition-colors">
                         {mealName(entry)}
                       </Link>
                     ) : (
                       <p className="text-[15px] font-semibold text-white leading-snug line-clamp-2">{mealName(entry)}</p>
                     )}
-                    {entry.recipe?.rating ? <StarRating rating={entry.recipe.rating} size={12} /> : null}
+                    {(entry.suggested_by || entry.recipe?.rating) && (
+                      <p className="flex items-center gap-1.5 mt-1 text-xs text-ink-hint min-w-0">
+                        {entry.suggested_by && <Avatar name={entry.suggested_by} users={users} />}
+                        {/* Too narrow for the name: the avatar says it (aria-label) */}
+                        {entry.suggested_by && <span className="hidden min-[360px]:inline truncate">{entry.suggested_by}</span>}
+                        {entry.recipe?.rating ? <StarRating rating={entry.recipe.rating} size={12} /> : null}
+                      </p>
+                    )}
                   </div>
-                </div>
-                <div className="flex items-center gap-1 pl-2.5 pr-1 pb-1">
-                  {entry.suggested_by ? (
-                    <span className="flex items-center gap-1.5 text-xs text-ink-hint min-w-0 flex-1">
-                      <Avatar name={entry.suggested_by} users={users} />
-                      <span className="truncate">{entry.suggested_by}</span>
-                    </span>
-                  ) : <span className="flex-1" />}
-                  {entry.recipe_id && (
-                    <button onClick={() => addToList(dateStr)} disabled={addingToList === dateStr}
-                      aria-label="Zutaten auf die Einkaufsliste" title="Zutaten auf die Einkaufsliste"
-                      className={`${iconBtn} text-ink-muted hover:text-primary hover:bg-[#1c1c1c] disabled:opacity-50`}>
-                      <ShoppingCart size={16} />
-                    </button>
-                  )}
-                  <button onClick={() => setMoveFor(entry)} aria-label={`${mealName(entry)} verschieben`} title="Verschieben"
-                    className={`${iconBtn} text-ink-muted hover:text-white hover:bg-[#1c1c1c]`}>
-                    <CalendarClock size={17} />
-                  </button>
-                  <button onClick={() => openPicker(dateStr, entry.id)}
-                    className="min-h-[40px] flex items-center gap-1.5 px-2.5 rounded-lg text-sm text-ink-soft hover:text-white hover:bg-[#1c1c1c] transition-all">
-                    <ArrowLeftRight size={15} /> Tauschen
-                  </button>
-                  <button onClick={() => removeEntry(entry.id)} aria-label={`${mealName(entry)} entfernen`}
-                    className={`${iconBtn} text-ink-muted hover:text-red-400 hover:bg-[#1c1c1c]`}>
-                    <X size={18} />
+                  <button type="button" onClick={e => { e.stopPropagation(); setActionsFor(entry) }}
+                    aria-label={`Aktionen für ${mealName(entry)}`} aria-haspopup="dialog"
+                    className={`${iconBtn} flex-shrink-0 self-start text-ink-muted hover:text-white hover:bg-[#1c1c1c]`}>
+                    <MoreHorizontal size={18} />
                   </button>
                 </div>
               </div>
             )
           }
 
-          // Empty day: votes from Swipen, or a compact "plan" row
+          // Empty day: votes from Abstimmen, or a compact "plan" row
           const dayNoms = nominations.filter(n => n.date === dateStr)
           const myNoms = dayNoms.filter(n => n.user_name === currentUser)
           const partnerNoms = dayNoms.filter(n => n.user_name !== currentUser)
@@ -955,7 +1130,7 @@ export default function PlanPage() {
           const hasMatch = myNoms.some(n => partnerIds.has(n.recipe_id))
           const dayHead = (
             <span className={`w-20 flex-shrink-0 text-sm font-semibold ${today ? 'text-primary' : 'text-ink-soft'}`}>
-              {today ? 'Heute' : fmt(day, 'EEE d.')}
+              {dayLabel(dateStr, todayStr)}
             </span>
           )
 
@@ -1013,132 +1188,171 @@ export default function PlanPage() {
         </button>
       )}
 
-      {/* Clear week */}
-      {(entries.length > 0 || nominations.length > 0) && (
+      {/* Clear week: only what is still ahead, past weeks are never cleared */}
+      {(entries.some(e => e.date >= upcomingStartStr) || nominations.some(n => n.date >= upcomingStartStr)) && (
         <div className="flex justify-center pt-2">
-          <button onClick={clearWeek}
-            className="min-h-[40px] text-sm text-ink-hint hover:text-red-400 transition-colors px-4">
-            Woche leeren
+          <button onClick={clearWeek} disabled={clearing}
+            className="min-h-[40px] text-sm text-ink-hint hover:text-red-400 transition-colors px-4 disabled:opacity-50">
+            {upcomingStartStr > startStr ? 'Ab heute leeren' : 'Woche leeren'}
           </button>
         </div>
       )}
 
       {/* Add / replace sheet */}
       {picker && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm"
-          onClick={e => { if (e.target === e.currentTarget) closePicker() }}>
-          <div className="w-full max-w-md max-h-[90dvh] flex flex-col bg-[#141414] border border-[#2a2a2a] rounded-t-2xl sm:rounded-2xl overflow-hidden shadow-2xl animate-slide-up pb-safe">
-            <div className="flex items-center justify-between pl-4 pr-2 py-2 border-b border-[#222] flex-shrink-0">
-              <div className="min-w-0">
-                <p className="font-semibold text-white">{picker.replaceId ? 'Gericht tauschen' : 'Abendessen planen'}</p>
-                <p className="text-sm text-ink-muted">{fmt(parseISO(picker.date), 'EEEE, d. MMMM')}</p>
-              </div>
-              <button onClick={closePicker} aria-label="Schließen"
-                className={`${iconBtn} text-ink-muted hover:text-white hover:bg-[#222]`}>
-                <X size={18} />
-              </button>
+        // With mouse and keyboard straight into the search; on a phone the
+        // keyboard would cover the quick options, so the sheet itself gets focus.
+        <Sheet onClose={closePicker} initialFocus={finePointer() ? searchRef : undefined}>
+          <SheetHeader
+            title={picker.replaceId ? `Anderes Gericht für ${forDay(picker.date)}` : 'Abendessen planen'}
+            subtitle={fmt(parseISO(picker.date), 'EEEE, d. MMMM')}
+          />
+
+          <div className="p-4 space-y-3 overflow-y-auto overscroll-contain">
+            {/* Replace mode: moving the old dish is its own sheet; for today,
+                Auswärts essen and Bestellen move it to tomorrow on their own */}
+            {picker.replaceId && (() => {
+              const replaced = entries.find(e => e.id === picker.replaceId)
+              if (!replaced) return null
+              return (
+                <div className="px-3 pt-2 pb-0.5 rounded-xl bg-[#1a1a1a] border border-[#262626]">
+                  <p className="text-sm text-ink-soft">Statt {mealName(replaced)}</p>
+                  {picker.date === todayStr && (
+                    <p className="text-xs text-ink-hint">Bei Auswärts essen oder Bestellen rutscht es auf morgen.</p>
+                  )}
+                  <button type="button" onClick={() => { closePicker(); setMoveFor(replaced) }}
+                    className="-ml-1 min-h-[44px] flex items-center gap-1.5 px-1 text-sm font-medium text-primary hover:text-primary-hover">
+                    <CalendarClock size={15} /> Stattdessen verschieben
+                  </button>
+                </div>
+              )
+            })()}
+
+            {/* One field: search the recipes or name a new dish */}
+            <div className="relative">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-hint pointer-events-none" />
+              <input ref={searchRef} placeholder="Gericht suchen oder neu eingeben" aria-label="Gericht suchen oder neu eingeben"
+                value={search} onChange={e => setSearch(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); onSearchEnter() } }}
+                enterKeyHint="search" autoComplete="off"
+                className="pl-9 text-base min-h-[44px]" />
             </div>
 
-            <div className="p-4 space-y-3 overflow-y-auto">
-              {/* Replace mode: keep the old dish by moving it one day later */}
-              {picker.replaceId && (() => {
-                const replaced = entries.find(e => e.id === picker.replaceId)
-                if (!replaced) return null
-                const nextLabel = picker.date === todayStr ? 'morgen' : fmt(addDays(parseISO(picker.date), 1), 'EEEE')
-                const auto = keepOld === null && picker.date === todayStr
-                return (
-                  <label className="flex items-center gap-3 min-h-[44px] px-3 py-2 rounded-xl bg-[#1a1a1a] border border-[#262626] cursor-pointer">
-                    <CalendarClock size={18} className="text-primary flex-shrink-0" />
-                    <span className="flex-1 text-sm text-ink-soft">
-                      {mealName(replaced)} nicht verwerfen, sondern auf {nextLabel} schieben
-                      <span className="block text-xs text-ink-hint">
-                        Der Rest rutscht mit{auto ? ' · bei Auswärts essen oder Bestellen automatisch' : ''}
-                      </span>
-                    </span>
-                    <input type="checkbox" checked={keepOld ?? false} onChange={e => setKeepOld(e.target.checked)}
-                      className="sr-only peer" />
-                    <span aria-hidden className="relative flex-shrink-0 w-11 h-6 rounded-full bg-[#333] peer-checked:bg-primary transition-colors after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5" />
-                  </label>
-                )
-              })()}
+            {/* Quick options */}
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Ohne Rezept">
+              {QUICK_MEALS.map(q => (
+                <button key={q.name} onClick={() => planMeal({ name: q.name, quick: true })} disabled={saving}
+                  className="min-h-[44px] flex items-center gap-1.5 px-3 rounded-full bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm font-medium text-white transition-all disabled:opacity-50">
+                  <span aria-hidden>{q.emoji}</span> {q.name}
+                </button>
+              ))}
+            </div>
 
-              {/* Quick options */}
-              <div className="grid grid-cols-2 gap-2">
-                {QUICK_MEALS.map(q => (
-                  <button key={q.name} onClick={() => planMeal({ name: q.name, quick: true })} disabled={saving}
-                    className="min-h-[44px] flex items-center gap-2 px-3 rounded-xl bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm font-medium text-white text-left transition-all disabled:opacity-50">
-                    <span className="text-lg">{q.emoji}</span> {q.name}
-                  </button>
-                ))}
-              </div>
+            {/* Leftovers for tomorrow */}
+            {nextDayFree && (
+              <label className="flex items-center gap-3 min-h-[44px] px-3 rounded-xl bg-[#1a1a1a] border border-[#262626] cursor-pointer">
+                <span className="text-lg" aria-hidden>🍲</span>
+                <span className="flex-1 text-sm text-ink-soft">
+                  Reste für morgen einplanen
+                  <span className="block text-xs text-ink-hint">{fmt(addDays(parseISO(picker.date), 1), 'EEEE')} ist noch frei</span>
+                </span>
+                <input type="checkbox" checked={addLeftovers} onChange={e => setAddLeftovers(e.target.checked)}
+                  className="sr-only peer" />
+                <span aria-hidden className="relative w-11 h-6 rounded-full bg-[#333] peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary/60 transition-colors after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5" />
+              </label>
+            )}
 
-              {/* Free text: new recipe in Mealie (default) or just a note for the evening */}
-              <div className="space-y-2">
-                <input placeholder="Neues Gericht, z. B. Schnitzel…" value={customName}
-                  onChange={e => setCustomName(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && customName.trim() && createRecipeAndPlan()}
-                  enterKeyHint="done"
-                  className="text-base min-h-[44px]" />
-                {customName.trim() && (
-                  <div className="flex gap-2">
-                    <button onClick={createRecipeAndPlan} disabled={saving || creatingRecipe}
-                      className="flex-1 min-h-[44px] px-3 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-50">
-                      {creatingRecipe ? 'Lege an…' : 'Als Rezept anlegen & planen'}
-                    </button>
-                    <button onClick={() => planMeal({})} disabled={saving || creatingRecipe}
-                      className="min-h-[44px] px-3 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm text-ink-soft flex-shrink-0 transition-all disabled:opacity-50">
-                      Nur Notiz
-                    </button>
-                  </div>
-                )}
-                {customName.trim() && (
-                  <p className="text-xs text-ink-hint">Das Rezept landet in Mealie. Zutaten und Schritte könnt ihr später dort ergänzen.</p>
-                )}
-              </div>
-
-              {/* Leftovers for tomorrow (not when tomorrow gets the old dish) */}
-              {nextDayFree && !keepOld && (
-                <label className="flex items-center gap-3 min-h-[44px] px-3 rounded-xl bg-[#1a1a1a] border border-[#262626] cursor-pointer">
-                  <span className="text-lg">🍲</span>
-                  <span className="flex-1 text-sm text-ink-soft">
-                    Reste für morgen einplanen
-                    <span className="block text-xs text-ink-hint">{fmt(addDays(parseISO(picker.date), 1), 'EEEE')} ist noch frei</span>
-                  </span>
-                  <input type="checkbox" checked={addLeftovers} onChange={e => setAddLeftovers(e.target.checked)}
-                    className="sr-only peer" />
-                  <span aria-hidden className="relative w-11 h-6 rounded-full bg-[#333] peer-checked:bg-primary transition-colors after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5" />
-                </label>
+            {/* Recipes matching the field; a new dish only as the last entries */}
+            <div className="space-y-1">
+              {filteredRecipes.length === 0 && !search.trim() && (
+                <p className="text-center text-ink-muted text-sm py-4">Noch keine Rezepte</p>
               )}
-
-              {/* Recipe search */}
-              <div className="relative">
-                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-hint" />
-                <input placeholder="Rezepte suchen…" value={search} onChange={e => setSearch(e.target.value)}
-                  className="pl-9 text-base min-h-[44px]" />
-              </div>
-              <div className="space-y-1">
-                {filteredRecipes.length === 0 && <p className="text-center text-ink-muted text-sm py-4">Keine Rezepte gefunden</p>}
-                {filteredRecipes.map(r => {
-                  const mins = (r.prep_time || 0) + (r.cook_time || 0)
-                  return (
-                    <button key={r.id} onClick={() => planMeal({ recipeId: r.id })} disabled={saving}
-                      className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-[#1e1e1e] border border-transparent hover:border-[#2a2a2a] text-left transition-all disabled:opacity-50">
-                      <MealThumb recipe={r} size="w-10 h-10" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-white truncate">{r.name}</p>
-                        <p className="text-xs text-ink-hint">
-                          {r.effort === 'quick' ? '⚡ schnell' : r.effort === 'involved' ? 'aufwendig' : r.source === 'mealie' ? 'Mealie' : 'Eigenes Rezept'}
-                          {mins ? ` · ${mins} Min.` : ''}
-                        </p>
-                      </div>
-                      {r.rating ? <StarRating rating={r.rating} size={11} /> : null}
-                    </button>
-                  )
-                })}
-              </div>
+              {filteredRecipes.map(r => {
+                const mins = (r.prep_time || 0) + (r.cook_time || 0)
+                return (
+                  <button key={r.id} onClick={() => planMeal({ recipeId: r.id })} disabled={saving}
+                    className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-[#1e1e1e] border border-transparent hover:border-[#2a2a2a] text-left transition-all disabled:opacity-50">
+                    <MealThumb recipe={r} size="w-10 h-10" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-white truncate">{r.name}</p>
+                      <p className="text-xs text-ink-hint">
+                        {r.effort === 'quick' ? '⚡ schnell' : r.effort === 'involved' ? 'aufwendig' : r.source === 'mealie' ? 'Mealie' : 'Eigenes Rezept'}
+                        {mins ? ` · ${mins} Min.` : ''}
+                      </p>
+                    </div>
+                    {r.rating ? <StarRating rating={r.rating} size={11} /> : null}
+                  </button>
+                )
+              })}
+              {search.trim() && !sameNameRecipe(search) && (
+                <div className="pt-1 space-y-1 border-t border-[#1e1e1e]">
+                  <button onClick={createRecipeAndPlan} disabled={saving || creatingRecipe}
+                    className="w-full min-h-[48px] flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-[#1e1e1e] text-left transition-all disabled:opacity-50">
+                    <span className="w-10 h-10 rounded-lg bg-primary/10 text-primary flex items-center justify-center flex-shrink-0"><Plus size={18} /></span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-sm font-medium text-white truncate">
+                        {creatingRecipe ? 'Lege an…' : `„${search.trim()}“ als neues Rezept anlegen`}
+                      </span>
+                      <span className="block text-xs text-ink-hint">Zutaten und Schritte könnt ihr später ergänzen</span>
+                    </span>
+                  </button>
+                  <button onClick={() => planMeal({})} disabled={saving || creatingRecipe}
+                    className="w-full min-h-[48px] flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-[#1e1e1e] text-left transition-all disabled:opacity-50">
+                    <span className="w-10 h-10 rounded-lg bg-[#1e1e1e] text-ink-muted flex items-center justify-center flex-shrink-0"><StickyNote size={17} /></span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-sm font-medium text-white truncate">„{search.trim()}“ nur als Notiz</span>
+                      <span className="block text-xs text-ink-hint">Nur für diesen Abend, ohne Rezept</span>
+                    </span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
-        </div>
+        </Sheet>
+      )}
+
+      {/* Actions of a planned evening */}
+      {actionsFor && (() => {
+        const e = actionsFor
+        const item = 'w-full min-h-[52px] flex items-center gap-3 px-4 text-left text-[15px] transition-colors hover:bg-[#1c1c1c]'
+        const then = (fn: () => void) => () => { setActionsFor(null); fn() }
+        return (
+          <Sheet onClose={() => setActionsFor(null)} className={sheetPanel('max-w-sm')}>
+            <SheetHeader title={`${relativeWeekday(e.date, todayStr)} · ${mealName(e)}`} />
+            <div className="py-1.5 overflow-y-auto overscroll-contain">
+              {e.recipe_id && (
+                <Link href={`/recipes/${e.recipe_id}`} onClick={() => setActionsFor(null)} className={`${item} text-white`}>
+                  <BookOpen size={18} className="text-ink-muted" /> Rezept ansehen
+                </Link>
+              )}
+              <button type="button" onClick={then(() => openPicker(e.date, e.id))} className={`${item} text-white`}>
+                <ArrowLeftRight size={18} className="text-ink-muted" /> Anderes Gericht
+              </button>
+              <button type="button" onClick={then(() => setMoveFor(e))} className={`${item} text-white`}>
+                <CalendarClock size={18} className="text-ink-muted" /> Verschieben
+              </button>
+              {e.recipe_id && (
+                <button type="button" onClick={then(() => openIngredients(e.date, e.date, 'card'))} className={`${item} text-white`}>
+                  <ShoppingCart size={18} className="text-ink-muted" /> Zutaten einkaufen
+                </button>
+              )}
+              <div className="my-1.5 border-t border-[#222]" />
+              <button type="button" onClick={then(() => removeEntry(e.id))} className={`${item} text-red-300`}>
+                <Trash2 size={18} /> Entfernen
+              </button>
+            </div>
+          </Sheet>
+        )
+      })()}
+
+      {/* Zutaten der Woche, prefiltered to the week on screen or one evening */}
+      {ingredients && (
+        <WeekIngredientsSheet
+          start={ingredients.start}
+          end={ingredients.end}
+          source={ingredients.source}
+          onClose={() => setIngredients(null)}
+        />
       )}
 
       {/* Verschieben sheet */}
@@ -1154,19 +1368,20 @@ export default function PlanPage() {
         />
       )}
 
-      {/* Swipen overlay */}
+      {/* Abstimmen overlay: one sheet whose content changes (each screen returns
+          a <Sheet> at this spot, so the dialog stays open between them).
+          A tap next to it does not end the voting, Escape does. */}
       {funMode && (() => {
         const emptyDays = funDays
 
         if (emptyDays.length === 0) return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-            <div className="bg-[#141414] border border-[#2a2a2a] rounded-2xl p-8 max-w-sm w-full text-center">
-              <div className="text-4xl mb-4">🎉</div>
-              <p className="text-white font-semibold text-lg">Alles geplant!</p>
-              <p className="text-ink-muted text-sm mt-1 mb-6">Diese Woche gibt es nichts mehr zu swipen.</p>
-              <button onClick={closeFunMode} className="min-h-[44px] px-6 rounded-lg bg-primary text-white text-sm font-medium">Fertig</button>
-            </div>
-          </div>
+          <Sheet onClose={closeFunMode} closeOnScrim={false} placement="center"
+            className="bg-[#141414] border border-[#2a2a2a] rounded-2xl p-8 max-w-sm w-full text-center">
+            <div className="text-4xl mb-4">🎉</div>
+            <SheetTitle className="text-white font-semibold text-lg">Alles geplant!</SheetTitle>
+            <p className="text-ink-muted text-sm mt-1 mb-6">Diese Woche gibt es nichts mehr abzustimmen.</p>
+            <button onClick={closeFunMode} className="min-h-[44px] px-6 rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-medium">Fertig</button>
+          </Sheet>
         )
 
         // Results screen after voting all days
@@ -1183,54 +1398,49 @@ export default function PlanPage() {
           })
 
           return (
-            <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm sm:p-4">
-              <div className="w-full max-w-sm bg-[#141414] border border-[#2a2a2a] rounded-t-2xl sm:rounded-2xl overflow-hidden shadow-2xl animate-slide-up max-h-[90dvh] flex flex-col pb-safe">
-                <div className="flex items-center justify-between pl-4 pr-2 py-2 border-b border-[#222] flex-shrink-0">
-                  <p className="font-semibold text-white">Eure Stimmen</p>
-                  <button onClick={closeFunMode} aria-label="Schließen" className={`${iconBtn} text-ink-muted hover:text-white hover:bg-[#222]`}><X size={18} /></button>
-                </div>
-                <div className="overflow-y-auto flex-1 divide-y divide-[#1a1a1a]">
-                  {byDate.map(({ dateStr, day, myNoms, partnerNoms, matchId, confirmed }) => (
-                    <div key={dateStr} className="px-4 py-3">
-                      <p className="text-sm text-ink-muted font-medium mb-2">{fmt(day, 'EEEE, d. MMMM')}</p>
-                      {confirmed ? (
-                        <div className="flex items-center gap-2 text-green-400 text-sm">
-                          <span>✓</span>
-                          <span className="font-medium">{mealName(confirmed)}</span>
-                        </div>
-                      ) : myNoms.length === 0 && partnerNoms.length === 0 ? (
-                        <p className="text-sm text-ink-hint">Noch keine Stimmen für diesen Tag</p>
-                      ) : matchId ? (
-                        <div className="flex items-center gap-2 text-pink-400 text-sm">
-                          <Heart size={12} className="fill-pink-400 flex-shrink-0" />
-                          <span className="font-medium">{myNoms.find(n => n.recipe_id === matchId)?.recipe?.name}</span>
-                          <span className="text-xs text-ink-muted">Match!</span>
-                        </div>
-                      ) : (
-                        <div className="space-y-2">
-                          <p className="text-xs text-amber-300">Kein Match – wählt eins:</p>
-                          {[...myNoms, ...partnerNoms.filter(n => !myNoms.find(m => m.recipe_id === n.recipe_id))].slice(0, 4).map(n => (
-                            <button key={n.id} onClick={() => resolveConflict(dateStr, n.recipe_id)}
-                              className="w-full min-h-[44px] flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-left transition-all">
-                              <MealThumb recipe={n.recipe} size="w-8 h-8" />
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm text-white font-medium truncate">{n.recipe?.name}</p>
-                                <p className="text-xs text-ink-hint">
-                                  {myNoms.find(m => m.recipe_id === n.recipe_id) ? 'deine Wahl' : `Wahl von ${partner}`}
-                                </p>
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <div className="px-4 py-3 border-t border-[#1a1a1a] flex-shrink-0">
-                  <button onClick={closeFunMode} className="w-full min-h-[44px] rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-all">Fertig</button>
-                </div>
+            <Sheet onClose={closeFunMode} closeOnScrim={false} className={sheetPanel('max-w-sm')}>
+              <SheetHeader title="Eure Stimmen" />
+              <div className="overflow-y-auto overscroll-contain flex-1 divide-y divide-[#1a1a1a]">
+                {byDate.map(({ dateStr, day, myNoms, partnerNoms, matchId, confirmed }) => (
+                  <div key={dateStr} className="px-4 py-3">
+                    <p className="text-sm text-ink-muted font-medium mb-2">{fmt(day, 'EEEE, d. MMMM')}</p>
+                    {confirmed ? (
+                      <div className="flex items-center gap-2 text-green-400 text-sm">
+                        <span>✓</span>
+                        <span className="font-medium">{mealName(confirmed)}</span>
+                      </div>
+                    ) : myNoms.length === 0 && partnerNoms.length === 0 ? (
+                      <p className="text-sm text-ink-hint">Noch keine Stimmen für diesen Tag</p>
+                    ) : matchId ? (
+                      <div className="flex items-center gap-2 text-pink-400 text-sm">
+                        <Heart size={12} className="fill-pink-400 flex-shrink-0" />
+                        <span className="font-medium">{myNoms.find(n => n.recipe_id === matchId)?.recipe?.name}</span>
+                        <span className="text-xs text-ink-muted">Match!</span>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <p className="text-xs text-amber-300">Kein Match, wählt eins:</p>
+                        {[...myNoms, ...partnerNoms.filter(n => !myNoms.find(m => m.recipe_id === n.recipe_id))].slice(0, 4).map(n => (
+                          <button key={n.id} onClick={() => resolveConflict(dateStr, n.recipe_id)}
+                            className="w-full min-h-[44px] flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-left transition-all">
+                            <MealThumb recipe={n.recipe} size="w-8 h-8" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm text-white font-medium truncate">{n.recipe?.name}</p>
+                              <p className="text-xs text-ink-hint">
+                                {myNoms.find(m => m.recipe_id === n.recipe_id) ? 'deine Wahl' : `Wahl von ${partner}`}
+                              </p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
-            </div>
+              <div className="px-4 py-3 border-t border-[#1a1a1a] flex-shrink-0">
+                <button onClick={closeFunMode} className="w-full min-h-[44px] rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-medium transition-all">Fertig</button>
+              </div>
+            </Sheet>
           )
         }
 
@@ -1239,39 +1449,45 @@ export default function PlanPage() {
         const dateStr = ds(currentDay)
         const cards = getCardsForDate(dateStr)
         const recipe = cards[funCardIndex]
+        // After voting on a day: has the partner voted there too? (Only "Ja" is stored.)
+        const statusDate = votedDates.includes(dateStr) ? dateStr : votedDates[votedDates.length - 1]
+        const partnerYes = statusDate ? nominations.filter(n => n.date === statusDate && n.user_name !== currentUser).length : 0
+        const partnerStatus = !statusDate ? null
+          : `${statusDate === dateStr ? '' : `${fmt(parseISO(statusDate), 'EEEE')}: `}${partnerYes > 0
+            ? `${partner} hat schon abgestimmt (${partnerYes}× Ja)`
+            : `Von ${partner} noch kein Ja für diesen Abend`}`
 
         return (
-          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm">
-            <div className="w-full max-w-sm bg-[#141414] border border-[#2a2a2a] rounded-t-2xl sm:rounded-2xl overflow-hidden shadow-2xl animate-slide-up pb-safe">
-              <div className="flex items-center justify-between pl-4 pr-2 py-2 border-b border-[#222]">
-                <div>
-                  <p className="text-xs text-ink-muted font-medium">
-                    Tag {funDayIndex + 1}/{emptyDays.length} · Karte {funCardIndex + 1}/{CARDS_PER_DAY}
-                  </p>
-                  <p className="text-sm font-semibold text-white">{fmt(currentDay, 'EEEE, d. MMMM')}</p>
-                </div>
-                <button onClick={closeFunMode} aria-label="Schließen" className={`${iconBtn} text-ink-muted hover:text-white hover:bg-[#222]`}>
-                  <X size={18} />
-                </button>
+          <Sheet onClose={closeFunMode} closeOnScrim={false} className={sheetPanel('max-w-sm')}>
+            <div className="flex items-center justify-between pl-4 pr-2 py-2 border-b border-[#222] flex-shrink-0">
+              <div>
+                <p className="text-xs text-ink-muted font-medium">
+                  Tag {funDayIndex + 1}/{emptyDays.length} · Karte {Math.min(funCardIndex + 1, cards.length)}/{cards.length}
+                </p>
+                <SheetTitle className="text-sm font-semibold text-white">{fmt(currentDay, 'EEEE, d. MMMM')}</SheetTitle>
               </div>
+              <SheetClose />
+            </div>
 
-              <div className="flex gap-1 px-4 pt-2">
-                {cards.map((_, i) => (
-                  <div key={i} className={`h-1 flex-1 rounded-full transition-all ${
-                    i < funCardIndex ? 'bg-primary' : i === funCardIndex ? 'bg-primary/50' : 'bg-[#2a2a2a]'
-                  }`} />
-                ))}
-              </div>
+            <div className="flex gap-1 px-4 pt-2">
+              {cards.map((_, i) => (
+                <div key={i} className={`h-1 flex-1 rounded-full transition-all ${
+                  i < funCardIndex ? 'bg-primary' : i === funCardIndex ? 'bg-primary/50' : 'bg-[#2a2a2a]'
+                }`} />
+              ))}
+            </div>
 
-              {recipe ? (
-                <>
+            {recipe ? (
+              <>
+                {/* Swipe right for Ja, left for Nein; the buttons below do the same */}
+                <SwipeCard key={`${dateStr}-${recipe.id}`} onVote={yes => funVote(recipe, yes)}>
                   {recipe.image_url ? (
-                    <div className="relative h-48 overflow-hidden mt-2">
-                      <Image src={recipe.image_url} alt="" fill className="object-cover" unoptimized />
+                    <div className="relative h-48 overflow-hidden">
+                      <Image src={recipe.image_url} alt="" fill className="object-cover" unoptimized draggable={false} />
                       <div className="absolute inset-0 bg-gradient-to-t from-[#141414] via-transparent to-transparent" />
                     </div>
                   ) : (
-                    <div className="h-28 mt-2 bg-[#1a1a1a] flex items-center justify-center text-5xl">🍽️</div>
+                    <div className="h-28 bg-[#1a1a1a] flex items-center justify-center text-5xl" aria-hidden>🍽️</div>
                   )}
                   <div className="px-4 py-3">
                     <p className="text-base font-semibold text-white leading-tight">{recipe.name}</p>
@@ -1281,23 +1497,27 @@ export default function PlanPage() {
                       {recipe.rating ? <StarRating rating={recipe.rating} size={12} /> : null}
                     </div>
                   </div>
+                </SwipeCard>
 
-                  <div className="px-4 pb-4 grid grid-cols-2 gap-3">
-                    <button onClick={() => funVote(recipe, false)}
-                      className="min-h-[52px] flex items-center justify-center gap-2 rounded-xl bg-[#1c1c1c] hover:bg-red-500/10 border border-[#2a2a2a] hover:border-red-500/30 text-ink-soft hover:text-red-400 transition-all text-base font-medium">
-                      <XCircle size={18} /> Nein
-                    </button>
-                    <button onClick={() => funVote(recipe, true)}
-                      className="min-h-[52px] flex items-center justify-center gap-2 rounded-xl border bg-green-500/15 border-green-500/30 text-green-400 hover:bg-green-500/25 transition-all text-base font-medium">
-                      <Heart size={18} /> Ja!
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <p className="px-4 py-8 text-center text-sm text-ink-muted">Keine Rezepte vorhanden.</p>
-              )}
-            </div>
-          </div>
+                {partnerStatus && (
+                  <p role="status" className="px-4 pb-2 text-xs text-ink-muted">{partnerStatus}</p>
+                )}
+
+                <div className="px-4 pb-4 grid grid-cols-2 gap-3">
+                  <button onClick={() => funVote(recipe, false)}
+                    className="min-h-[52px] flex items-center justify-center gap-2 rounded-xl bg-[#1c1c1c] hover:bg-red-500/10 border border-[#2a2a2a] hover:border-red-500/30 text-ink-soft hover:text-red-400 transition-all text-base font-medium">
+                    <XCircle size={18} /> Nein
+                  </button>
+                  <button onClick={() => funVote(recipe, true)}
+                    className="min-h-[52px] flex items-center justify-center gap-2 rounded-xl border bg-green-500/15 border-green-500/30 text-green-400 hover:bg-green-500/25 transition-all text-base font-medium">
+                    <Heart size={18} /> Ja!
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p className="px-4 py-8 text-center text-sm text-ink-muted">Keine Rezepte vorhanden.</p>
+            )}
+          </Sheet>
         )
       })()}
 
@@ -1315,128 +1535,89 @@ export default function PlanPage() {
           ...partnerNoms.filter(n => !myNoms.find(m => m.recipe_id === n.recipe_id)),
         ].filter((n, i, arr) => arr.findIndex(x => x.recipe_id === n.recipe_id) === i)
         return (
-          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/70 backdrop-blur-sm"
-            onClick={e => { if (e.target === e.currentTarget) setSettleDate(null) }}>
-            <div className="w-full max-w-sm bg-[#141414] border border-[#2a2a2a] rounded-t-2xl sm:rounded-2xl overflow-hidden shadow-2xl animate-slide-up pb-safe">
-              <div className="flex items-center justify-between pl-4 pr-2 py-2 border-b border-[#222]">
-                <div>
-                  <p className="font-semibold text-white">
-                    {matchNom ? '❤️ Ihr mögt beide' : '⚖️ Kein Match – wählt eins'}
-                  </p>
-                  <p className="text-sm text-ink-muted">{fmt(parseISO(settleDate), 'EEEE, d. MMMM')}</p>
-                </div>
-                <button onClick={() => setSettleDate(null)} aria-label="Schließen" className={`${iconBtn} text-ink-muted hover:text-white hover:bg-[#222]`}>
-                  <X size={18} />
-                </button>
-              </div>
-              <div className="p-4 space-y-2">
-                {allPicks.map(n => {
-                  const isMine = !!myNoms.find(m => m.recipe_id === n.recipe_id)
-                  const isMatch = isMine && partnerIds.has(n.recipe_id)
-                  return (
-                    <button key={n.recipe_id} onClick={() => resolveConflict(settleDate, n.recipe_id)}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-left transition-all ${
-                        isMatch
-                          ? 'bg-pink-500/15 border-pink-500/30 hover:bg-pink-500/25'
-                          : 'bg-[#1c1c1c] border-[#2a2a2a] hover:bg-[#252525]'
-                      }`}>
-                      <MealThumb recipe={n.recipe} size="w-10 h-10" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm text-white font-medium truncate">{n.recipe?.name}</p>
-                        <p className="text-xs text-ink-hint">
-                          {isMatch ? '❤️ ihr beide' : isMine ? 'deine Wahl' : `Wahl von ${partner}`}
-                        </p>
-                      </div>
-                      {isMatch && <Heart size={14} className="text-pink-400 fill-pink-400 flex-shrink-0" />}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          </div>
-        )
-      })()}
-
-      {/* Swipen: day picker */}
-      {funDayPicker && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm"
-          onClick={e => { if (e.target === e.currentTarget) setFunDayPicker(false) }}>
-          <div className="w-full max-w-sm bg-[#141414] border border-[#2a2a2a] rounded-t-2xl sm:rounded-2xl overflow-hidden shadow-2xl animate-slide-up pb-safe">
-            <div className="flex items-center justify-between pl-4 pr-2 py-2 border-b border-[#222]">
-              <div>
-                <p className="font-semibold text-white">Swipen</p>
-                <p className="text-sm text-ink-muted">Für welche Abende?</p>
-              </div>
-              <button onClick={() => setFunDayPicker(false)} aria-label="Schließen"
-                className={`${iconBtn} text-ink-muted hover:text-white hover:bg-[#222]`}>
-                <X size={18} />
-              </button>
-            </div>
-            <div className="p-4 space-y-2">
-              {days.map(day => {
-                const s = ds(day)
-                const hasEntry = !!entries.find(e => e.date === s)
-                const isPast = s < todayStr
-                const disabled = hasEntry || isPast
-                const selected = funSelectedDates.has(s)
+          <Sheet onClose={() => setSettleDate(null)} className={sheetPanel('max-w-sm')}>
+            <SheetHeader
+              title={matchNom ? '❤️ Ihr mögt beide' : '⚖️ Kein Match, wählt eins'}
+              subtitle={fmt(parseISO(settleDate), 'EEEE, d. MMMM')}
+            />
+            <div className="p-4 space-y-2 overflow-y-auto overscroll-contain">
+              {allPicks.map(n => {
+                const isMine = !!myNoms.find(m => m.recipe_id === n.recipe_id)
+                const isMatch = isMine && partnerIds.has(n.recipe_id)
                 return (
-                  <button
-                    key={s}
-                    onClick={() => {
-                      if (disabled) return
-                      setFunSelectedDates(prev => {
-                        const next = new Set(prev)
-                        if (next.has(s)) next.delete(s)
-                        else next.add(s)
-                        return next
-                      })
-                    }}
-                    disabled={disabled}
-                    aria-pressed={selected}
-                    className={`w-full min-h-[44px] flex items-center justify-between px-3 rounded-xl border transition-all ${
-                      disabled
-                        ? 'border-[#1e1e1e] bg-[#0f0f0f] opacity-40 cursor-not-allowed'
-                        : selected
-                          ? 'border-primary/50 bg-primary/10 text-white'
-                          : 'border-[#2a2a2a] bg-[#1a1a1a] text-ink-soft hover:text-white hover:border-[#333]'
-                    }`}
-                  >
-                    <span className="text-sm font-medium">{fmt(day, 'EEEE')}</span>
-                    <span className="text-xs text-ink-muted">
-                      {hasEntry ? 'schon geplant' : isPast ? 'vorbei' : fmt(day, 'd. MMM')}
-                    </span>
+                  <button key={n.recipe_id} onClick={() => resolveConflict(settleDate, n.recipe_id)}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-left transition-all ${
+                      isMatch
+                        ? 'bg-pink-500/15 border-pink-500/30 hover:bg-pink-500/25'
+                        : 'bg-[#1c1c1c] border-[#2a2a2a] hover:bg-[#252525]'
+                    }`}>
+                    <MealThumb recipe={n.recipe} size="w-10 h-10" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-white font-medium truncate">{n.recipe?.name}</p>
+                      <p className="text-xs text-ink-hint">
+                        {isMatch ? '❤️ ihr beide' : isMine ? 'deine Wahl' : `Wahl von ${partner}`}
+                      </p>
+                    </div>
+                    {isMatch && <Heart size={14} className="text-pink-400 fill-pink-400 flex-shrink-0" />}
                   </button>
                 )
               })}
             </div>
-            <div className="p-4 pt-0">
-              <button
-                onClick={startFunMode}
-                disabled={funSelectedDates.size === 0}
-                className="w-full min-h-[48px] rounded-xl bg-primary hover:bg-primary-hover text-white text-base font-semibold transition-all disabled:opacity-40"
-              >
-                Los geht&apos;s – {abende(funSelectedDates.size)} 🎲
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          </Sheet>
+        )
+      })()}
 
-      {/* Toast */}
-      {toast && (
-        // Centred by a full-width wrapper: the slide-up animation sets `transform`,
-        // which would otherwise cancel a translate-based centring.
-        <div className="fixed inset-x-0 bottom-24 md:bottom-6 md:left-56 z-[60] flex justify-center px-4 pointer-events-none">
-          <div role="status" className="pointer-events-auto flex items-center gap-2 pl-4 pr-1.5 min-h-[44px] max-w-full bg-[#1e1e1e] border border-[#333] rounded-full text-sm text-white shadow-xl animate-slide-up whitespace-nowrap">
-            <span className={`truncate ${toast.action ? '' : 'pr-2.5'}`}>{toast.msg}</span>
-            {toast.action && (
-              <button onClick={toast.action.onClick}
-                className="min-h-[40px] px-3 rounded-full text-primary font-semibold hover:bg-white/5 transition-colors flex-shrink-0">
-                {toast.action.label}
-              </button>
-            )}
+      {/* Abstimmen: day picker */}
+      {funDayPicker && (
+        <Sheet onClose={() => setFunDayPicker(false)} className={sheetPanel('max-w-sm')}>
+          <SheetHeader title="Abstimmen" subtitle="Für welche Abende?" />
+          <div className="p-4 space-y-2 overflow-y-auto overscroll-contain">
+            {days.map(day => {
+              const s = ds(day)
+              const hasEntry = !!entries.find(e => e.date === s)
+              const isPast = s < todayStr
+              const disabled = hasEntry || isPast
+              const selected = funSelectedDates.has(s)
+              return (
+                <button
+                  key={s}
+                  onClick={() => {
+                    if (disabled) return
+                    setFunSelectedDates(prev => {
+                      const next = new Set(prev)
+                      if (next.has(s)) next.delete(s)
+                      else next.add(s)
+                      return next
+                    })
+                  }}
+                  disabled={disabled}
+                  aria-pressed={selected}
+                  className={`w-full min-h-[44px] flex items-center justify-between px-3 rounded-xl border transition-all ${
+                    disabled
+                      ? 'border-[#1e1e1e] bg-[#0f0f0f] opacity-40 cursor-not-allowed'
+                      : selected
+                        ? 'border-primary/50 bg-primary/10 text-white'
+                        : 'border-[#2a2a2a] bg-[#1a1a1a] text-ink-soft hover:text-white hover:border-[#333]'
+                  }`}
+                >
+                  <span className="text-sm font-medium">{fmt(day, 'EEEE')}</span>
+                  <span className="text-xs text-ink-muted">
+                    {hasEntry ? 'schon geplant' : isPast ? 'vorbei' : fmt(day, 'd. MMM')}
+                  </span>
+                </button>
+              )
+            })}
           </div>
-        </div>
+          <div className="p-4 pt-0">
+            <button
+              onClick={startFunMode}
+              disabled={funSelectedDates.size === 0}
+              className="w-full min-h-[48px] rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none"
+            >
+              Los geht&apos;s: {abende(funSelectedDates.size)}
+            </button>
+          </div>
+        </Sheet>
       )}
     </div>
   )

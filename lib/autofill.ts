@@ -41,7 +41,7 @@ export function autofillRange(
     return { ok: false, error: `Keine Rezepte mit der Kategorie „${dinnerCategory}“ – Kategorie in den Einstellungen ändern oder Rezepte zuordnen` }
   }
 
-  // Rating 1 is always out; rating 2 only while enough others remain.
+  // "Nicht nochmal" is always out; rating 1 or 2 only while enough others remain.
   const candidates = autofillCandidates(recipes, emptyDates.length)
   if (candidates.length === 0) return { ok: false, error: 'Keine passenden Rezepte zum Auffüllen gefunden' }
 

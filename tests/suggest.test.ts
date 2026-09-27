@@ -11,8 +11,13 @@ const FRIDAY = '2026-09-25'
 const MONDAY = '2026-09-28'
 
 describe('pickSuggestions', () => {
-  it('never suggests rating 1', () => {
-    expect(ids(pickSuggestions([r('bad', 1), r('ok')], [], { today: FRIDAY, count: 3, random: noRandom }))).toEqual(['ok'])
+  it('never suggests recipes marked "nicht nochmal"', () => {
+    const recipes = [{ ...r('bad', 4), never_again: true }, r('ok')]
+    expect(ids(pickSuggestions(recipes, [], { today: FRIDAY, count: 3, random: noRandom }))).toEqual(['ok'])
+  })
+
+  it('treats one star as a low rating, not as a block', () => {
+    expect(ids(pickSuggestions([r('low', 1), r('ok')], [], { today: FRIDAY, count: 3, random: noRandom }))).toEqual(['ok', 'low'])
   })
 
   it('prefers rating ≥ 4, then unrated, then middling', () => {

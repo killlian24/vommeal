@@ -6,7 +6,8 @@ import {
 } from '@/lib/db'
 import { getHomeAssistantConfig } from '@/lib/config'
 import { categorize } from '@/lib/categorize'
-import { normalizeShoppingText, removeActiveHAItemsForLocalItems } from '@/lib/ha'
+import { removeActiveHAItemsForLocalItems } from '@/lib/ha'
+import { mergeKey } from '@/lib/shoppingKey'
 import { getAddedMealIds, markMealsAdded, unmarkMeals } from '@/lib/shoppingMeals'
 import { randomUUID } from 'crypto'
 import { format, startOfWeek, addDays } from 'date-fns'
@@ -143,11 +144,6 @@ function endOfNextWeekStr(): string {
 }
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
-
-/** Merge key for an ingredient / shopping row name. */
-function mergeKey(name: string): string {
-  return normalizeShoppingText(name)
-}
 
 /**
  * Validate a request body / restore payload into a full shopping item, or null if it has no name.
@@ -633,6 +629,12 @@ export async function POST(req: NextRequest) {
   if (!single) return NextResponse.json({ error: 'Name fehlt' }, { status: 400 })
   if (getShoppingItemById(single.item.id)) {
     return NextResponse.json({ error: 'Eintrag existiert bereits' }, { status: 409 })
+  }
+  // Typed by hand while an open row with the same name (or its singular /
+  // plural) is on the list: no second row, the client says "steht schon drauf".
+  if (single.item.source === 'manual' && !single.item.checked) {
+    const existing = uncheckedByKey(getAllShoppingItems()).get(mergeKey(single.item.name))
+    if (existing) return NextResponse.json({ ...withSources([existing])[0], duplicate: true }, { status: 200 })
   }
   let item: ShoppingItem
   try {

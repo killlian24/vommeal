@@ -10,6 +10,8 @@ export type SuggestRecipe = {
   id: string
   rating: number | null
   effort?: 'quick' | 'involved' | null
+  /** "Nicht nochmal": never suggested. */
+  never_again?: boolean
 }
 
 export type SuggestEntry = { date: string; recipe_id: string | null }
@@ -31,7 +33,7 @@ export function inDinnerCategory<T extends { tags?: string[] }>(recipes: T[], ca
   return recipes.filter(r => (r.tags ?? []).some(t => t.toLowerCase() === c))
 }
 
-// Rating ≥ 4 first, then unrated, then the middling ones. Rating 1 never gets here.
+// Rating ≥ 4 first, then unrated, then the low ones (1 to 3).
 function ratingScore(rating: number | null): number {
   if (rating == null) return 2
   if (rating >= 4) return 3
@@ -40,7 +42,7 @@ function ratingScore(rating: number | null): number {
 
 /**
  * Picks `count` recipes to cook on `today` (YYYY-MM-DD):
- * - never rating 1 ("nicht nochmal")
+ * - never recipes marked "nicht nochmal" (never_again); one star is only a low rating
  * - nothing cooked in the last 21 days or already planned for today and the next 3 days
  * - prefers rating ≥ 4, then unrated; Mon–Thu prefers quick recipes
  * - slight randomness (injectable `random` for tests); `exclude` skips what
@@ -69,7 +71,7 @@ export function pickSuggestions<T extends SuggestRecipe>(
     if (!prev || e.date > prev) lastCooked.set(e.recipe_id, e.date)
   }
 
-  const allowed = recipes.filter(r => r.rating !== 1 && !planned.has(r.id))
+  const allowed = recipes.filter(r => !r.never_again && !planned.has(r.id))
   const fresh = allowed.filter(r => (lastCooked.get(r.id) ?? '') < recentStart)
 
   const score = (r: T) => {

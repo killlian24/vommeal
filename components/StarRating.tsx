@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 type Props = {
   rating: number | null
@@ -12,16 +12,29 @@ type Props = {
 
 export function StarRating({ rating, max = 5, size = 12, editable = false, onChange }: Props) {
   const [hovered, setHovered] = useState<number | null>(null)
+  const buttons = useRef<(HTMLButtonElement | null)[]>([])
 
   const active = hovered ?? rating ?? 0
 
   if (!editable && (!rating || rating === 0)) return null
 
+  // Editable: a radio group, arrow keys move and rate (one tab stop)
+  const current = rating ?? 0
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const step = e.key === 'ArrowRight' || e.key === 'ArrowUp' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowDown' ? -1 : 0
+    if (!step || !onChange) return
+    e.preventDefault()
+    const next = Math.min(max, Math.max(1, (current || (step > 0 ? 0 : max + 1)) + step))
+    if (next !== current) onChange(next)
+    buttons.current[next - 1]?.focus()
+  }
+
   return (
     <span
       className="inline-flex items-center gap-px"
-      role={editable ? 'group' : 'img'}
+      role={editable ? 'radiogroup' : 'img'}
       aria-label={editable ? 'Bewertung' : `${rating} von ${max} Sternen`}
+      onKeyDown={editable ? onKeyDown : undefined}
     >
       {Array.from({ length: max }, (_, i) => {
         const val = i + 1
@@ -44,8 +57,14 @@ export function StarRating({ rating, max = 5, size = 12, editable = false, onCha
         return (
           <button
             key={i}
+            ref={el => { buttons.current[i] = el }}
             type="button"
-            aria-label={val === rating ? 'Bewertung entfernen' : `${val} ${val === 1 ? 'Stern' : 'Sterne'} vergeben`}
+            role="radio"
+            aria-checked={val === current}
+            tabIndex={val === (current || 1) ? 0 : -1}
+            aria-label={`${val} von ${max} ${max === 1 ? 'Stern' : 'Sternen'}`}
+            // Tapping the current rating again removes it
+            title={val === current ? 'Nochmal tippen: Bewertung entfernen' : undefined}
             // At least 40 px touch area per star; the negative margins keep the
             // visual spacing tight while the hit areas overlap slightly.
             className="p-2.5 -mx-1 -my-2 rounded focus-visible:outline-primary"

@@ -35,8 +35,9 @@ export async function GET(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const { start, end } = requireDateRange(new URL(req.url).searchParams)
-    deleteNominationsForRange(start, end)
-    return NextResponse.json({ ok: true })
+    // The removed rows let the client offer an undo.
+    const removed = deleteNominationsForRange(start, end)
+    return NextResponse.json({ ok: true, removed })
   } catch (e) { return errorResponse(e) }
 }
 

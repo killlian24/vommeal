@@ -17,15 +17,16 @@ export async function POST(req: NextRequest) {
     if (body.days !== 1 && body.days !== -1) throw new ValidationError('days must be 1 or -1')
     const days = body.days
 
+    const by = optionalString(body.suggested_by, 'suggested_by', LIMITS.userName)
     let fill: { id: string; name: string; suggested_by: string } | null = null
     if (body.fill !== undefined && body.fill !== null && body.fill !== '') {
       if (days !== 1) throw new ValidationError('fill ist nur beim Verschieben nach hinten möglich')
       const name = QUICK_MEALS.find(q => q.name === body.fill)?.name
       if (!name) throw new ValidationError(`fill must be one of: ${QUICK_MEALS.map(q => q.name).join(', ')}`)
-      fill = { id: randomUUID(), name, suggested_by: optionalString(body.suggested_by, 'suggested_by', LIMITS.userName) }
+      fill = { id: randomUUID(), name, suggested_by: by }
     }
 
-    const result = shiftMealPlan(from, days, fill)
+    const result = shiftMealPlan(from, days, fill, by)
     if (!result.ok) throw new ValidationError(result.error)
     return NextResponse.json({ moves: result.moves, filled: result.filled })
   } catch (e) { return errorResponse(e) }

@@ -124,9 +124,19 @@ function migrate(db: Database.Database) {
   for (const col of ['status TEXT NOT NULL DEFAULT \'approved\'', 'suggested_by TEXT NOT NULL DEFAULT \'\'']) {
     try { db.exec(`ALTER TABLE meal_plan ADD COLUMN ${col}`) } catch { /* already exists */ }
   }
+  // When and by whom an evening last changed (planned, replaced, moved), so
+  // the partner's phone can mark it as new. created_at stays on replace.
+  try { db.exec('ALTER TABLE meal_plan ADD COLUMN updated_at TEXT') } catch { /* already exists */ }
+  try { db.exec("ALTER TABLE meal_plan ADD COLUMN updated_by TEXT NOT NULL DEFAULT ''") } catch { /* already exists */ }
+  try {
+    db.exec("UPDATE meal_plan SET updated_at = COALESCE(created_at, datetime('now')), updated_by = suggested_by WHERE updated_at IS NULL")
+  } catch { /* best-effort backfill */ }
   try { db.exec('ALTER TABLE recipes ADD COLUMN rating INTEGER') } catch { /* already exists */ }
   // Local-only effort flag ('quick' | 'involved' | NULL); never touched by Mealie sync.
   try { db.exec('ALTER TABLE recipes ADD COLUMN effort TEXT') } catch { /* already exists */ }
+  // Local-only "Nicht nochmal" flag: keeps a recipe out of suggestions and
+  // autofill. Separate from the rating, so one star is just a rating.
+  try { db.exec('ALTER TABLE recipes ADD COLUMN never_again INTEGER NOT NULL DEFAULT 0') } catch { /* already exists */ }
   try { db.exec("ALTER TABLE shopping_list ADD COLUMN recipe_names TEXT DEFAULT '[]'") } catch { /* already exists */ }
   try { db.exec("ALTER TABLE shopping_list ADD COLUMN meal_plan_ids TEXT DEFAULT '[]'") } catch { /* already exists */ }
   try { db.exec('ALTER TABLE shopping_list ADD COLUMN ha_uid TEXT') } catch { /* already exists */ }
@@ -154,6 +164,12 @@ function migrate(db: Database.Database) {
   // One-time: the suggest/approve flow is gone, every plan entry is approved.
   runOnce(db, 'migration_approve_all_v1', () => {
     db.prepare("UPDATE meal_plan SET status = 'approved' WHERE status <> 'approved'").run()
+  })
+
+  // One-time: rating 1 used to mean "nicht nochmal". Keep those recipes
+  // blocked through the explicit flag; from now on a star is only a rating.
+  runOnce(db, 'migration_never_again_v1', () => {
+    db.prepare('UPDATE recipes SET never_again = 1 WHERE rating = 1').run()
   })
 
   // One-time: shopping items remember every meal/recipe they came from
@@ -277,6 +293,8 @@ export type Recipe = {
   source: 'local' | 'mealie'
   rating: number | null
   effort: RecipeEffort | null
+  /** "Nicht nochmal": never suggested or autofilled. Local only. */
+  never_again: boolean
   created_at: string
   updated_at: string
 }
@@ -318,6 +336,7 @@ function parseRecipe(row: Record<string, unknown>): Recipe {
     instructions: JSON.parse(row.instructions as string || '[]'),
     image_url: publicImageUrl(row.id as string, row.image_url),
     effort: parseEffort(row.effort),
+    never_again: !!row.never_again,
   }
 }
 
@@ -389,6 +408,10 @@ export function updateRecipeRating(id: string, rating: number | null) {
   getDb().prepare("UPDATE recipes SET rating = ?, updated_at = datetime('now') WHERE id = ?").run(rating, id)
 }
 
+export function updateRecipeNeverAgain(id: string, neverAgain: boolean) {
+  getDb().prepare("UPDATE recipes SET never_again = ?, updated_at = datetime('now') WHERE id = ?").run(neverAgain ? 1 : 0, id)
+}
+
 export function updateRecipeEffort(id: string, effort: RecipeEffort | null) {
   getDb().prepare("UPDATE recipes SET effort = ?, updated_at = datetime('now') WHERE id = ?").run(effort, id)
 }
@@ -455,8 +478,15 @@ export type MealPlanEntry = {
   status: 'suggested' | 'approved'
   suggested_by: string
   created_at: string
+  /** Last plan, replace or move ("YYYY-MM-DD HH:MM:SS.SSS", UTC). */
+  updated_at?: string
+  /** Who made that change; '' when unknown (e.g. a move from an older client). */
+  updated_by?: string
   recipe?: Recipe
 }
+
+/** SQLite expression for "now" with milliseconds, same format as datetime('now') plus ".SSS". */
+const NOW_MS = "strftime('%Y-%m-%d %H:%M:%f', 'now')"
 
 /** Recipe summary from a `recipe_*` column join (meal plan, nominations). */
 function joinedRecipe(row: Record<string, unknown>): Recipe {
@@ -474,6 +504,7 @@ function joinedRecipe(row: Record<string, unknown>): Recipe {
     source: row.recipe_source as 'local' | 'mealie',
     rating: row.recipe_rating as number | null,
     effort: parseEffort(row.recipe_effort),
+    never_again: !!row.recipe_never_again,
   } as Recipe
 }
 
@@ -483,7 +514,7 @@ export function getMealPlanRange(startDate: string, endDate: string): MealPlanEn
     SELECT mp.*, r.name as recipe_name, r.image_url as recipe_image,
            r.tags as recipe_tags, r.prep_time, r.cook_time, r.servings as recipe_servings,
            r.mealie_id, r.mealie_slug, r.source as recipe_source, r.rating as recipe_rating,
-           r.effort as recipe_effort
+           r.effort as recipe_effort, r.never_again as recipe_never_again
     FROM meal_plan mp
     LEFT JOIN recipes r ON mp.recipe_id = r.id
     WHERE mp.date BETWEEN ? AND ? AND mp.meal_type = 'dinner'
@@ -501,11 +532,15 @@ export function getMealPlanRange(startDate: string, endDate: string): MealPlanEn
     status: 'approved' as const,
     suggested_by: row.suggested_by as string || '',
     created_at: row.created_at as string,
+    updated_at: (row.updated_at as string | null) || (row.created_at as string),
+    updated_by: (row.updated_by as string | null) ?? '',
     recipe: row.recipe_id ? joinedRecipe(row) : undefined,
   }))
 }
 
-export function addMealPlanEntry(entry: Omit<MealPlanEntry, 'created_at' | 'recipe'>): MealPlanEntry {
+type NewMealPlanEntry = Omit<MealPlanEntry, 'created_at' | 'updated_at' | 'updated_by' | 'recipe'>
+
+export function addMealPlanEntry(entry: NewMealPlanEntry): MealPlanEntry {
   const db = getDb()
   db.transaction(() => {
     const existing = db.prepare(`
@@ -519,28 +554,72 @@ export function addMealPlanEntry(entry: Omit<MealPlanEntry, 'created_at' | 'reci
       db.prepare(`
         UPDATE meal_plan SET
           id = ?, recipe_id = ?, custom_meal_name = ?, servings = ?,
-          notes = ?, status = ?, suggested_by = ?
+          notes = ?, status = ?, suggested_by = ?,
+          updated_at = ${NOW_MS}, updated_by = ?
         WHERE id = ?
       `).run(
         entry.id, entry.recipe_id ?? null, entry.custom_meal_name ?? null,
         entry.servings, entry.notes ?? '', 'approved',
-        entry.suggested_by ?? '', existing.id
+        entry.suggested_by ?? '', entry.suggested_by ?? '', existing.id
       )
     } else {
       db.prepare(`
-        INSERT INTO meal_plan (id, date, meal_type, recipe_id, custom_meal_name, servings, notes, status, suggested_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO meal_plan (id, date, meal_type, recipe_id, custom_meal_name, servings, notes, status, suggested_by, created_at, updated_at, updated_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ${NOW_MS}, ${NOW_MS}, ?)
       `).run(
         entry.id, entry.date, 'dinner',
         entry.recipe_id ?? null, entry.custom_meal_name ?? null,
         entry.servings, entry.notes ?? '',
-        'approved', entry.suggested_by ?? ''
+        'approved', entry.suggested_by ?? '', entry.suggested_by ?? ''
       )
     }
   })()
   mealPlanChanged()
   // Approval is abolished: every stored entry is approved.
-  return { ...entry, status: 'approved', created_at: new Date().toISOString() }
+  const now = new Date().toISOString()
+  return { ...entry, status: 'approved', created_at: now, updated_at: now, updated_by: entry.suggested_by ?? '' }
+}
+
+/**
+ * What the client saw when it decided to plan: a free evening (`expectEmpty`)
+ * or a known entry it wants to replace (`replaceId`). Stale screens must not
+ * silently overwrite what the partner planned in the meantime.
+ */
+export type PlanExpectation = { expectEmpty?: boolean; replaceId?: string | null }
+
+export type GuardedPlanResult =
+  | { ok: true; entry: MealPlanEntry }
+  | { ok: false; current: MealPlanEntry }
+
+/** The entry addMealPlanEntry would overwrite on `date`, if any. */
+function currentEntryOn(date: string): MealPlanEntry | null {
+  const row = getDb().prepare(`
+    SELECT id FROM meal_plan
+    WHERE date = ? AND meal_type = 'dinner'
+    ORDER BY created_at DESC, rowid DESC
+    LIMIT 1
+  `).get(date) as { id: string } | undefined
+  if (!row) return null
+  return getMealPlanRange(date, date).find(e => e.id === row.id) ?? null
+}
+
+/**
+ * addMealPlanEntry with an optimistic-concurrency check. Without an
+ * expectation it behaves exactly like addMealPlanEntry (last write wins).
+ * A free evening is never a conflict: nothing can be lost there.
+ */
+export function addMealPlanEntryIfExpected(
+  entry: NewMealPlanEntry,
+  expect: PlanExpectation = {},
+): GuardedPlanResult {
+  const db = getDb()
+  let result: GuardedPlanResult | null = null
+  db.transaction(() => {
+    const current = currentEntryOn(entry.date)
+    const allowed = !current || (expect.replaceId ? current.id === expect.replaceId : !expect.expectEmpty)
+    result = allowed ? { ok: true, entry: addMealPlanEntry(entry) } : { ok: false, current: current! }
+  })()
+  return result!
 }
 
 export function updateMealPlanEntry(id: string, data: Partial<MealPlanEntry>) {
@@ -555,35 +634,45 @@ export function updateMealPlanEntry(id: string, data: Partial<MealPlanEntry>) {
         recipe_id = COALESCE(?, recipe_id),
         custom_meal_name = COALESCE(?, custom_meal_name),
         servings = COALESCE(?, servings),
-        notes = COALESCE(?, notes)
+        notes = COALESCE(?, notes),
+        updated_at = ${NOW_MS}
       WHERE id = ?
     `).run(data.recipe_id ?? null, data.custom_meal_name ?? null, data.servings ?? null, data.notes ?? null, id)
   }
   mealPlanChanged()
 }
 
-export function deleteMealPlanEntry(id: string) {
-  getDb().prepare('DELETE FROM meal_plan WHERE id = ?').run(id)
-  mealPlanChanged()
+/** Returns false when no entry had this id (already removed or replaced). */
+export function deleteMealPlanEntry(id: string): boolean {
+  const { changes } = getDb().prepare('DELETE FROM meal_plan WHERE id = ?').run(id)
+  if (changes > 0) mealPlanChanged()
+  return changes > 0
 }
 
-export function deleteMealPlanRange(startDate: string, endDate: string) {
-  getDb().prepare('DELETE FROM meal_plan WHERE date BETWEEN ? AND ?').run(startDate, endDate)
+/** Delete every entry in the range and return what was removed (for undo). */
+export function deleteMealPlanRange(startDate: string, endDate: string): MealPlanEntry[] {
+  const db = getDb()
+  let removed: MealPlanEntry[] = []
+  db.transaction(() => {
+    removed = getMealPlanRange(startDate, endDate)
+    db.prepare('DELETE FROM meal_plan WHERE date BETWEEN ? AND ?').run(startDate, endDate)
+  })()
   mealPlanChanged()
+  return removed
 }
 
 // --- Moving planned evenings ---
 // Entries only ever change their date: id, created_at and suggested_by stay,
 // so shopping items that reference the entry (meal_plan_id / meal_plan_ids)
-// keep pointing at the same dinner.
+// keep pointing at the same dinner. updated_at / updated_by record the move.
 
 export type PlanChangeResult =
   | { ok: true; moves: PlanMove[]; filled: MealPlanEntry | null }
   | { ok: false; error: string }
 
-function applyMealPlanMoves(db: Database.Database, moves: PlanMove[]) {
-  const update = db.prepare('UPDATE meal_plan SET date = ? WHERE id = ?')
-  for (const m of moves) update.run(m.to, m.id)
+function applyMealPlanMoves(db: Database.Database, moves: PlanMove[], by = '') {
+  const update = db.prepare(`UPDATE meal_plan SET date = ?, updated_at = ${NOW_MS}, updated_by = ? WHERE id = ?`)
+  for (const m of moves) update.run(m.to, by, m.id)
 }
 
 /**
@@ -595,6 +684,7 @@ export function shiftMealPlan(
   from: string,
   days: 1 | -1,
   fill?: { id: string; name: string; suggested_by: string } | null,
+  by = fill?.suggested_by ?? '',
 ): PlanChangeResult {
   const db = getDb()
   let result: PlanChangeResult = { ok: false, error: 'Unbekannter Fehler' }
@@ -604,7 +694,7 @@ export function shiftMealPlan(
     ).all(addDaysIso(from, -1)) as PlanSlot[]
     const plan = planShift(slots, from, days)
     if (!plan.ok) { result = plan; return }
-    applyMealPlanMoves(db, plan.moves)
+    applyMealPlanMoves(db, plan.moves, by)
     let filled: MealPlanEntry | null = null
     if (fill && days === 1) {
       filled = addMealPlanEntry({
@@ -620,7 +710,7 @@ export function shiftMealPlan(
 }
 
 /** Move one entry to `to`; an entry already there swaps places. Atomic. */
-export function moveMealPlanEntry(id: string, to: string): PlanChangeResult {
+export function moveMealPlanEntry(id: string, to: string, by = ''): PlanChangeResult {
   const db = getDb()
   let result: PlanChangeResult = { ok: false, error: 'Unbekannter Fehler' }
   db.transaction(() => {
@@ -629,7 +719,7 @@ export function moveMealPlanEntry(id: string, to: string): PlanChangeResult {
     ).all(id, to) as PlanSlot[]
     const plan = planMove(slots, id, to)
     if (!plan.ok) { result = plan; return }
-    applyMealPlanMoves(db, plan.moves)
+    applyMealPlanMoves(db, plan.moves, by)
     result = { ok: true, moves: plan.moves, filled: null }
   })()
   if (result.ok) mealPlanChanged()
@@ -637,7 +727,7 @@ export function moveMealPlanEntry(id: string, to: string): PlanChangeResult {
 }
 
 /** Set the dates of several entries at once (undo). Never leaves two entries on one date. */
-export function reorderMealPlan(targets: { id: string; date: string }[]): PlanChangeResult {
+export function reorderMealPlan(targets: { id: string; date: string }[], by = ''): PlanChangeResult {
   const db = getDb()
   let result: PlanChangeResult = { ok: false, error: 'Unbekannter Fehler' }
   db.transaction(() => {
@@ -649,7 +739,7 @@ export function reorderMealPlan(targets: { id: string; date: string }[]): PlanCh
     ).all(...ids, ...dates) as PlanSlot[]
     const plan = planReorder(slots, targets)
     if (!plan.ok) { result = plan; return }
-    applyMealPlanMoves(db, plan.moves)
+    applyMealPlanMoves(db, plan.moves, by)
     result = { ok: true, moves: plan.moves, filled: null }
   })()
   if (result.ok) mealPlanChanged()
@@ -671,7 +761,7 @@ export function getNominationsForRange(startDate: string, endDate: string): Nomi
     SELECT n.*, r.name as recipe_name, r.image_url as recipe_image,
            r.tags as recipe_tags, r.prep_time, r.cook_time, r.servings as recipe_servings,
            r.mealie_id, r.mealie_slug, r.source as recipe_source, r.rating as recipe_rating,
-           r.effort as recipe_effort
+           r.effort as recipe_effort, r.never_again as recipe_never_again
     FROM nominations n
     JOIN recipes r ON n.recipe_id = r.id
     WHERE n.date BETWEEN ? AND ?
@@ -711,8 +801,15 @@ export function deleteNominationsOlderThan(cutoffDate: string) {
   getDb().prepare('DELETE FROM nominations WHERE date < ?').run(cutoffDate)
 }
 
-export function deleteNominationsForRange(startDate: string, endDate: string) {
-  getDb().prepare('DELETE FROM nominations WHERE date BETWEEN ? AND ?').run(startDate, endDate)
+/** Delete the range's nominations and return what was removed (for undo). */
+export function deleteNominationsForRange(startDate: string, endDate: string): Nomination[] {
+  const db = getDb()
+  let removed: Nomination[] = []
+  db.transaction(() => {
+    removed = getNominationsForRange(startDate, endDate)
+    db.prepare('DELETE FROM nominations WHERE date BETWEEN ? AND ?').run(startDate, endDate)
+  })()
+  return removed
 }
 
 // --- Shopping List ---

@@ -21,20 +21,22 @@ export function shiftPlan(body: { from: string; days: 1 | -1; fill?: string | nu
   return post<ShiftResponse>('/api/meal-plan/shift', body)
 }
 
-export function movePlanEntry(id: string, to: string) {
-  return post<{ moves: PlanMove[] }>('/api/meal-plan/move', { id, to })
+/** `by` is the person on this phone; the partner's phone marks the evening as changed. */
+export function movePlanEntry(id: string, to: string, by = '') {
+  return post<{ moves: PlanMove[] }>('/api/meal-plan/move', { id, to, by })
 }
 
 /**
  * Undo a shift/move: remove the evening that was planned on the freed day
  * (if any), then put every moved entry back on its old date.
  */
-export async function undoPlanChange(moves: PlanMove[], createdId?: string | null) {
+export async function undoPlanChange(moves: PlanMove[], createdId?: string | null, by = '') {
   if (createdId) {
     const res = await fetch(`/api/meal-plan/${createdId}`, { method: 'DELETE' })
-    if (!res.ok) throw new Error('Konnte nicht zurückgenommen werden')
+    // 404: that evening was already removed or replaced, nothing left to take back.
+    if (!res.ok && res.status !== 404) throw new Error('Konnte nicht zurückgenommen werden')
   }
   if (moves.length > 0) {
-    await post('/api/meal-plan/reorder', { moves: moves.map(m => ({ id: m.id, date: m.from })) })
+    await post('/api/meal-plan/reorder', { moves: moves.map(m => ({ id: m.id, date: m.from })), by })
   }
 }

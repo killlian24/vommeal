@@ -1,6 +1,34 @@
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- the config is CommonJS
+const { resolveCommit, resolveVersion } = require('./lib/buildInfo')
+
+// Changes with every build; the service worker is registered as
+// /sw.js?v=<stamp>, so each deploy gets a fresh worker and cache.
+const buildTime = new Date()
+const buildStamp = buildTime.getTime().toString(36)
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  env: {
+    NEXT_PUBLIC_BUILD_STAMP: buildStamp,
+    // Shown in Einstellungen and /api/health (see lib/buildInfo.js); '' when unknown
+    NEXT_PUBLIC_APP_VERSION: resolveVersion(__dirname),
+    NEXT_PUBLIC_BUILD_TIME: buildTime.toISOString(),
+    NEXT_PUBLIC_COMMIT: resolveCommit({ root: __dirname }),
+  },
+  async headers() {
+    return [
+      {
+        // Browsers must always check for a new worker, never use a stale copy.
+        source: '/sw.js',
+        headers: [
+          { key: 'Content-Type', value: 'application/javascript; charset=utf-8' },
+          { key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },
+          { key: 'Service-Worker-Allowed', value: '/' },
+        ],
+      },
+    ]
+  },
   images: {
     // Only proxy https images to prevent the Next Image optimizer from being
     // used as an SSRF read primitive against internal http services.

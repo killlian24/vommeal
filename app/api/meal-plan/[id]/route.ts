@@ -38,6 +38,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
 export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  deleteMealPlanEntry(id)
+  // 404 tells a stale screen that the entry was already removed or replaced.
+  if (!deleteMealPlanEntry(id)) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   return NextResponse.json({ ok: true })
 }

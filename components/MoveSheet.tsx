@@ -1,33 +1,67 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { format, parseISO } from 'date-fns'
-import { de } from 'date-fns/locale'
-import { X, ArrowDown, ArrowUp } from 'lucide-react'
-import { addDaysIso, planShift, type PlanMove } from '@/lib/planMoves'
+import { ArrowDown, ArrowUp, CalendarRange, MoveRight } from 'lucide-react'
+import { addDaysIso, applyMoves, planShift, type PlanMove } from '@/lib/planMoves'
 import { EATING_OUT } from '@/lib/quickMeals'
+import { Sheet, SheetHeader } from '@/components/Sheet'
+import { dayLabel, rangeLabel, weekdayName } from '@/lib/dates'
 
 type Planned = { id: string; date: string; recipe?: { name: string }; custom_meal_name: string | null }
+type Intent = 'chain' | 'one'
 
-const fmt = (date: string, pattern: string) => format(parseISO(date), pattern, { locale: de })
 const nameOf = (e: Planned) => e.recipe?.name || e.custom_meal_name || 'Essen'
-const short = (name: string) => (name.length > 24 ? `${name.slice(0, 22).trimEnd()}…` : name)
 
-/** "Linsen → Sa, Tajine → So" (at most four, then "+2 weitere"). */
-export function describeMoves(moves: PlanMove[], names: Map<string, string>): string {
-  const parts = moves.slice(0, 4).map(m => `${short(names.get(m.id) ?? 'Essen')} → ${fmt(m.to, 'EEEEEE')}`)
-  if (moves.length > 4) parts.push(`+${moves.length - 4} weitere`)
-  return parts.join(', ')
+/** One row of the before/after preview: day and what is planned there ('' = free). */
+export type PreviewRow = { date: string; name: string }
+
+/**
+ * Before and after a shift, day by day from the first to the last day it
+ * touches. `fill` is what the freed evening gets (e.g. "Auswärts essen").
+ */
+export function beforeAfter(planned: Planned[], moves: PlanMove[], fill: string | null): { before: PreviewRow[]; after: PreviewRow[] } {
+  if (moves.length === 0) return { before: [], after: [] }
+  const days = moves.flatMap(m => [m.from, m.to]).sort()
+  const first = days[0]
+  const last = days[days.length - 1]
+  const range: string[] = []
+  for (let d = first; d <= last; d = addDaysIso(d, 1)) range.push(d)
+  const moved = applyMoves(planned, moves)
+  const freed = moves.map(m => m.from).find(d => !moves.some(m => m.to === d))
+  const at = (list: Planned[], date: string) => {
+    const e = list.find(x => x.date === date)
+    return e ? nameOf(e) : ''
+  }
+  return {
+    before: range.map(date => ({ date, name: at(planned, date) })),
+    after: range.map(date => ({ date, name: at(moved, date) || (date === freed && fill ? fill : '') })),
+  }
 }
 
 /** "Heute Abend" / "Morgen Abend" / "Am Freitag" */
 export function eveningLabel(date: string, today: string): string {
   if (date === today) return 'Heute Abend'
   if (date === addDaysIso(today, 1)) return 'Morgen Abend'
-  return `Am ${fmt(date, 'EEEE')}`
+  return `Am ${weekdayName(date)}`
 }
 
-const iconBtn = 'w-10 h-10 flex items-center justify-center rounded-lg transition-all'
+function PreviewList({ title, rows, today, highlight }: { title: string; rows: PreviewRow[]; today: string; highlight?: string }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-xs font-semibold uppercase tracking-wider text-ink-hint mb-1">{title}</p>
+      <ul className="space-y-0.5">
+        {rows.map(r => (
+          <li key={r.date} className="flex gap-2 text-sm leading-snug">
+            <span className="w-16 flex-shrink-0 text-ink-muted">{dayLabel(r.date, today)}</span>
+            <span className={`min-w-0 truncate ${r.name ? (r.name === highlight ? 'text-white font-medium' : 'text-ink-soft') : 'text-ink-hint italic'}`}>
+              {r.name || 'frei'}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
 
 export function MoveSheet({ entry, weekStart, today, busy, onClose, onShift, onMoveTo }: {
   entry: { id: string; date: string; name: string }
@@ -42,6 +76,8 @@ export function MoveSheet({ entry, weekStart, today, busy, onClose, onShift, onM
   const [planned, setPlanned] = useState<Planned[] | null>(null)
   const [loadFailed, setLoadFailed] = useState(false)
   const [fill, setFill] = useState(entry.date === today)
+  // Two different things: the whole run of evenings slides, or one dish goes elsewhere
+  const [intent, setIntent] = useState<Intent>(entry.date === today ? 'chain' : 'one')
 
   useEffect(() => {
     let cancelled = false
@@ -54,16 +90,13 @@ export function MoveSheet({ entry, weekStart, today, busy, onClose, onShift, onM
     return () => { cancelled = true }
   }, [entry.date, weekStart])
 
-  const names = new Map((planned ?? []).map(e => [e.id, nameOf(e)]))
   const byDate = new Map((planned ?? []).map(e => [e.date, e]))
   const later = planned ? planShift(planned, entry.date, 1) : null
   const earlier = planned ? planShift(planned, entry.date, -1) : null
   const dayBefore = addDaysIso(entry.date, -1)
   const canEarlier = !!earlier?.ok && dayBefore >= today
-
-  const laterText = later?.ok
-    ? `${describeMoves(later.moves, names)} (${fmt(later.moves[later.moves.length - 1].to, 'EEEE')} war frei)`
-    : loadFailed ? 'Vorschau nicht verfügbar' : '…'
+  const preview = planned && later?.ok ? beforeAfter(planned, later.moves, fill ? EATING_OUT : null) : null
+  const earlierPreview = planned && canEarlier && earlier?.ok ? beforeAfter(planned, earlier.moves, null) : null
 
   // The rest of the shown week and the week after; days that are over are
   // left out (a past week falls back to the current one).
@@ -74,35 +107,45 @@ export function MoveSheet({ entry, weekStart, today, busy, onClose, onShift, onM
       monday,
       label: monday === mondayOf(today) ? 'Diese Woche'
         : monday === addDaysIso(mondayOf(today), 7) ? 'Nächste Woche'
-        : `${fmt(monday, 'd.M.')} – ${fmt(addDaysIso(monday, 6), 'd.M.')}`,
+        : rangeLabel(monday, addDaysIso(monday, 6)),
       days: Array.from({ length: 7 }, (_, i) => addDaysIso(monday, i)).filter(d => d >= today),
     }
   }).filter(w => w.days.length > 0)
 
+  const tab = (value: Intent, label: string, icon: React.ReactNode) => (
+    <button type="button" role="radio" aria-checked={intent === value} onClick={() => setIntent(value)}
+      className={`flex-1 min-h-[56px] flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm font-medium leading-snug transition-all ${
+        intent === value ? 'bg-[#262626] text-white shadow' : 'text-ink-muted hover:text-white'
+      }`}>
+      <span className={intent === value ? 'text-primary' : ''} aria-hidden>{icon}</span>
+      {label}
+    </button>
+  )
+
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm"
-      onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div role="dialog" aria-label="Verschieben"
-        className="w-full max-w-md max-h-[90dvh] flex flex-col bg-[#141414] border border-[#2a2a2a] rounded-t-2xl sm:rounded-2xl overflow-hidden shadow-2xl animate-slide-up pb-safe">
-        <div className="flex items-center justify-between pl-4 pr-2 py-2 border-b border-[#222] flex-shrink-0">
-          <div className="min-w-0">
-            <p className="font-semibold text-white">Verschieben</p>
-            <p className="text-sm text-ink-muted truncate">{fmt(entry.date, 'EEEEEE d.M.')} · {entry.name}</p>
-          </div>
-          <button onClick={onClose} aria-label="Schließen" className={`${iconBtn} text-ink-muted hover:text-white hover:bg-[#222]`}>
-            <X size={18} />
-          </button>
+    <Sheet onClose={onClose}>
+      <SheetHeader title="Verschieben" subtitle={`${dayLabel(entry.date, today)} · ${entry.name}`} />
+
+      <div className="p-4 space-y-4 overflow-y-auto overscroll-contain">
+        {/* What should happen? */}
+        <div role="radiogroup" aria-label="Was soll passieren?" className="flex gap-1 p-1 rounded-xl bg-[#101010] border border-[#262626]">
+          {tab('chain', 'Alles ab hier einen Tag später', <CalendarRange size={17} />)}
+          {tab('one', 'Nur dieses Gericht auf einen anderen Tag', <MoveRight size={17} />)}
         </div>
 
-        <div className="p-4 space-y-4 overflow-y-auto">
-          {/* One day later, the following evenings slide along */}
-          <div className="rounded-xl border border-[#2a2a2a] bg-[#1a1a1a] p-3 space-y-3">
-            <div>
-              <p className="flex items-center gap-1.5 text-[15px] font-semibold text-white">
-                <ArrowDown size={16} className="text-primary" /> Ab hier 1 Tag später
-              </p>
-              <p className="text-sm text-ink-soft mt-1">{laterText}</p>
-            </div>
+        {intent === 'chain' ? (
+          <div className="space-y-3">
+            <p className="text-sm text-ink-soft">
+              {entry.name} und die direkt folgenden Abende rutschen einen Tag nach hinten, bis zum nächsten freien Abend.
+            </p>
+            {preview ? (
+              <div className="grid grid-cols-1 min-[360px]:grid-cols-2 gap-3 rounded-xl border border-[#2a2a2a] bg-[#1a1a1a] p-3">
+                <PreviewList title="Vorher" rows={preview.before} today={today} highlight={entry.name} />
+                <PreviewList title="Nachher" rows={preview.after} today={today} highlight={entry.name} />
+              </div>
+            ) : (
+              <p className="text-sm text-ink-hint">{loadFailed ? 'Vorschau nicht verfügbar' : 'Vorschau lädt…'}</p>
+            )}
             <label className="flex items-center gap-3 min-h-[44px] cursor-pointer">
               <span className="text-lg" aria-hidden>🍽️</span>
               <span className="flex-1 text-sm text-ink-soft">{eveningLabel(entry.date, today)}: {EATING_OUT} eintragen</span>
@@ -110,26 +153,28 @@ export function MoveSheet({ entry, weekStart, today, busy, onClose, onShift, onM
               <span aria-hidden className="relative flex-shrink-0 w-11 h-6 rounded-full bg-[#333] peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary/60 transition-colors after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5" />
             </label>
             <button onClick={() => onShift(1, fill)} disabled={busy || !later?.ok}
-              className="w-full min-h-[44px] rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-50">
-              1 Tag später schieben
+              className="w-full min-h-[48px] flex items-center justify-center gap-2 rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-semibold transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none">
+              <ArrowDown size={16} /> Einen Tag später schieben
             </button>
+
+            {/* One day earlier, only into a free evening that is not over yet */}
+            {earlierPreview && (
+              <button onClick={() => onShift(-1, false)} disabled={busy}
+                className="w-full flex items-center gap-3 min-h-[52px] px-3 py-2 rounded-xl border border-[#2a2a2a] bg-[#1a1a1a] hover:bg-[#222] text-left transition-all disabled:opacity-50">
+                <ArrowUp size={16} className="text-primary flex-shrink-0" />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-[15px] font-semibold text-white">Stattdessen einen Tag früher</span>
+                  <span className="block text-sm text-ink-soft truncate">
+                    {weekdayName(dayBefore)} ist frei
+                  </span>
+                </span>
+              </button>
+            )}
           </div>
-
-          {/* One day earlier, only into a free evening that is not over yet */}
-          {canEarlier && earlier?.ok && (
-            <button onClick={() => onShift(-1, false)} disabled={busy}
-              className="w-full flex items-center gap-3 min-h-[52px] px-3 py-2 rounded-xl border border-[#2a2a2a] bg-[#1a1a1a] hover:bg-[#222] text-left transition-all disabled:opacity-50">
-              <ArrowUp size={16} className="text-primary flex-shrink-0" />
-              <span className="flex-1 min-w-0">
-                <span className="block text-[15px] font-semibold text-white">1 Tag früher</span>
-                <span className="block text-sm text-ink-soft">{describeMoves(earlier.moves, names)}</span>
-              </span>
-            </button>
-          )}
-
-          {/* Any other evening; an occupied one swaps */}
+        ) : (
+          /* Any other evening; an occupied one swaps */
           <div className="space-y-3">
-            <p className="text-sm font-semibold text-white">Auf anderen Tag</p>
+            <p className="text-sm text-ink-soft">Tag antippen. Ist er belegt, tauschen die beiden Gerichte ihre Tage.</p>
             {weeks.map(w => (
               <div key={w.monday} className="space-y-1.5">
                 <p className="text-xs font-semibold uppercase tracking-wider text-ink-hint">{w.label}</p>
@@ -137,24 +182,22 @@ export function MoveSheet({ entry, weekStart, today, busy, onClose, onShift, onM
                   {w.days.map(date => {
                     const other = byDate.get(date)
                     const isCurrent = date === entry.date
-                    const past = date < today
-                    const disabled = busy || isCurrent || past || !planned
+                    const disabled = busy || isCurrent || !planned
                     return (
                       <button key={date} onClick={() => onMoveTo(date)} disabled={disabled}
                         className={`min-h-[52px] flex flex-col justify-center px-2.5 py-1.5 rounded-lg border text-left transition-all ${
                           isCurrent ? 'border-primary/40 bg-primary/10'
-                            : past ? 'border-[#1e1e1e] bg-[#0f0f0f] opacity-50'
                             : other ? 'border-[#2a2a2a] bg-[#1a1a1a] hover:bg-[#232323]'
                             : 'border-dashed border-[#333] bg-[#121212] hover:bg-[#1c1c1c]'
                         } disabled:cursor-not-allowed`}>
                         <span className="flex items-center justify-between gap-1 text-sm font-semibold text-white">
-                          {fmt(date, 'EEEEEE d.M.')}
-                          {!isCurrent && !past && other && (
+                          {dayLabel(date, today)}
+                          {!isCurrent && other && (
                             <span className="text-[11px] font-medium text-amber-300">tauschen</span>
                           )}
                         </span>
                         <span className={`text-xs truncate ${other ? 'text-ink-soft' : 'text-ink-hint'}`}>
-                          {isCurrent ? 'jetzt hier' : other ? nameOf(other) : past ? 'vorbei' : 'frei'}
+                          {isCurrent ? 'jetzt hier' : other ? nameOf(other) : 'frei'}
                         </span>
                       </button>
                     )
@@ -163,11 +206,9 @@ export function MoveSheet({ entry, weekStart, today, busy, onClose, onShift, onM
               </div>
             ))}
           </div>
-
-          <p className="text-xs text-ink-hint">Tipp: Im Wochenplan ein Gericht lange drücken und auf einen anderen Tag ziehen.</p>
-        </div>
+        )}
       </div>
-    </div>
+    </Sheet>
   )
 }
 

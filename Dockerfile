@@ -17,6 +17,10 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED 1
+# Optional commit hash for Einstellungen (.git is not copied into the image):
+# VOMMEAL_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build
+ARG VOMMEAL_COMMIT=""
+ENV VOMMEAL_COMMIT=${VOMMEAL_COMMIT}
 RUN npm run build
 
 # ---- Runner ----

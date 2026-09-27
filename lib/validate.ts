@@ -133,6 +133,13 @@ export function optionalRating(value: unknown, field = 'rating'): number | null 
   return n
 }
 
+/** Optional boolean: undefined/null return `fallback`; anything but true/false is rejected. */
+export function optionalBoolean(value: unknown, field: string, fallback = false): boolean {
+  if (value === undefined || value === null) return fallback
+  if (typeof value !== 'boolean') throw new ValidationError(`${field} must be true or false`)
+  return value
+}
+
 /** Effort: null clears, otherwise 'quick' | 'involved'. */
 export function optionalEffort(value: unknown, field = 'effort'): 'quick' | 'involved' | null {
   if (value === undefined || value === null || value === '') return null

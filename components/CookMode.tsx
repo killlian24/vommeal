@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { createPortal } from 'react-dom'
 import { X, ChevronLeft, ChevronRight, Check, ListChecks, Sun, ExternalLink } from 'lucide-react'
+import { Sheet } from '@/components/Sheet'
 
 type Ingredient = { amount: string; unit: string; name: string; note?: string }
 type Instruction = { text: string }
@@ -14,8 +14,35 @@ type Props = {
   /** Link to the recipe in Mealie, shown when ingredients are missing. */
   mealieUrl?: string | null
   fromMealie: boolean
+  /** Progress is kept per recipe in sessionStorage under this id */
+  recipeId: string
   onClose: () => void
 }
+
+// Where the cook is (step, ticked ingredients), so an accidental close,
+// the back button or a reload does not lose it. `open`: cook mode was on
+// screen, the recipe page reopens it after a reload.
+type Progress = { step: number; lastStep: number; checked: number[]; open: boolean }
+const progressKey = (recipeId: string) => `vommeal_cook_${recipeId}`
+
+export function readCookProgress(recipeId: string): Progress | null {
+  try {
+    const raw = sessionStorage.getItem(progressKey(recipeId))
+    const p = raw ? JSON.parse(raw) : null
+    return p && typeof p.step === 'number' ? p : null
+  } catch { return null }
+}
+
+function writeCookProgress(recipeId: string, p: Progress | null) {
+  try {
+    if (p) sessionStorage.setItem(progressKey(recipeId), JSON.stringify(p))
+    else sessionStorage.removeItem(progressKey(recipeId))
+  } catch { /* storage unavailable: cooking still works */ }
+}
+
+// The history entry cook mode adds, so the system back button closes only it
+const HISTORY_FLAG = 'vommealCook'
+const inCookEntry = () => !!(window.history.state as Record<string, unknown> | null)?.[HISTORY_FLAG]
 
 type WakeLockState = 'pending' | 'active' | 'unsupported'
 
@@ -86,17 +113,54 @@ function amountText(ing: Ingredient): string {
  * Full-screen cooking view: ingredient checklist first (step -1),
  * then one instruction per screen in large type.
  */
-export default function CookMode({ name, ingredients, instructions, mealieUrl, fromMealie, onClose }: Props) {
+export default function CookMode({ name, ingredients, instructions, mealieUrl, fromMealie, recipeId, onClose }: Props) {
   const steps = instructions.filter(s => s.text.trim())
-  const [step, setStep] = useState(-1)
-  const [lastStep, setLastStep] = useState(0)
-  const [checked, setChecked] = useState<Set<number>>(new Set())
+  const total = steps.length
+  const [saved] = useState(() => readCookProgress(recipeId))
+  const [step, setStep] = useState(() => (saved && saved.step < total ? saved.step : -1))
+  const [lastStep, setLastStep] = useState(() => (saved && saved.lastStep < total ? saved.lastStep : 0))
+  const [checked, setChecked] = useState<Set<number>>(() => new Set(saved?.checked ?? []))
   const wakeLock = useWakeLock()
   const scrollRef = useRef<HTMLDivElement>(null)
+  const finished = useRef(false)
+  const onCloseRef = useRef(onClose)
+  useEffect(() => { onCloseRef.current = onClose })
 
   const onIngredients = step === -1
   const isLast = step === steps.length - 1
-  const total = steps.length
+
+  // Closed, not finished: the progress stays for the next "Kochen"
+  const closeNow = useCallback(() => {
+    const p = readCookProgress(recipeId)
+    if (p && !finished.current) writeCookProgress(recipeId, { ...p, open: false })
+    onCloseRef.current()
+  }, [recipeId])
+  // X, Escape, "Fertig": leave the history entry too (its popstate closes)
+  const close = useCallback(() => {
+    if (inCookEntry()) window.history.back()
+    else closeNow()
+  }, [closeNow])
+  const finish = useCallback(() => {
+    finished.current = true
+    writeCookProgress(recipeId, null)
+    close()
+  }, [recipeId, close])
+
+  useEffect(() => {
+    if (finished.current) return
+    writeCookProgress(recipeId, { step, lastStep, checked: [...checked], open: true })
+  }, [recipeId, step, lastStep, checked])
+
+  // Own history entry (same URL): the back button closes cook mode and
+  // stays on the recipe. After a reload the entry is already there.
+  useEffect(() => {
+    if (!inCookEntry()) window.history.pushState({ ...window.history.state, [HISTORY_FLAG]: true }, '')
+  }, [])
+  useEffect(() => {
+    const onPop = () => { if (!inCookEntry()) closeNow() }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [closeNow])
 
   const goTo = useCallback((next: number) => {
     setStep(next)
@@ -105,31 +169,25 @@ export default function CookMode({ name, ingredients, instructions, mealieUrl, f
   }, [])
 
   const next = useCallback(() => {
-    if (onIngredients) { goTo(total > 0 ? lastStep : 0); return }
+    if (onIngredients) {
+      if (total > 0) goTo(lastStep)
+      else finish()
+      return
+    }
     if (step < total - 1) goTo(step + 1)
-    else onClose()
-  }, [onIngredients, total, lastStep, step, goTo, onClose])
+    else finish()
+  }, [onIngredients, total, lastStep, step, goTo, finish])
 
   const back = useCallback(() => {
     if (step > 0) goTo(step - 1)
     else if (step === 0) goTo(-1)
   }, [step, goTo])
 
-  // Lock page scroll behind the overlay; keyboard shortcuts for tablets/desktop.
-  useEffect(() => {
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-      else if (e.key === 'ArrowRight') next()
-      else if (e.key === 'ArrowLeft') back()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => {
-      document.body.style.overflow = prev
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [next, back, onClose])
+  // Arrow keys for tablets/desktop, only inside cook mode (Escape: Sheet)
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowRight') { e.preventDefault(); next() }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); back() }
+  }
 
   const toggle = (i: number) =>
     setChecked(prev => {
@@ -144,27 +202,25 @@ export default function CookMode({ name, ingredients, instructions, mealieUrl, f
     ? (total === 0 ? 'Fertig' : lastStep > 0 ? `Weiter zu Schritt ${lastStep + 1}` : 'Los geht\'s')
     : isLast ? 'Fertig' : 'Weiter'
 
-  // Portal to <body> so parent layout styles (e.g. space-y margins) cannot offset the overlay.
-  return createPortal(
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Kochmodus: ${name}`}
-      className="fixed inset-0 z-[60] flex flex-col bg-[#0a0a0a] animate-slide-up"
-      style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
-    >
+  // Full-screen modal dialog: focus stays inside, the page behind is inert,
+  // focus returns to "Kochen" afterwards.
+  return (
+    <Sheet onClose={close} placement="fullscreen" labelledBy="cook-title" onKeyDown={onKeyDown}
+      className="flex flex-col bg-[#0a0a0a] animate-slide-up pt-[env(safe-area-inset-top)] pb-safe">
       {/* Header */}
       <div className="flex items-center gap-2 px-3 pt-3 pb-2 border-b border-[#1e1e1e]">
         <button
           type="button"
-          onClick={onClose}
+          onClick={close}
           aria-label="Kochmodus schließen"
           className="w-11 h-11 flex items-center justify-center rounded-full bg-[#1c1c1c] text-ink-soft active:scale-95 transition-all flex-shrink-0"
         >
           <X size={20} />
         </button>
         <div className="flex-1 min-w-0 text-center">
-          <p className="text-sm font-semibold text-white truncate">{name}</p>
+          <h2 id="cook-title" className="text-sm font-semibold text-white truncate">
+            <span className="sr-only">Kochmodus: </span>{name}
+          </h2>
           <p className="text-xs text-ink-muted tabular-nums" aria-live="polite">
             {onIngredients ? 'Zutaten' : `Schritt ${step + 1} von ${total}`}
           </p>
@@ -209,7 +265,7 @@ export default function CookMode({ name, ingredients, instructions, mealieUrl, f
                         }`}
                       >
                         <span className={`w-7 h-7 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${
-                          done ? 'bg-primary border-primary' : 'border-[#555]'
+                          done ? 'bg-primary border-primary' : 'border-[#6b6b6b]'
                         }`}>
                           {done && <Check size={16} className="text-white" strokeWidth={3} />}
                         </span>
@@ -253,7 +309,7 @@ export default function CookMode({ name, ingredients, instructions, mealieUrl, f
           <button
             type="button"
             onClick={next}
-            className="flex-1 flex items-center justify-center gap-1 h-14 rounded-2xl bg-primary hover:bg-primary-hover text-white text-base font-semibold active:scale-[0.97] transition-all"
+            className="flex-1 flex items-center justify-center gap-1 h-14 rounded-2xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold active:scale-[0.97] transition-all"
           >
             {nextLabel}
             {!(isLast && !onIngredients) && total > 0 && <ChevronRight size={20} />}
@@ -267,7 +323,6 @@ export default function CookMode({ name, ingredients, instructions, mealieUrl, f
           ) : ' '}
         </p>
       </div>
-    </div>,
-    document.body,
+    </Sheet>
   )
 }

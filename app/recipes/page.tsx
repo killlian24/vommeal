@@ -8,20 +8,22 @@ import { Plus, Search, RefreshCw, Clock, BookOpen, Link2, Loader2, Zap, ChefHat 
 import { StarRating } from '@/components/StarRating'
 import { track } from '@/lib/track'
 import { importRecipe, extractFirstUrl } from '@/lib/recipeImport'
+import { useServices } from '@/lib/useServices'
+import { germanError } from '@/lib/errorText'
 
 type Effort = 'quick' | 'involved' | null
 type Recipe = {
   id: string; name: string; description: string; tags: string[]
   servings: number; prep_time: number; cook_time: number
   image_url: string; source: 'local' | 'mealie'; mealie_slug: string | null
-  rating: number | null; effort?: Effort
+  rating: number | null; effort?: Effort; never_again?: boolean
 }
 
 type EffortFilter = 'all' | 'quick' | 'involved'
 const EFFORT_FILTERS: { key: EffortFilter; label: string }[] = [
   { key: 'all', label: 'Alle' },
   { key: 'quick', label: 'Schnell' },
-  { key: 'involved', label: 'Aufwändig' },
+  { key: 'involved', label: 'Aufwendig' },
 ]
 
 type SyncProgress = {
@@ -52,7 +54,7 @@ function EffortBadge({ effort }: { effort?: Effort }) {
   if (effort === 'involved') {
     return (
       <span className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-black/60 text-amber-300 backdrop-blur-sm">
-        <ChefHat size={10} /> Aufwändig
+        <ChefHat size={10} /> Aufwendig
       </span>
     )
   }
@@ -70,6 +72,9 @@ export default function RecipesPage() {
   const [importUrl, setImportUrl] = useState('')
   const [importing, setImporting] = useState(false)
   const [importError, setImportError] = useState('')
+  // Mealie sync and link import only with Mealie set up (null while unknown)
+  const services = useServices()
+  const mealie = services?.mealie ?? false
 
   const load = async () => {
     setLoading(true)
@@ -100,7 +105,7 @@ export default function RecipesPage() {
       return // keep the loading state until the page changes
     }
     setImporting(false)
-    setImportError(result.error)
+    setImportError(germanError(result.error, { service: 'mealie', fallback: 'Import hat nicht geklappt' }))
   }
 
   const sync = async () => {
@@ -128,7 +133,7 @@ export default function RecipesPage() {
           if (line.startsWith('data: ')) {
             try {
               const data: SyncProgress = JSON.parse(line.slice(6))
-              setSyncProgress(data)
+              setSyncProgress(data.status === 'error' ? { ...data, error: germanError(data.error, { service: 'mealie', fallback: 'Abgleich mit Mealie hat nicht geklappt' }) } : data)
               if (data.status === 'done') {
                 load()
                 setTimeout(() => setSyncProgress(null), (data.errors ?? 0) > 0 ? 12000 : 4000)
@@ -138,7 +143,7 @@ export default function RecipesPage() {
         }
       }
     } catch (e) {
-      setSyncProgress({ status: 'error', error: String(e) })
+      setSyncProgress({ status: 'error', error: germanError(e, { service: 'mealie', fallback: 'Abgleich mit Mealie hat nicht geklappt' }) })
       setTimeout(() => setSyncProgress(null), 5000)
     }
 
@@ -166,7 +171,7 @@ export default function RecipesPage() {
           <p className="text-sm text-ink-muted mt-0.5">{recipes.length} in eurer Sammlung</p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
-          <button
+          {mealie && <button
             onClick={sync}
             disabled={syncing}
             aria-label="Mit Mealie synchronisieren"
@@ -174,7 +179,7 @@ export default function RecipesPage() {
           >
             <RefreshCw size={15} className={syncing ? 'animate-spin' : ''} />
             <span>Mealie</span>
-          </button>
+          </button>}
           <Link
             href="/recipes/new"
             aria-label="Eigenes Rezept anlegen"
@@ -186,45 +191,55 @@ export default function RecipesPage() {
         </div>
       </div>
 
-      {/* Import per Link */}
-      <form onSubmit={submitImport} className="rounded-xl border border-[#2a2a2a] bg-[#141414] p-3 space-y-2">
-        <label htmlFor="import-url" className="flex items-center gap-1.5 text-sm font-medium text-white">
-          <Link2 size={15} className="text-primary" /> Rezept per Link hinzufügen
-        </label>
-        <div className="flex gap-2">
-          <input
-            id="import-url"
-            type="text"
-            inputMode="url"
-            autoComplete="off"
-            autoCapitalize="off"
-            autoCorrect="off"
-            spellCheck={false}
-            enterKeyHint="go"
-            placeholder="https://… Link einfügen"
-            value={importUrl}
-            onChange={e => { setImportUrl(e.target.value); if (importError) setImportError('') }}
-            disabled={importing}
-            className="flex-1 min-w-0 h-11 text-base"
-          />
-          <button
-            type="submit"
-            disabled={importing || !importUrl.trim()}
-            className="flex items-center justify-center gap-1.5 px-4 h-11 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-40 flex-shrink-0"
-          >
-            {importing ? <Loader2 size={16} className="animate-spin" /> : null}
-            {importing ? 'Lädt…' : 'Hinzufügen'}
-          </button>
+      {/* Import per Link (Mealie reads the page); without Mealie a calm hint */}
+      {services && !mealie ? (
+        <div className="flex items-center gap-3 rounded-xl border border-[#222] bg-[#111] pl-3 pr-1 py-1.5 text-sm text-ink-muted">
+          <Link2 size={15} className="flex-shrink-0 text-ink-hint" />
+          <span className="flex-1 min-w-0">Rezepte per Link und der Abgleich gehen mit Mealie.</span>
+          <Link href="/settings#mealie" className="flex-shrink-0 min-h-[44px] flex items-center px-2.5 rounded-lg font-medium text-primary hover:bg-[#1c1c1c]">
+            Einstellungen
+          </Link>
         </div>
-        {importing && (
-          <p className="text-xs text-ink-muted">Rezept wird in Mealie angelegt, das dauert ein paar Sekunden…</p>
-        )}
-        {importError && (
-          <p role="alert" className="text-sm text-red-300 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-            {importError}
-          </p>
-        )}
-      </form>
+      ) : services ? (
+        <form onSubmit={submitImport} className="rounded-xl border border-[#2a2a2a] bg-[#141414] p-3 space-y-2">
+          <label htmlFor="import-url" className="flex items-center gap-1.5 text-sm font-medium text-white">
+            <Link2 size={15} className="text-primary" /> Rezept per Link hinzufügen
+          </label>
+          <div className="flex gap-2">
+            <input
+              id="import-url"
+              type="text"
+              inputMode="url"
+              autoComplete="off"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              enterKeyHint="go"
+              placeholder="https://… Link einfügen"
+              value={importUrl}
+              onChange={e => { setImportUrl(e.target.value); if (importError) setImportError('') }}
+              disabled={importing}
+              className="flex-1 min-w-0 h-11 text-base"
+            />
+            <button
+              type="submit"
+              disabled={importing || !importUrl.trim()}
+              className="flex items-center justify-center gap-1.5 px-4 h-11 rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-semibold transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none flex-shrink-0"
+            >
+              {importing ? <Loader2 size={16} className="animate-spin" /> : null}
+              {importing ? 'Lädt…' : 'Hinzufügen'}
+            </button>
+          </div>
+          {importing && (
+            <p className="text-xs text-ink-muted">Mealie liest die Seite, das dauert ein paar Sekunden…</p>
+          )}
+          {importError && (
+            <p role="alert" className="text-sm text-red-300 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+              {importError}
+            </p>
+          )}
+        </form>
+      ) : null}
 
       {syncProgress && (
         <div className={`rounded-xl border overflow-hidden text-sm transition-all ${
@@ -290,6 +305,7 @@ export default function RecipesPage() {
           <input
             type="search"
             placeholder="Rezept oder Tag suchen…"
+            aria-label="Rezepte durchsuchen"
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="pl-9 h-11 text-base"
@@ -330,23 +346,32 @@ export default function RecipesPage() {
             <>
               <p className="text-ink-muted">Noch keine Rezepte</p>
               <div className="mt-4 flex flex-col items-center gap-2">
-                <button
-                  onClick={sync}
-                  disabled={syncing}
-                  className="flex items-center gap-2 px-4 h-11 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-all disabled:opacity-50"
-                >
-                  <RefreshCw size={15} className={syncing ? 'animate-spin' : ''} />
-                  Aus Mealie holen
-                </button>
-                <Link href="/recipes/new" className="text-sm text-ink-muted hover:text-white transition-colors py-2">
-                  oder eigenes Rezept anlegen
-                </Link>
+                {mealie ? (
+                  <>
+                    <button
+                      onClick={sync}
+                      disabled={syncing}
+                      className="flex items-center gap-2 px-4 h-11 rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-medium transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none"
+                    >
+                      <RefreshCw size={15} className={syncing ? 'animate-spin' : ''} />
+                      Aus Mealie holen
+                    </button>
+                    <Link href="/recipes/new" className="text-sm text-ink-muted hover:text-white transition-colors py-2">
+                      oder eigenes Rezept anlegen
+                    </Link>
+                  </>
+                ) : (
+                  <Link href="/recipes/new"
+                    className="flex items-center gap-2 px-4 h-11 rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-medium transition-all">
+                    <Plus size={15} /> Eigenes Rezept anlegen
+                  </Link>
+                )}
               </div>
             </>
           ) : effortFilter !== 'all' && searched.length > 0 ? (
             <>
               <p className="text-ink-muted">
-                Noch keine Rezepte als „{effortFilter === 'quick' ? 'Schnell' : 'Aufwändig'}“ markiert
+                Noch keine Rezepte als „{effortFilter === 'quick' ? 'Schnell' : 'Aufwendig'}“ markiert
               </p>
               <p className="text-sm text-ink-hint mt-1 px-6">Im Rezept kannst du den Aufwand mit einem Tipp festlegen.</p>
             </>
@@ -395,7 +420,7 @@ export default function RecipesPage() {
               <div className="p-3">
                 <h3 className="text-sm font-semibold text-white leading-tight line-clamp-2 mb-1.5">{recipe.name}</h3>
                 <div className="flex flex-wrap items-center gap-2 text-[11px] text-ink-hint">
-                  {recipe.rating === 1 ? (
+                  {recipe.never_again ? (
                     <span className="text-red-300/80">Nicht nochmal</span>
                   ) : recipe.rating ? (
                     <StarRating rating={recipe.rating} size={12} />

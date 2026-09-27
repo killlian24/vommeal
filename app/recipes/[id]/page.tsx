@@ -1,13 +1,17 @@
 'use client'
 
-import { useState, useEffect, use } from 'react'
+import { useState, useEffect, useCallback, use } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import Link from 'next/link'
-import { ArrowLeft, Clock, Users, ExternalLink, Edit2, Trash2, Save, X, Plus, CookingPot, Zap, ChefHat } from 'lucide-react'
+import { ArrowLeft, Clock, Users, ExternalLink, Pencil, Trash2, Save, X, Plus, CookingPot, Zap, ChefHat, CalendarPlus, MoreHorizontal } from 'lucide-react'
 import { StarRating } from '@/components/StarRating'
-import CookMode, { FewIngredientsHint } from '@/components/CookMode'
+import CookMode, { FewIngredientsHint, readCookProgress } from '@/components/CookMode'
 import { track } from '@/lib/track'
+import { apiCall } from '@/lib/apiCall'
+import { PlanRecipeSheet } from '@/components/PlanRecipeSheet'
+import { useServices } from '@/lib/useServices'
+import { germanError } from '@/lib/errorText'
 
 type Effort = 'quick' | 'involved' | null
 type Ingredient = { amount: string; unit: string; name: string; note?: string }
@@ -20,12 +24,13 @@ type Recipe = {
   mealie_id: string | null; mealie_slug: string | null
   rating: number | null
   effort?: Effort
+  never_again?: boolean
 }
 
 const EFFORT_OPTIONS: { value: Effort; label: string }[] = [
   { value: 'quick', label: 'Schnell' },
-  { value: 'involved', label: 'Aufwändig' },
-  { value: null, label: '–' },
+  { value: 'involved', label: 'Aufwendig' },
+  { value: null, label: 'Keine Angabe' },
 ]
 
 export default function RecipeDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -45,18 +50,67 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
   const [tagInput, setTagInput] = useState('')
   const [settings, setSettings] = useState<{ mealie_url: string }>({ mealie_url: '' })
   const [cooking, setCooking] = useState(false)
+  const [planning, setPlanning] = useState(false)
+  const services = useServices()
+  const [menuOpen, setMenuOpen] = useState(false)
   const [effortError, setEffortError] = useState(false)
+  // Load failure: 'gone' = recipe deleted (404), otherwise the error text
+  const [loadError, setLoadError] = useState<'gone' | string>('')
+  const [ratingError, setRatingError] = useState('')
+
+  const loadRecipe = useCallback(async () => {
+    setLoading(true)
+    setLoadError('')
+    const res = await apiCall<Recipe>(`/api/recipes/${id}`, { fallback: 'Rezept konnte nicht geladen werden' })
+    if (res.ok) {
+      setRecipe(res.data)
+      // Reloaded while cooking: straight back to the step
+      if (readCookProgress(id)?.open) setCooking(true)
+    } else setLoadError(res.status === 404 ? 'gone' : res.error)
+    setLoading(false)
+  }, [id])
 
   useEffect(() => {
-    fetch('/api/settings').then(r => r.json()).then(setSettings)
-    if (!isNew) {
-      fetch(`/api/recipes/${id}`).then(async r => {
-        if (!r.ok) { router.replace('/recipes'); return }
-        setRecipe(await r.json())
-        setLoading(false)
-      })
+    fetch('/api/settings').then(r => r.json()).then(setSettings).catch(() => { /* no Mealie link */ })
+    if (!isNew) loadRecipe()
+  }, [isNew, loadRecipe])
+
+  const rate = async (val: number) => {
+    const previous = recipe.rating
+    const newRating = val === 0 ? null : val
+    setRecipe(r => ({ ...r, rating: newRating }))
+    setMealieError(null)
+    setRatingError('')
+    const res = await apiCall<{ mealie_error?: string }>(`/api/recipes/${recipe.id}`, {
+      method: 'PATCH',
+      body: { rating: newRating },
+      fallback: 'Bewertung wurde nicht gespeichert',
+    })
+    if (!res.ok) {
+      setRecipe(r => (r.rating === newRating ? { ...r, rating: previous } : r))
+      setRatingError(res.error)
+      return
     }
-  }, [id, isNew, router])
+    if (res.data?.mealie_error) setMealieError(res.data.mealie_error)
+  }
+
+  // "Nicht nochmal" keeps the recipe out of suggestions and autofill; the
+  // stars stay a plain rating.
+  const setNeverAgain = async (neverAgain: boolean) => {
+    setRecipe(r => ({ ...r, never_again: neverAgain }))
+    setRatingError('')
+    const res = await apiCall(`/api/recipes/${recipe.id}`, {
+      method: 'PATCH',
+      body: { never_again: neverAgain },
+      fallback: 'Wurde nicht gespeichert',
+    })
+    if (!res.ok) {
+      setRecipe(r => ({ ...r, never_again: !neverAgain }))
+      setRatingError(res.error)
+      return
+    }
+    track('never_again_set', { recipe_id: recipe.id, never_again: neverAgain })
+  }
 
   const save = async () => {
     if (!recipe.name.trim()) return
@@ -85,7 +139,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
           })
       const saved = await res.json().catch(() => ({}))
       if (!res.ok || !saved?.id) {
-        setSaveError(saved?.error || 'Speichern fehlgeschlagen')
+        setSaveError(germanError(saved?.error, { fallback: 'Speichern fehlgeschlagen' }))
         return
       }
       if (isNew) {
@@ -106,7 +160,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
     const res = await fetch(`/api/recipes/${id}`, { method: 'DELETE' }).catch(() => null)
     if (!res || !res.ok) {
       const data = res ? await res.json().catch(() => ({})) : {}
-      setSaveError(data?.error || 'Löschen hat nicht geklappt')
+      setSaveError(germanError(data?.error, { fallback: 'Löschen hat nicht geklappt' }))
       return
     }
     track('recipe_delete', { source: recipe.source })
@@ -162,9 +216,36 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
     setTagInput('')
   }
 
+  // Without any amounts the column would only be empty space
+  const hasAmounts = recipe.ingredients.some(i => (i.amount || i.unit || '').trim())
+
   const mealieUrl = recipe.mealie_slug && settings.mealie_url
     ? `${settings.mealie_url}/g/home/r/${recipe.mealie_slug}`
     : null
+
+  if (loadError) return (
+    <div className="space-y-4 max-w-2xl">
+      <Link href="/recipes" className="inline-flex items-center gap-1.5 text-sm text-ink-muted hover:text-white transition-colors py-2">
+        <ArrowLeft size={15} />
+        Rezepte
+      </Link>
+      <div role="alert" className="rounded-xl border border-[#2a2a2a] bg-[#141414] p-6 text-center space-y-3">
+        <p className="text-base font-semibold text-white">
+          {loadError === 'gone' ? 'Rezept wurde gelöscht' : loadError}
+        </p>
+        {loadError === 'gone' ? (
+          <Link href="/recipes" className="inline-flex items-center justify-center min-h-[44px] px-4 rounded-lg bg-[#1c1c1c] border border-[#2a2a2a] text-sm text-ink-soft hover:text-white">
+            Zu den Rezepten
+          </Link>
+        ) : (
+          <button type="button" onClick={loadRecipe}
+            className="min-h-[44px] px-4 rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-semibold">
+            Erneut laden
+          </button>
+        )}
+      </div>
+    </div>
+  )
 
   if (loading) return (
     <div className="space-y-4">
@@ -185,34 +266,48 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
         <div className="flex items-center gap-2">
           {!isNew && mealieUrl && (
             <a href={mealieUrl} target="_blank" rel="noopener noreferrer"
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs transition-all border border-blue-500/20">
+              className="relative after:absolute after:-inset-y-1.5 after:inset-x-0 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs transition-all border border-blue-500/20">
               <ExternalLink size={12} />
               Mealie
             </a>
           )}
           {!isNew && !editing && (
             <>
-              <button onClick={() => setEditing(true)}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] text-ink-muted hover:text-white text-xs transition-all border border-[#2a2a2a]">
-                <Edit2 size={12} />
-                Bearbeiten
+              <button onClick={() => setEditing(true)} aria-label="Bearbeiten" title="Bearbeiten"
+                className="relative after:absolute after:-inset-0.5 w-10 h-10 flex items-center justify-center rounded-lg bg-[#1c1c1c] hover:bg-[#252525] text-ink-soft hover:text-white transition-all border border-[#2a2a2a]">
+                <Pencil size={16} />
               </button>
-              <button onClick={del} title="Rezept löschen"
-                className="min-h-[40px] flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs transition-all border border-red-500/20">
-                <Trash2 size={12} /> Löschen
-              </button>
+              {/* Rare and destructive: behind ⋯ */}
+              <div className="relative">
+                <button onClick={() => setMenuOpen(o => !o)} aria-label="Weitere Aktionen" aria-haspopup="menu" aria-expanded={menuOpen}
+                  className="relative after:absolute after:-inset-0.5 w-10 h-10 flex items-center justify-center rounded-lg bg-[#1c1c1c] hover:bg-[#252525] text-ink-soft hover:text-white transition-all border border-[#2a2a2a]">
+                  <MoreHorizontal size={18} />
+                </button>
+                {menuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} aria-hidden="true" />
+                    <div role="menu" onKeyDown={e => { if (e.key === 'Escape') setMenuOpen(false) }}
+                      className="absolute right-0 top-12 z-50 w-48 py-1 rounded-xl bg-[#1a1a1a] border border-[#2e2e2e] shadow-2xl animate-slide-up">
+                      <button role="menuitem" autoFocus onClick={() => { setMenuOpen(false); del() }}
+                        className="w-full min-h-[44px] flex items-center gap-3 px-4 text-sm text-red-300 hover:bg-[#252525]">
+                        <Trash2 size={16} /> Löschen
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             </>
           )}
           {editing && (
             <>
               <button onClick={save} disabled={saving}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-xs font-medium transition-all disabled:opacity-50">
+                className="relative after:absolute after:-inset-y-1.5 after:inset-x-0 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-xs font-medium transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none">
                 <Save size={12} />
                 {saving ? 'Speichert…' : 'Speichern'}
               </button>
               {!isNew && (
                 <button onClick={() => setEditing(false)}
-                  className="p-2 rounded-lg hover:bg-[#1c1c1c] text-ink-muted transition-all" aria-label="Bearbeiten abbrechen">
+                  className="relative after:absolute after:-inset-[7px] p-2 rounded-lg hover:bg-[#1c1c1c] text-ink-muted transition-all" aria-label="Bearbeiten abbrechen">
                   <X size={14} />
                 </button>
               )}
@@ -233,8 +328,10 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
       {saveError && (
         <p role="alert" className="text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">{saveError}</p>
       )}
-      {isNew && (
-        <p className="text-xs text-[#8f8f8f]">Neue Rezepte werden direkt in Mealie angelegt.</p>
+      {isNew && services && (
+        <p className="text-xs text-[#8f8f8f]">
+          {services.mealie ? 'Das Rezept wird in Mealie angelegt und erscheint hier bei euren Rezepten.' : 'Das Rezept wird in eurer Sammlung gespeichert.'}
+        </p>
       )}
 
       {editing ? (
@@ -242,6 +339,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
           value={recipe.name}
           onChange={e => setRecipe(r => ({ ...r, name: e.target.value }))}
           placeholder="Name des Rezepts"
+          aria-label="Name des Rezepts"
           className="text-xl font-bold bg-[#141414] border-[#2a2a2a]"
           autoFocus={isNew}
         />
@@ -294,42 +392,52 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
               rating={recipe.rating}
               size={20}
               editable
-              onChange={async (val) => {
-                const newRating = val === 0 ? null : val
-                setRecipe(r => ({ ...r, rating: newRating }))
-                setMealieError(null)
-                const res = await fetch(`/api/recipes/${recipe.id}`, {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ rating: newRating }),
-                })
-                const data = await res.json()
-                if (data.mealie_error) setMealieError(data.mealie_error)
-              }}
+              onChange={rate}
             />
-            {recipe.rating === 1 && (
-              <span className="text-xs text-red-300 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded-full">Nicht nochmal</span>
+            {recipe.never_again ? (
+              <button type="button" onClick={() => setNeverAgain(false)} aria-label="Wieder vorschlagen"
+                className="min-h-[32px] flex items-center gap-1 text-xs text-red-300 bg-red-500/10 border border-red-500/20 px-2.5 rounded-full hover:bg-red-500/20 transition-colors">
+                Nicht nochmal <X size={12} aria-hidden />
+              </button>
+            ) : (
+              <button type="button" onClick={() => setNeverAgain(true)}
+                className="min-h-[32px] text-xs text-ink-hint hover:text-red-300 px-1 transition-colors">
+                Nicht mehr vorschlagen
+              </button>
             )}
           </>
         )}
       </div>
 
+      {ratingError && (
+        <p role="alert" className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{ratingError}</p>
+      )}
+
       {mealieError && (
         <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-          Mealie-Sync fehlgeschlagen: {mealieError}
+          Bewertung ist hier gespeichert, aber nicht in Mealie: {germanError(mealieError, { service: 'mealie', fallback: 'Mealie hat nicht geantwortet' })}
         </p>
       )}
 
       {/* Kochen + Aufwand */}
       {!isNew && !editing && (
         <div className="space-y-3">
-          <button
-            type="button"
-            onClick={openCookMode}
-            className="w-full flex items-center justify-center gap-2 h-12 rounded-xl bg-primary hover:bg-primary-hover text-white text-base font-semibold transition-all active:scale-[0.98]"
-          >
-            <CookingPot size={19} /> Kochen
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={openCookMode}
+              className="flex-1 flex items-center justify-center gap-2 h-12 rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold transition-all active:scale-[0.98]"
+            >
+              <CookingPot size={19} /> Kochen
+            </button>
+            <button
+              type="button"
+              onClick={() => { setPlanning(true); track('recipe_plan_open') }}
+              className="flex-1 flex items-center justify-center gap-2 h-12 rounded-xl bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-white text-base font-medium transition-all active:scale-[0.98]"
+            >
+              <CalendarPlus size={18} /> Einplanen
+            </button>
+          </div>
           <div className="flex items-center gap-3">
             <span className="text-sm text-ink-muted flex-shrink-0">Aufwand</span>
             <div className="flex flex-1 bg-[#141414] border border-[#2a2a2a] rounded-xl p-1" role="radiogroup" aria-label="Aufwand">
@@ -341,9 +449,8 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
                     type="button"
                     role="radio"
                     aria-checked={active}
-                    aria-label={opt.value === null ? 'Kein Aufwand festgelegt' : opt.label}
                     onClick={() => setEffort(opt.value)}
-                    className={`${opt.value === null ? 'w-11 flex-none' : 'flex-1'} flex items-center justify-center gap-1 h-9 rounded-lg text-sm font-medium transition-all ${
+                    className={`flex-1 min-w-0 flex items-center justify-center gap-1 min-h-[40px] px-1 rounded-lg text-sm font-medium leading-tight transition-all ${
                       active
                         ? opt.value === 'quick' ? 'bg-green-500/15 text-green-300'
                         : opt.value === 'involved' ? 'bg-amber-500/15 text-amber-300'
@@ -351,8 +458,8 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
                         : 'text-ink-muted'
                     }`}
                   >
-                    {opt.value === 'quick' && <Zap size={13} />}
-                    {opt.value === 'involved' && <ChefHat size={13} />}
+                    {opt.value === 'quick' && <Zap size={13} className="flex-shrink-0" />}
+                    {opt.value === 'involved' && <ChefHat size={13} className="flex-shrink-0" />}
                     {opt.label}
                   </button>
                 )
@@ -372,7 +479,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
             <span key={tag} className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
               {tag}
               {editing && (
-                <button onClick={() => setRecipe(r => ({ ...r, tags: r.tags.filter(t => t !== tag) }))} className="hover:text-red-400 transition-colors">
+                <button onClick={() => setRecipe(r => ({ ...r, tags: r.tags.filter(t => t !== tag) }))} aria-label={`Tag ${tag} entfernen`} className="hover:text-red-400 transition-colors">
                   <X size={10} />
                 </button>
               )}
@@ -382,8 +489,8 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
             <div className="flex gap-1">
               <input value={tagInput} onChange={e => setTagInput(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && addTag()}
-                placeholder="Tag…" className="h-6 text-xs px-2 py-0 w-24" />
-              <button onClick={addTag} className="h-6 px-2 rounded-md bg-[#222] hover:bg-[#2a2a2a] text-xs text-ink-muted hover:text-white transition-all">+</button>
+                placeholder="Tag…" aria-label="Tag hinzufügen" className="h-8 px-2 py-0 w-28" />
+              <button onClick={addTag} aria-label="Tag übernehmen" className="h-8 px-2.5 rounded-md bg-[#222] hover:bg-[#2a2a2a] text-xs text-ink-muted hover:text-white transition-all">+</button>
             </div>
           )}
         </div>
@@ -398,6 +505,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
               value={recipe.description}
               onChange={e => setRecipe(r => ({ ...r, description: e.target.value }))}
               placeholder="Kurze Beschreibung…"
+              aria-label="Beschreibung"
               rows={2}
               className="resize-none"
             />
@@ -415,6 +523,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
             value={recipe.image_url}
             onChange={e => setRecipe(r => ({ ...r, image_url: e.target.value }))}
             placeholder="https://..."
+            aria-label="Bild-URL"
           />
         </div>
       )}
@@ -437,20 +546,23 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
             editing ? (
               <div key={i} className="flex gap-2 items-center">
                 <input value={ing.amount} onChange={e => updateIngredient(i, 'amount', e.target.value)}
-                  placeholder="Menge" className="w-16" />
+                  placeholder="Menge" aria-label={`Zutat ${i + 1}: Menge`} className="w-16" />
                 <input value={ing.unit} onChange={e => updateIngredient(i, 'unit', e.target.value)}
-                  placeholder="Einheit" className="w-20" />
+                  placeholder="Einheit" aria-label={`Zutat ${i + 1}: Einheit`} className="w-20" />
                 <input value={ing.name} onChange={e => updateIngredient(i, 'name', e.target.value)}
-                  placeholder="Zutat" className="flex-1" />
-                <button onClick={() => removeIngredient(i)} className="text-ink-hint hover:text-red-400 transition-colors flex-shrink-0">
+                  placeholder="Zutat" aria-label={`Zutat ${i + 1}: Name`} className="flex-1" />
+                <button onClick={() => removeIngredient(i)} aria-label={`Zutat ${i + 1} entfernen`} className="text-ink-hint hover:text-red-400 transition-colors flex-shrink-0">
                   <X size={14} />
                 </button>
               </div>
             ) : (
               <div key={i} className="flex items-baseline gap-2 text-sm">
-                <span className="text-primary font-medium min-w-[3rem] text-right">
-                  {[ing.amount, ing.unit].filter(Boolean).join(' ') || '—'}
-                </span>
+                {hasAmounts && (
+                  <span className="text-primary font-medium min-w-[3rem] text-right">
+                    {[ing.amount, ing.unit].filter(Boolean).join(' ')}
+                  </span>
+                )}
+                {!hasAmounts && <span aria-hidden className="text-ink-hint">•</span>}
                 <span className="text-white">{ing.name}</span>
                 {ing.note && <span className="text-ink-hint text-xs">({ing.note})</span>}
               </div>
@@ -484,10 +596,11 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
                   value={ins.text}
                   onChange={e => updateInstruction(i, e.target.value)}
                   placeholder={`Schritt ${i + 1}`}
+                  aria-label={`Schritt ${i + 1}`}
                   rows={2}
                   className="flex-1 resize-none"
                 />
-                <button onClick={() => removeInstruction(i)} className="text-ink-hint hover:text-red-400 transition-colors mt-2 flex-shrink-0">
+                <button onClick={() => removeInstruction(i)} aria-label={`Schritt ${i + 1} entfernen`} className="text-ink-hint hover:text-red-400 transition-colors mt-2 flex-shrink-0">
                   <X size={14} />
                 </button>
               </div>
@@ -502,16 +615,23 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
       </div>
 
       {/* Mealie link (editing, local recipes) */}
-      {editing && recipe.source === 'local' && (
+      {editing && recipe.source === 'local' && services?.mealie && (
         <div className="border-t border-[#1e1e1e] pt-4">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-hint mb-2">Mit Mealie verknüpfen (optional)</h2>
+          <label htmlFor="mealie-slug" className="block text-xs font-semibold uppercase tracking-wider text-ink-hint mb-2">Mealie-Link (optional)</label>
           <input
+            id="mealie-slug"
             value={recipe.mealie_slug || ''}
             onChange={e => setRecipe(r => ({ ...r, mealie_slug: e.target.value || null }))}
-            placeholder="recipe-slug"
+            placeholder="z. B. linsen-mit-spaetzle"
+            autoCapitalize="off"
+            autoCorrect="off"
           />
-          <p className="text-xs text-ink-hint mt-1">Mealie-Slug eintragen, um das Rezept in Mealie zu öffnen</p>
+          <p className="text-xs text-ink-hint mt-1">Der letzte Teil der Adresse des Rezepts in Mealie. Dann öffnet der Knopf „Mealie“ es dort.</p>
         </div>
+      )}
+
+      {planning && (
+        <PlanRecipeSheet recipe={{ id: recipe.id, name: recipe.name }} onClose={() => setPlanning(false)} />
       )}
 
       {cooking && (
@@ -521,6 +641,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
           instructions={recipe.instructions}
           mealieUrl={mealieUrl}
           fromMealie={recipe.source === 'mealie'}
+          recipeId={recipe.id}
           onClose={() => setCooking(false)}
         />
       )}
