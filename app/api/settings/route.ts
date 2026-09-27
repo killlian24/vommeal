@@ -29,6 +29,8 @@ export async function GET() {
     custom_category_keywords: getSetting('custom_category_keywords') || '{}',
     // Complete connections (address and token, for HA also the list), so pages can hide what needs them
     mealie_configured: !!getMealieConfig(),
+    // The server's own time zone, for showing the build time as the server sees it
+    server_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     ha_configured: !!getHomeAssistantConfig(),
     // Notifications, time zone, nightly sync (always strings; defaults when unset)
     ...Object.fromEntries(DEFAULTED_SETTING_KEYS.map(key => [key, getSettingWithDefault(key)])),

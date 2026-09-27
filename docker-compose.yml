@@ -1,6 +1,12 @@
 services:
   vommeal:
-    build: .
+    build:
+      context: .
+      args:
+        # Optional: shows the commit in Einstellungen, e.g.
+        # VOMMEAL_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build
+        # Empty by default, so a plain build and Portainer work as before.
+        VOMMEAL_COMMIT: ${VOMMEAL_COMMIT:-}
     container_name: vommeal
     restart: unless-stopped
     ports:

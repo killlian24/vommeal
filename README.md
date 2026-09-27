@@ -305,6 +305,14 @@ docker compose up -d --build
 
 Die Datenbank im Datenordner wird bei Updates nie angefasst.
 
+**Welche Version läuft?** Ganz unten in den **Einstellungen** (und unter **Verbindungen → Über & Docker**) steht die installierte Version mit Build-Zeit, z. B. „Vommeal 0.1.0 · Build 27.09.2026 14:32 · a1b2c3d“; `/api/health` liefert dasselbe als `version`, `buildTime` und `commit`. Den Commit kennt Vommeal im Docker-Build nur, wenn er beim Bauen mitgegeben wird (der `.git`-Ordner kommt nicht ins Image):
+
+```bash
+VOMMEAL_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build
+```
+
+Ohne `VOMMEAL_COMMIT` (z. B. in Portainer) baut alles wie bisher, nur ohne Commit in der Anzeige.
+
 ---
 
 ## Zugriff von unterwegs

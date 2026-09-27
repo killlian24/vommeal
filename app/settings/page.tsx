@@ -17,6 +17,7 @@ import type { NotifySettings, NotifyTextDefaults } from '@/components/settings/N
 import { UsageSection } from '@/components/settings/UsageSection'
 import { HaDashboardSection, CalendarSection } from '@/components/settings/HaDashboardSection'
 import { AppAddressSection } from '@/components/settings/AppAddressSection'
+import { VersionInfo } from '@/components/settings/VersionInfo'
 import { ThisPhone } from '@/components/settings/ThisPhone'
 import { useCurrentUser } from '@/components/UserProvider'
 import { germanError } from '@/lib/errorText'
@@ -30,6 +31,7 @@ type Settings = {
   ha_dashboard_enabled?: string
   timezone?: string
   app_public_url?: string
+  server_timezone?: string
   notify_text_defaults?: NotifyTextDefaults
   env?: {
     mealie_url: boolean; mealie_token: boolean
@@ -693,7 +695,12 @@ export default function SettingsPage() {
               <li>Jeden Tag wird automatisch ein Backup in DATA_DIR/backups angelegt (14 Tage aufbewahrt).</li>
             </ul>
           </div>
-          <button type="button" onClick={downloadBackup} className={secondaryButtonClass}>
+          <div className="bg-[#0f0f0f] border border-[#262626] rounded-lg px-4 py-3 space-y-1">
+          <p className="text-xs font-semibold text-[#c4c4c4]">Installierte Version</p>
+          <VersionInfo timeZone={settings.server_timezone} />
+          <p className="text-xs text-[#8f8f8f]">Den Commit zeigt Vommeal, wenn beim Bauen VOMMEAL_COMMIT gesetzt ist (siehe README, Updates).</p>
+        </div>
+        <button type="button" onClick={downloadBackup} className={secondaryButtonClass}>
             <Download size={15} />
             Datenbank-Backup herunterladen
           </button>
@@ -715,6 +722,9 @@ export default function SettingsPage() {
 
         </div>
       )}
+
+      {/* Which build is installed, visible without opening anything */}
+      <VersionInfo timeZone={settings.server_timezone} className="pt-6 pb-2 text-center" />
     </div>
   )
 }
