@@ -65,12 +65,6 @@ export function HaDashboardSection({ enabled: initialEnabled, haConfigured, appU
   const [saveError, setSaveError] = useState('')
   const [pushing, setPushing] = useState(false)
   const [pushResult, setPushResult] = useState<{ ok: boolean; error?: string } | null>(null)
-  // window.location is only known in the browser
-  const [origin, setOrigin] = useState('')
-  useEffect(() => { setOrigin(window.location.origin) }, [])
-
-  const feedUrl = appUrl || origin ? calendarFeedUrl(appUrl, origin) : ''
-
   const toggle = async (value: boolean) => {
     setEnabled(value); setSaveError(''); setPushResult(null); setSaving(true)
     try {
@@ -127,8 +121,8 @@ export function HaDashboardSection({ enabled: initialEnabled, haConfigured, appU
             </li>
           ))}
         </ul>
-        {!haConfigured && <Hint>Zuerst oben unter „Home Assistant“ Adresse und Token eintragen.</Hint>}
-        {!appUrl && <Hint>Für Bilder und Links die App-Adresse unter Benachrichtigungen eintragen.</Hint>}
+        {!haConfigured && <Hint>Zuerst unter „Home Assistant“ Adresse und Token eintragen.</Hint>}
+        {!appUrl && <Hint>Für Bilder und Links die App-Adresse eintragen (Verbindungen, App-Adresse).</Hint>}
       </div>
 
       <div className="space-y-2">
@@ -160,8 +154,19 @@ export function HaDashboardSection({ enabled: initialEnabled, haConfigured, appU
         </Hint>
       </div>
 
-      <div className="border-t border-[#262626] pt-4 space-y-2">
-        <SubHeading>Kalender</SubHeading>
+    </>
+  )
+}
+
+/** Calendar feed address with instructions (its own section under Verbindungen). */
+export function CalendarSection({ appUrl }: { appUrl: string }) {
+  // window.location is only known in the browser
+  const [origin, setOrigin] = useState('')
+  useEffect(() => { setOrigin(window.location.origin) }, [])
+  const feedUrl = appUrl || origin ? calendarFeedUrl(appUrl, origin) : ''
+
+  return (
+      <div className="space-y-2">
         <Hint className="mt-0">Alle geplanten Abende als Kalender-Abo (2 Wochen zurück, 6 Wochen voraus, stündlich aktualisiert).</Hint>
         <p
           id="ha-dashboard-feed"
@@ -181,9 +186,8 @@ export function HaDashboardSection({ enabled: initialEnabled, haConfigured, appU
         </ul>
         <Hint className="mt-0">
           Das Gerät muss die Adresse erreichen können: zu Hause im WLAN oder unterwegs über Tailscale.
-          {!appUrl && ' Ohne eingetragene App-Adresse steht hier die Adresse, mit der diese Seite gerade geöffnet ist.'}
+          {!appUrl && ' Ohne eingetragene App-Adresse (Verbindungen, App-Adresse) steht hier die Adresse, mit der diese Seite gerade geöffnet ist.'}
         </Hint>
       </div>
-    </>
   )
 }

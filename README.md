@@ -10,7 +10,7 @@ Essensplaner als Web-App (PWA) für zwei: Wochenplan, Rezepte aus Mealie, Einkau
 
 ## Was Vommeal kann
 
-Vommeal ist fürs Handy gebaut: auf dem Startbildschirm installieren, unten gibt es die Bereiche **Heute**, **Woche**, **Rezepte**, **Einkauf** und **Einstellungen**. Beim ersten Öffnen fragt Vommeal auf jeder Seite „Wer bist du?“, bevor etwas gespeichert wird; die Auswahl gilt pro Gerät. Wer das Handy benutzt, steht unter **Einstellungen → Profile** („Dieses Handy gehört: Kilian“) und lässt sich dort mit **Ändern** und einer Rückfrage wechseln (ein Lesezeichen auf `/#name` überspringt die Frage auf einem neuen Gerät).
+Vommeal ist fürs Handy gebaut: auf dem Startbildschirm installieren, unten gibt es die Bereiche **Heute**, **Woche**, **Rezepte**, **Einkauf** und **Einstellungen**. Beim ersten Öffnen fragt Vommeal auf jeder Seite „Wer bist du?“, bevor etwas gespeichert wird; die Auswahl gilt pro Gerät. Wer das Handy benutzt, steht ganz oben in den **Einstellungen** („Dieses Handy gehört: Kilian“) und lässt sich dort mit **Ändern** und einer Rückfrage wechseln (ein Lesezeichen auf `/#name` überspringt die Frage auf einem neuen Gerät).
 
 Kommt man zurück in die App (oder ist wieder online), laden Woche, Heute und Einkauf im Hintergrund neu, ohne dass offene Fenster zugehen. Die Einkaufsliste holt sich zusätzlich alle 20 Sekunden die Änderungen des anderen.
 
@@ -62,7 +62,7 @@ Kommt man zurück in die App (oder ist wieder online), laden Woche, Heute und Ei
 
 ### Einstellungen und Nutzung
 
-Profile, Mealie, Einkaufsreihenfolge, Home Assistant, [Benachrichtigungen](#benachrichtigungen), [Home Assistant Dashboard](#home-assistant-dashboard), **Nutzung (30 Tage)** und **Über & Docker** (Backup-Download). Die Nutzungsübersicht zählt lokal, welche Funktionen wie oft verwendet werden (z. B. ob Abstimmen genutzt wird); nichts davon verlässt den Server.
+Oben **Für euch**: Dieses Handy gehört, Profile, **Erinnerungen** ([Benachrichtigungen](#benachrichtigungen)) und Einkaufsreihenfolge. Darunter eingeklappt **Verbindungen**: Mealie, Home Assistant, **App-Adresse** (eine Stelle für Erinnerungen, Dashboard und Kalender), [Home Assistant Dashboard](#home-assistant-dashboard), Kalender, **Nutzung (30 Tage)** und **Über & Docker** (Backup-Download). Die Nutzungsübersicht zählt lokal, welche Funktionen wie oft verwendet werden (z. B. ob Abstimmen genutzt wird); nichts davon verlässt den Server.
 
 ---
 
@@ -129,7 +129,8 @@ Port `3333` und das Docker-Netz `172.26.0.0/24` stehen fest in der `docker-compo
 - **Mealie-URL und API-Token:** für den Rezept-Sync. Den Token erstellt man in Mealie unter Profil → API Tokens.
 - **Home Assistant:** URL, Long-Lived Access Token und Todo-Entität der Einkaufsliste (z. B. `todo.einkaufsliste`)
 - **Abendessen-Kategorie:** Mealie-Kategorie, auf die die Rezepte gefiltert werden (z. B. `Abendessen`). In Vommeal angelegte oder per Link importierte Rezepte bekommen diese Kategorie automatisch, sonst würde der nächste Abgleich sie wieder entfernen.
-- **Benachrichtigungen:** Geräte, Person pro Handy, Uhrzeiten, eigene Texte, App-Adresse und Zeitzone (siehe unten)
+- **Erinnerungen:** Geräte, Person pro Handy, Uhrzeiten und eigene Texte (siehe unten)
+- **App-Adresse** (unter Verbindungen): die Adresse, mit der ihr Vommeal öffnet; gebraucht für Links in Erinnerungen, das Dashboard und den Kalender
 - **Home Assistant Dashboard:** Wochenplan-Sensoren und Kalender (siehe unten)
 
 Auf dem Handy Vommeal im Browser öffnen und **„Zum Startbildschirm hinzufügen“** wählen, dann läuft es wie eine App.
@@ -179,7 +180,7 @@ Bilder laufen über Vommeal (`/api/images/<id>`), nicht direkt über Mealie. Der
 
 ### Nächtlicher Mealie-Sync
 
-Jede Nacht um 03:30 (Zeitzone aus den Einstellungen) gleicht Vommeal die Rezepte mit Mealie ab, genau wie der Abgleich-Knopf auf der Seite **Rezepte**: neue und geänderte Rezepte werden übernommen, in Mealie gelöschte entfernt (mit Sicherheitsbremse, siehe [Rezepte](#rezepte)). Abschalten unter **Einstellungen → Mealie**. Eigene Markierungen in Vommeal („Schnell“ / „Aufwendig“) bleiben erhalten.
+Jede Nacht um 03:30 (Zeitzone aus den Einstellungen) gleicht Vommeal die Rezepte mit Mealie ab, genau wie der Abgleich-Knopf auf der Seite **Rezepte**: neue und geänderte Rezepte werden übernommen, in Mealie gelöschte entfernt (mit Sicherheitsbremse, siehe [Rezepte](#rezepte)). Abschalten unter **Einstellungen → Verbindungen → Mealie**. Eigene Markierungen in Vommeal („Schnell“ / „Aufwendig“) bleiben erhalten.
 
 ---
 
@@ -188,9 +189,9 @@ Jede Nacht um 03:30 (Zeitzone aus den Einstellungen) gleicht Vommeal die Rezepte
 Vommeal schickt Erinnerungen als Push-Nachricht über Home Assistant, genauer über die **Home Assistant Companion App** auf den Handys:
 
 1. **HA-App installieren:** Auf beiden Handys die Home Assistant App installieren (iPhone: App Store, Android: Play Store), mit eurem Home Assistant verbinden und Benachrichtigungen erlauben. Jedes Handy erscheint danach in HA als Dienst `notify.mobile_app_<gerätename>`.
-2. **Geräte auswählen:** In Vommeal unter **Einstellungen → Benachrichtigungen** die Geräte ankreuzen, die Nachrichten bekommen sollen.
+2. **Geräte auswählen:** In Vommeal unter **Einstellungen → Erinnerungen** die Geräte ankreuzen, die Nachrichten bekommen sollen.
 3. **Person pro Handy:** Jedem Gerät eine Person zuordnen (z. B. iPhone → Kilian, Android → Susi). Die Nachricht nennt dann den Namen („Susi, heute gibt es …“), und ein Tipp auf einen Knopf wird dieser Person zugeschrieben. Geräte ohne Person bekommen denselben Text ohne Namen.
-4. **App-Adresse eintragen:** Unter **App-Adresse** genau die Adresse eintragen, mit der ihr Vommeal öffnet, also die Tailscale- oder LAN-Adresse (z. B. `http://nas.tailXXXX.ts.net:3333` oder `http://192.168.0.10:3333`). Ein Tipp auf die Nachricht öffnet dann direkt die passende Seite. Ohne Adresse kommen die Nachrichten trotzdem, nur ohne Link und ohne die Knöpfe „Andere Ideen“ / „Selbst planen“.
+4. **App-Adresse eintragen:** Unter **Einstellungen → Verbindungen → App-Adresse** genau die Adresse eintragen, mit der ihr Vommeal öffnet, also die Tailscale- oder LAN-Adresse (z. B. `http://nas.tailXXXX.ts.net:3333` oder `http://192.168.0.10:3333`). Ein Tipp auf die Nachricht öffnet dann direkt die passende Seite. Ohne Adresse kommen die Nachrichten trotzdem, nur ohne Link und ohne die Knöpfe „Andere Ideen“ / „Selbst planen“.
 5. **Testen:** **Testnachricht senden** schickt ein Beispiel mit echten Knöpfen. Die Test-Knöpfe ändern nichts, sie antworten nur mit „✓ Der Knopf funktioniert“. Kommt diese Antwort, ist alles eingerichtet.
 
 ### Erinnerungen und Knöpfe
@@ -211,7 +212,7 @@ Android zeigt höchstens drei Knöpfe, iOS kürzt lange Titel; lange Rezeptnamen
 
 ### Eigene Texte
 
-Unter **Einstellungen → Benachrichtigungen** lassen sich die drei Texte anpassen (höchstens 200 Zeichen, leer = Standardtext). Platzhalter:
+Unter **Einstellungen → Erinnerungen** lassen sich die drei Texte anpassen (höchstens 200 Zeichen, leer = Standardtext). Platzhalter:
 
 | Platzhalter | Bedeutung | Verfügbar in |
 | --- | --- | --- |
@@ -232,7 +233,7 @@ Tag, Uhrzeit und Zeitzone (Standard `Europe/Copenhagen`) lassen sich in den Eins
 
 ## Home Assistant Dashboard
 
-Vommeal zeigt den Wochenplan in Home Assistant an, ohne dass dort etwas eingerichtet werden muss. Voraussetzung sind nur HA-Adresse und Token (**Einstellungen → Home Assistant**); die To-do-Liste wird dafür nicht gebraucht. Ein- und ausschalten unter **Einstellungen → Home Assistant Dashboard → Wochenplan an Home Assistant senden** (Standard: an).
+Vommeal zeigt den Wochenplan in Home Assistant an, ohne dass dort etwas eingerichtet werden muss. Voraussetzung sind nur HA-Adresse und Token (**Einstellungen → Home Assistant**); die To-do-Liste wird dafür nicht gebraucht. Ein- und ausschalten unter **Einstellungen → Verbindungen → Home Assistant Dashboard → Wochenplan an Home Assistant senden** (Standard: an).
 
 ### Sensoren
 
@@ -244,7 +245,7 @@ Vommeal schreibt drei Entitäten über die REST-API von Home Assistant (`POST /a
 | `sensor.vommeal_morgen` | Gericht morgen, sonst „Nichts geplant“ | wie oben |
 | `sensor.vommeal_woche` | geplante Abende dieser Woche, z. B. `5/7` | `frei` (freie Abende bis Sonntag), `tage` und `naechste_woche` (je Mo–So: `datum`, `tag`, `gericht`, `von`, `bild`, `heute`, `vorbei`), `markdown`, `markdown_naechste_woche` |
 
-`markdown` ist ein fertiger Text für eine Markdown-Karte: eine Zeile pro Tag, heute mit 👉 und fett, vergangene Tage durchgestrichen, freie Abende als „—“, „Reste“, „Auswärts essen“ usw. mit ihrem Emoji. `rezept_url`, `entity_picture`, `bild` und die Links im Markdown gibt es nur, wenn unter **Benachrichtigungen → App-Adresse** eingetragen ist, wie ihr Vommeal öffnet. Die Bilder lädt das Handy bzw. der Browser direkt von Vommeal, das Gerät muss diese Adresse also erreichen (zu Hause oder über Tailscale). Wird Home Assistant über `https` geöffnet und Vommeal über `http`, blockiert der Browser die Bilder.
+`markdown` ist ein fertiger Text für eine Markdown-Karte: eine Zeile pro Tag, heute mit 👉 und fett, vergangene Tage durchgestrichen, freie Abende als „—“, „Reste“, „Auswärts essen“ usw. mit ihrem Emoji. `rezept_url`, `entity_picture`, `bild` und die Links im Markdown gibt es nur, wenn unter **Einstellungen → Verbindungen → App-Adresse** eingetragen ist, wie ihr Vommeal öffnet. Die Bilder lädt das Handy bzw. der Browser direkt von Vommeal, das Gerät muss diese Adresse also erreichen (zu Hause oder über Tailscale). Wird Home Assistant über `https` geöffnet und Vommeal über `http`, blockiert der Browser die Bilder.
 
 Wann gesendet wird: sobald sich der Plan ändert (nach ca. 2 Sekunden), beim Start des Containers und sonst alle 30 Minuten. Das regelmäßige Senden ist nötig, weil Home Assistant so angelegte Sensoren bei einem Neustart vergisst. **Jetzt senden** in den Einstellungen schickt sofort. Im Container-Log steht pro Übertragung eine Zeile `[ha-dashboard] sent 3 sensors (…)` bzw. `[ha-dashboard] push failed: …`. Nach dem Ausschalten bleiben die Sensoren bis zum nächsten HA-Neustart mit dem letzten Stand stehen.
 
@@ -272,7 +273,7 @@ Die Kacheln (`tile`) zeigen das Rezeptfoto als rundes Bild und fallen ohne Foto 
 
 ### Kalender
 
-Unter `/api/calendar.ics` gibt es alle geplanten Abende als Kalender-Abo (iCalendar): ein ganztägiger Termin pro Abend, 14 Tage zurück und 42 Tage voraus, mit „Geplant von …“ und dem Rezept-Link (wenn die App-Adresse eingetragen ist). Die fertige Adresse steht unter **Einstellungen → Home Assistant Dashboard → Kalender**, z. B. `http://nas.tailXXXX.ts.net:3333/api/calendar.ics`.
+Unter `/api/calendar.ics` gibt es alle geplanten Abende als Kalender-Abo (iCalendar): ein ganztägiger Termin pro Abend, 14 Tage zurück und 42 Tage voraus, mit „Geplant von …“ und dem Rezept-Link (wenn die App-Adresse eingetragen ist). Die fertige Adresse steht unter **Einstellungen → Verbindungen → Kalender**, z. B. `http://nas.tailXXXX.ts.net:3333/api/calendar.ics`.
 
 - **Home Assistant:** Einstellungen → Geräte & Dienste → Integration hinzufügen → **Remote Calendar** → diese Adresse einfügen. Danach gibt es eine Kalender-Entität, die auch im Kalender-Dashboard erscheint.
 - **iPhone:** Einstellungen → Kalender → Accounts → Account hinzufügen → Andere → **Kalenderabo hinzufügen** → diese Adresse einfügen.

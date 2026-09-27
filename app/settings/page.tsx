@@ -15,7 +15,8 @@ import {
 import { NotificationsSection, parseServiceList } from '@/components/settings/NotificationsSection'
 import type { NotifySettings, NotifyTextDefaults } from '@/components/settings/NotificationsSection'
 import { UsageSection } from '@/components/settings/UsageSection'
-import { HaDashboardSection } from '@/components/settings/HaDashboardSection'
+import { HaDashboardSection, CalendarSection } from '@/components/settings/HaDashboardSection'
+import { AppAddressSection } from '@/components/settings/AppAddressSection'
 import { ThisPhone } from '@/components/settings/ThisPhone'
 import { useCurrentUser } from '@/components/UserProvider'
 import { germanError } from '@/lib/errorText'
@@ -28,6 +29,7 @@ type Settings = {
   mealie_nightly_sync?: string
   ha_dashboard_enabled?: string
   timezone?: string
+  app_public_url?: string
   notify_text_defaults?: NotifyTextDefaults
   env?: {
     mealie_url: boolean; mealie_token: boolean
@@ -48,6 +50,8 @@ const CATEGORY_LABELS: Record<string, string> = {
   other: '📦 Sonstiges',
 }
 type TestResult = { ok: boolean; user?: string; error?: string } | null
+// Sections inside the collapsed "Verbindungen" group
+const CONNECTION_SECTIONS = ['mealie', 'ha', 'app-url', 'ha-dashboard', 'calendar', 'usage', 'about']
 type SectionKey = 'profiles' | 'mealie' | 'shopping' | 'keywords' | 'ha'
 
 const NOTIFY_DEFAULTS: NotifySettings = {
@@ -57,7 +61,6 @@ const NOTIFY_DEFAULTS: NotifySettings = {
   notify_weekly_time: '18:00',
   notify_daily_enabled: '0',
   notify_daily_time: '16:00',
-  app_public_url: '',
   notify_people: '{}',
   notify_text_daily_planned: '',
   notify_text_daily_empty: '',
@@ -88,6 +91,7 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false)
   const [errors, setErrors] = useState<Partial<Record<SectionKey, string>>>({})
   const [open, setOpen] = useState<Set<string>>(new Set(['profiles']))
+  const [connectionsOpen, setConnectionsOpen] = useState(false)
   const [adminToken, setAdminToken] = useState('')
   const { reloadUsers } = useCurrentUser()
 
@@ -102,12 +106,22 @@ export default function SettingsPage() {
 
   const reloadSettings = () => fetch('/api/settings').then(r => r.json()).then((s: Settings) => setSettings(s)).catch(() => {})
 
+  // Opens a section (and the Verbindungen group around it) and scrolls there
+  const openSection = (id: string) => {
+    if (CONNECTION_SECTIONS.includes(id)) setConnectionsOpen(true)
+    setOpen(prev => new Set(prev).add(id))
+    window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 100)
+  }
+
   // Links like /settings#mealie (from "Einstellungen öffnen") open that section
   useEffect(() => {
-    const target = window.location.hash.slice(1)
-    if (!target) return
-    setOpen(prev => new Set(prev).add(target))
-    window.setTimeout(() => document.getElementById(target)?.scrollIntoView({ block: 'start' }), 100)
+    const fromHash = () => {
+      const target = window.location.hash.slice(1)
+      if (target) openSection(target)
+    }
+    fromHash()
+    window.addEventListener('hashchange', fromHash)
+    return () => window.removeEventListener('hashchange', fromHash)
   }, [])
 
   useEffect(() => {
@@ -290,7 +304,6 @@ export default function SettingsPage() {
     notify_weekly_time: settings.notify_weekly_time ?? NOTIFY_DEFAULTS.notify_weekly_time,
     notify_daily_enabled: settings.notify_daily_enabled ?? NOTIFY_DEFAULTS.notify_daily_enabled,
     notify_daily_time: settings.notify_daily_time ?? NOTIFY_DEFAULTS.notify_daily_time,
-    app_public_url: settings.app_public_url ?? NOTIFY_DEFAULTS.app_public_url,
     notify_people: settings.notify_people ?? NOTIFY_DEFAULTS.notify_people,
     notify_text_daily_planned: settings.notify_text_daily_planned ?? NOTIFY_DEFAULTS.notify_text_daily_planned,
     notify_text_daily_empty: settings.notify_text_daily_empty ?? NOTIFY_DEFAULTS.notify_text_daily_empty,
@@ -303,15 +316,18 @@ export default function SettingsPage() {
     <div className="space-y-4 max-w-lg">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-white">Einstellungen</h1>
-        <p className="text-sm text-[#a8a8a8] mt-0.5">Profile, Verbindungen und Vorlieben</p>
+        <p className="text-sm text-[#a8a8a8] mt-0.5">Für euch zwei, darunter die Verbindungen</p>
       </div>
+
+      {/* Für euch: what both of you use day to day */}
+      <h2 className="pt-1 text-xs font-semibold uppercase tracking-wider text-[#9a9a9a]">Für euch</h2>
+      <ThisPhone />
 
       {/* Profile */}
       <Section
         id="profiles" icon="👥" title="Profile" open={open.has('profiles')} onToggle={toggle}
         meta={profileNames.length > 0 && <MetaText>{profileNames.join(' & ')}</MetaText>}
       >
-        <ThisPhone />
         {/* Same ordered list the plan page uses, so colours match there */}
         <div className="space-y-3">
           {[
@@ -338,108 +354,29 @@ export default function SettingsPage() {
         <PrimaryButton onClick={() => save('profiles')} disabled={saving} done={saved} label="Profile speichern" />
       </Section>
 
-      {/* Mealie */}
+      {/* Erinnerungen (push notifications through Home Assistant) */}
       <Section
-        id="mealie" icon="📌" title="Mealie" open={open.has('mealie')} onToggle={toggle}
-        meta={<>
-          {settings.mealie_url && <MetaText className="max-w-[140px]">{settings.mealie_url.replace(/^https?:\/\//, '')}</MetaText>}
-          {settings.has_token && <span className="text-xs text-green-400">✓ Token gesetzt</span>}
-        </>}
-      >
-        <div>
-          <Label htmlFor="mealie-url">Mealie-Adresse</Label>
-          <input
-            id="mealie-url"
-            value={settings.mealie_url}
-            onChange={e => setSettings(s => ({ ...s, mealie_url: e.target.value }))}
-            placeholder="http://192.168.0.124:9925"
-            disabled={settings.env?.mealie_url}
-            className="h-11"
-          />
-          <Hint>
-            {settings.env?.mealie_url ? envHint('MEALIE_URL') : 'Die Adresse im Heimnetz, die das NAS erreicht, z. B. http://192.168.0.124:9925 (einfaches http ist im Heimnetz in Ordnung).'}
-          </Hint>
-        </div>
-        <div>
-          <Label htmlFor="mealie-token">API-Token</Label>
-          <input
-            id="mealie-token"
-            value={settings.mealie_token}
-            onChange={e => setSettings(s => ({ ...s, mealie_token: e.target.value }))}
-            type="password"
-            placeholder={settings.has_token ? '••••••••' : 'Euer Mealie-API-Token'}
-            disabled={settings.env?.mealie_token}
-            className="h-11"
-          />
-          <div className="flex items-start gap-1.5 mt-1.5 text-[#8f8f8f] text-xs">
-            <Info size={12} className="mt-0.5 flex-shrink-0" />
-            <span>{settings.env?.mealie_token ? envHint('MEALIE_TOKEN') : 'Den Token gibt es in Mealie → Profil → API-Tokens.'}</span>
-          </div>
-        </div>
-
-        {/* Dinner category filter */}
-        <div>
-          <Label htmlFor="dinner-category">Kategorie fürs Abendessen</Label>
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <select
-                id="dinner-category"
-                value={settings.dinner_category}
-                onChange={e => setSettings(s => ({ ...s, dinner_category: e.target.value }))}
-                className="w-full h-11 appearance-none pr-8"
-                style={{ background: '#0f0f0f' }}
-              >
-                <option value="">Alle Rezepte (kein Filter)</option>
-                {settings.dinner_category && !categories.some(c => c.name === settings.dinner_category) && (
-                  <option value={settings.dinner_category}>{settings.dinner_category}</option>
-                )}
-                {categories.map(c => (
-                  <option key={c.id} value={c.name}>{c.name}</option>
-                ))}
-              </select>
-              <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#8f8f8f] pointer-events-none" />
-            </div>
-            <button
-              type="button"
-              onClick={loadCategories}
-              disabled={loadingCats || !settings.mealie_url}
-              title="Kategorien aus Mealie laden"
-              aria-label="Kategorien aus Mealie laden"
-              className="h-11 w-11 flex-shrink-0 flex items-center justify-center rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#333] text-[#c4c4c4] hover:text-white transition-all disabled:opacity-40"
-            >
-              <RefreshCw size={15} className={loadingCats ? 'animate-spin' : ''} />
-            </button>
-          </div>
-          <Hint>Nur Rezepte aus dieser Mealie-Kategorie abgleichen (z. B. „Abendessen“). Tippt auf das Pfeil-Symbol, um eure Kategorien zu laden.</Hint>
-        </div>
-
-        <Toggle
-          id="mealie-nightly-sync"
-          label="Rezepte jede Nacht automatisch abgleichen"
-          description="Holt neue und geänderte Rezepte aus Mealie, ohne dass ihr von Hand abgleichen müsst."
-          checked={nightlySync}
-          onChange={value => setSettings(s => ({ ...s, mealie_nightly_sync: value ? '1' : '0' }))}
-        />
-
-        {testResult && (
-          <StatusBox ok={testResult.ok}>
-            {testResult.ok ? <>Verbunden als {testResult.user}</> : germanError(testResult.error, { service: 'mealie', fallback: 'Verbindung hat nicht geklappt' })}
-          </StatusBox>
+        id="notify" icon="🔔" title="Erinnerungen" open={open.has('notify')} onToggle={toggle}
+        meta={notifyDeviceCount > 0 && (
+          <MetaText>{notifyDeviceCount} {notifyDeviceCount === 1 ? 'Gerät' : 'Geräte'}</MetaText>
         )}
-        {errors.mealie && <StatusBox ok={false}>{errors.mealie}</StatusBox>}
-
-        <div className="flex flex-wrap gap-2 pt-1">
-          <button
-            type="button"
-            onClick={test}
-            disabled={testing || !settings.mealie_url}
-            className={secondaryButtonClass}
-          >
-            <RefreshCw size={15} className={testing ? 'animate-spin' : ''} />
-            Verbindung testen
-          </button>
-          <PrimaryButton onClick={() => save('mealie')} disabled={saving} done={saved} label="Speichern" />
-        </div>
+      >
+        {loaded ? (
+          <NotificationsSection
+            initial={notifyInitial}
+            appUrl={settings.app_public_url ?? ''}
+            onOpenAppUrl={() => openSection('app-url')}
+            haConfigured={haConfigured}
+            timezone={settings.timezone}
+            profileNames={profileNames}
+            textDefaults={settings.notify_text_defaults}
+            authedFetch={authedFetch}
+            softFetch={softFetch}
+            onSaved={values => setSettings(s => ({ ...s, ...values }))}
+          />
+        ) : (
+          <p className="text-sm text-[#a8a8a8]">Wird geladen …</p>
+        )}
       </Section>
 
       {/* Einkaufsreihenfolge */}
@@ -527,136 +464,257 @@ export default function SettingsPage() {
         </div>
       </Section>
 
-      {/* Home Assistant */}
-      <Section
-        id="ha" icon="🏠" title="Home Assistant" open={open.has('ha')} onToggle={toggle}
-        meta={<>
-          {settings.ha_url && <MetaText className="max-w-[120px]">{settings.ha_url.replace(/^https?:\/\//, '')}</MetaText>}
-          {settings.has_ha_token && <span className="text-xs text-green-400">✓ Token gesetzt</span>}
-        </>}
+      {/* Verbindungen: the technical part, collapsed */}
+      <button
+        type="button"
+        onClick={() => setConnectionsOpen(o => !o)}
+        aria-expanded={connectionsOpen}
+        aria-controls="settings-connections"
+        className="w-full min-h-[48px] flex items-center justify-between gap-3 pt-3 text-left"
       >
-        <div>
-          <Label htmlFor="ha-url">Home-Assistant-Adresse</Label>
-          <input
-            id="ha-url"
-            value={settings.ha_url}
-            onChange={e => setSettings(s => ({ ...s, ha_url: e.target.value }))}
-            placeholder="http://192.168.0.16:8123"
-            disabled={settings.env?.ha_url}
-            className="h-11"
-          />
-          {settings.env?.ha_url && <Hint>{envHint('HA_URL')}</Hint>}
-        </div>
-        <div>
-          <Label htmlFor="ha-token">Langlebiges Zugriffstoken</Label>
-          <input
-            id="ha-token"
-            value={settings.ha_token}
-            onChange={e => setSettings(s => ({ ...s, ha_token: e.target.value }))}
-            type="password"
-            placeholder={settings.has_ha_token ? '••••••••' : 'eyJhbGci...'}
-            disabled={settings.env?.ha_token}
-            className="h-11"
-          />
-          <Hint>
-            {settings.env?.ha_token ? envHint('HA_TOKEN') : 'HA → Profil → Sicherheit → Langlebige Zugriffstoken'}
-          </Hint>
-        </div>
-        <div>
-          <Label htmlFor="ha-entity">To-do-Liste (Entität)</Label>
-          <input
-            id="ha-entity"
-            value={settings.ha_entity}
-            onChange={e => setSettings(s => ({ ...s, ha_entity: e.target.value }))}
-            placeholder="todo.google_keep_einkaufsliste"
-            disabled={settings.env?.ha_entity}
-            className="h-11"
-          />
-          <Hint>
-            {settings.env?.ha_entity ? envHint('HA_ENTITY') : 'HA → Entwicklerwerkzeuge → Zustände → nach „todo.“ suchen.'}
-          </Hint>
-        </div>
-        {errors.ha && <StatusBox ok={false}>{errors.ha}</StatusBox>}
-        <PrimaryButton onClick={saveHa} disabled={saving} done={haSaved} label="Speichern" />
-      </Section>
-
-      {/* Benachrichtigungen */}
-      <Section
-        id="notify" icon="🔔" title="Benachrichtigungen" open={open.has('notify')} onToggle={toggle}
-        meta={notifyDeviceCount > 0 && (
-          <MetaText>{notifyDeviceCount} {notifyDeviceCount === 1 ? 'Gerät' : 'Geräte'}</MetaText>
-        )}
-      >
-        {loaded ? (
-          <NotificationsSection
-            initial={notifyInitial}
-            haConfigured={haConfigured}
-            timezone={settings.timezone}
-            profileNames={profileNames}
-            textDefaults={settings.notify_text_defaults}
-            authedFetch={authedFetch}
-            softFetch={softFetch}
-            onSaved={values => setSettings(s => ({ ...s, ...values }))}
-          />
-        ) : (
-          <p className="text-sm text-[#a8a8a8]">Wird geladen …</p>
-        )}
-      </Section>
-
-      {/* Home Assistant Dashboard */}
-      <Section
-        id="ha-dashboard" icon="📺" title="Home Assistant Dashboard" open={open.has('ha-dashboard')} onToggle={toggle}
-        meta={loaded && haConfigured && settings.ha_dashboard_enabled !== '0' && <span className="text-xs text-green-400">✓ An</span>}
-      >
-        {loaded ? (
-          <HaDashboardSection
-            enabled={settings.ha_dashboard_enabled !== '0'}
-            haConfigured={haConfigured}
-            appUrl={settings.app_public_url ?? ''}
-            authedFetch={authedFetch}
-            onSaved={value => setSettings(s => ({ ...s, ha_dashboard_enabled: value ? '1' : '0' }))}
-          />
-        ) : (
-          <p className="text-sm text-[#a8a8a8]">Wird geladen …</p>
-        )}
-      </Section>
-
-      {/* Nutzung */}
-      <Section id="usage" icon="📊" title="Nutzung (30 Tage)" open={open.has('usage')} onToggle={toggle}>
-        <UsageSection profileNames={profileNames} authedFetch={authedFetch} softFetch={softFetch} />
-      </Section>
-
-      {/* Über & Docker */}
-      <Section id="about" icon="ℹ️" title="Über & Docker" open={open.has('about')} onToggle={toggle}>
-        <div className="space-y-3 text-sm text-[#a8a8a8]">
-          <p>Ein Essensplaner für zwei. Plant eure Woche, holt Rezepte aus Mealie und bekommt die Einkaufsliste automatisch.</p>
-          <ul className="border-t border-[#262626] pt-3 space-y-1.5 text-xs text-[#9a9a9a] list-disc pl-4">
-            <li>Rezepte liegen lokal in einer SQLite-Datenbank.</li>
-            <li>Mealie-Rezepte werden gespiegelt: in Mealie bearbeiten, hier neu abgleichen.</li>
-            <li>Die Einkaufsliste sortiert Zutaten automatisch nach Kategorien.</li>
-            <li>Die Einkaufsliste lässt sich kopieren und mit allen teilen.</li>
-            <li>Jeden Tag wird automatisch ein Backup in DATA_DIR/backups angelegt (14 Tage aufbewahrt).</li>
-          </ul>
-        </div>
-        <button type="button" onClick={downloadBackup} className={secondaryButtonClass}>
-          <Download size={15} />
-          Datenbank-Backup herunterladen
-        </button>
-        <div className="bg-[#0f0f0f] border border-[#262626] rounded-lg px-4 py-3">
-          <p className="text-xs font-semibold text-[#c4c4c4] mb-2">Docker-Umgebungsvariablen</p>
-          <div className="font-mono text-xs text-[#a8a8a8] space-y-1 break-all">
-            <p className="text-[#8a8a8a]"># Optional: Mealie vorkonfigurieren</p>
-            <p>MEALIE_URL=https://mealie.example.com</p>
-            <p>MEALIE_TOKEN=euer-token</p>
-            <p className="text-[#8a8a8a]"># Optional: Home Assistant vorkonfigurieren</p>
-            <p>HA_URL=http://homeassistant.local:8123</p>
-            <p>HA_TOKEN=euer-token</p>
-            <p>HA_ENTITY=todo.shopping_list</p>
-            <p className="text-[#8a8a8a]"># Speicherort der Daten</p>
-            <p>DATA_DIR=/app/data</p>
+        <span>
+          <span className="block text-xs font-semibold uppercase tracking-wider text-[#9a9a9a]">Verbindungen</span>
+          <span className="block text-xs text-[#8f8f8f] mt-0.5">Mealie, Home Assistant, App-Adresse, Dashboard, Kalender, Nutzung, Docker</span>
+        </span>
+        <ChevronDown size={18} className={`text-[#8f8f8f] flex-shrink-0 transition-transform ${connectionsOpen ? 'rotate-180' : ''}`} />
+      </button>
+      {connectionsOpen && (
+        <div id="settings-connections" className="space-y-4">
+        {/* Mealie */}
+        <Section
+          id="mealie" icon="📌" title="Mealie" open={open.has('mealie')} onToggle={toggle}
+          meta={<>
+            {settings.mealie_url && <MetaText className="max-w-[140px]">{settings.mealie_url.replace(/^https?:\/\//, '')}</MetaText>}
+            {settings.has_token && <span className="text-xs text-green-400">✓ Token gesetzt</span>}
+          </>}
+        >
+          <div>
+            <Label htmlFor="mealie-url">Mealie-Adresse</Label>
+            <input
+              id="mealie-url"
+              value={settings.mealie_url}
+              onChange={e => setSettings(s => ({ ...s, mealie_url: e.target.value }))}
+              placeholder="http://192.168.0.124:9925"
+              disabled={settings.env?.mealie_url}
+              className="h-11"
+            />
+            <Hint>
+              {settings.env?.mealie_url ? envHint('MEALIE_URL') : 'Die Adresse im Heimnetz, die das NAS erreicht, z. B. http://192.168.0.124:9925 (einfaches http ist im Heimnetz in Ordnung).'}
+            </Hint>
           </div>
+          <div>
+            <Label htmlFor="mealie-token">API-Token</Label>
+            <input
+              id="mealie-token"
+              value={settings.mealie_token}
+              onChange={e => setSettings(s => ({ ...s, mealie_token: e.target.value }))}
+              type="password"
+              placeholder={settings.has_token ? '••••••••' : 'Euer Mealie-API-Token'}
+              disabled={settings.env?.mealie_token}
+              className="h-11"
+            />
+            <div className="flex items-start gap-1.5 mt-1.5 text-[#8f8f8f] text-xs">
+              <Info size={12} className="mt-0.5 flex-shrink-0" />
+              <span>{settings.env?.mealie_token ? envHint('MEALIE_TOKEN') : 'Den Token gibt es in Mealie → Profil → API-Tokens.'}</span>
+            </div>
+          </div>
+
+          {/* Dinner category filter */}
+          <div>
+            <Label htmlFor="dinner-category">Kategorie fürs Abendessen</Label>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <select
+                  id="dinner-category"
+                  value={settings.dinner_category}
+                  onChange={e => setSettings(s => ({ ...s, dinner_category: e.target.value }))}
+                  className="w-full h-11 appearance-none pr-8"
+                  style={{ background: '#0f0f0f' }}
+                >
+                  <option value="">Alle Rezepte (kein Filter)</option>
+                  {settings.dinner_category && !categories.some(c => c.name === settings.dinner_category) && (
+                    <option value={settings.dinner_category}>{settings.dinner_category}</option>
+                  )}
+                  {categories.map(c => (
+                    <option key={c.id} value={c.name}>{c.name}</option>
+                  ))}
+                </select>
+                <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#8f8f8f] pointer-events-none" />
+              </div>
+              <button
+                type="button"
+                onClick={loadCategories}
+                disabled={loadingCats || !settings.mealie_url}
+                title="Kategorien aus Mealie laden"
+                aria-label="Kategorien aus Mealie laden"
+                className="h-11 w-11 flex-shrink-0 flex items-center justify-center rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#333] text-[#c4c4c4] hover:text-white transition-all disabled:opacity-40"
+              >
+                <RefreshCw size={15} className={loadingCats ? 'animate-spin' : ''} />
+              </button>
+            </div>
+            <Hint>Nur Rezepte aus dieser Mealie-Kategorie abgleichen (z. B. „Abendessen“). Tippt auf das Pfeil-Symbol, um eure Kategorien zu laden.</Hint>
+          </div>
+
+          <Toggle
+            id="mealie-nightly-sync"
+            label="Rezepte jede Nacht automatisch abgleichen"
+            description="Holt neue und geänderte Rezepte aus Mealie, ohne dass ihr von Hand abgleichen müsst."
+            checked={nightlySync}
+            onChange={value => setSettings(s => ({ ...s, mealie_nightly_sync: value ? '1' : '0' }))}
+          />
+
+          {testResult && (
+            <StatusBox ok={testResult.ok}>
+              {testResult.ok ? <>Verbunden als {testResult.user}</> : germanError(testResult.error, { service: 'mealie', fallback: 'Verbindung hat nicht geklappt' })}
+            </StatusBox>
+          )}
+          {errors.mealie && <StatusBox ok={false}>{errors.mealie}</StatusBox>}
+
+          <div className="flex flex-wrap gap-2 pt-1">
+            <button
+              type="button"
+              onClick={test}
+              disabled={testing || !settings.mealie_url}
+              className={secondaryButtonClass}
+            >
+              <RefreshCw size={15} className={testing ? 'animate-spin' : ''} />
+              Verbindung testen
+            </button>
+            <PrimaryButton onClick={() => save('mealie')} disabled={saving} done={saved} label="Speichern" />
+          </div>
+        </Section>
+
+        {/* Home Assistant */}
+        <Section
+          id="ha" icon="🏠" title="Home Assistant" open={open.has('ha')} onToggle={toggle}
+          meta={<>
+            {settings.ha_url && <MetaText className="max-w-[120px]">{settings.ha_url.replace(/^https?:\/\//, '')}</MetaText>}
+            {settings.has_ha_token && <span className="text-xs text-green-400">✓ Token gesetzt</span>}
+          </>}
+        >
+          <div>
+            <Label htmlFor="ha-url">Home-Assistant-Adresse</Label>
+            <input
+              id="ha-url"
+              value={settings.ha_url}
+              onChange={e => setSettings(s => ({ ...s, ha_url: e.target.value }))}
+              placeholder="http://192.168.0.16:8123"
+              disabled={settings.env?.ha_url}
+              className="h-11"
+            />
+            {settings.env?.ha_url && <Hint>{envHint('HA_URL')}</Hint>}
+          </div>
+          <div>
+            <Label htmlFor="ha-token">Langlebiges Zugriffstoken</Label>
+            <input
+              id="ha-token"
+              value={settings.ha_token}
+              onChange={e => setSettings(s => ({ ...s, ha_token: e.target.value }))}
+              type="password"
+              placeholder={settings.has_ha_token ? '••••••••' : 'eyJhbGci...'}
+              disabled={settings.env?.ha_token}
+              className="h-11"
+            />
+            <Hint>
+              {settings.env?.ha_token ? envHint('HA_TOKEN') : 'HA → Profil → Sicherheit → Langlebige Zugriffstoken'}
+            </Hint>
+          </div>
+          <div>
+            <Label htmlFor="ha-entity">To-do-Liste (Entität)</Label>
+            <input
+              id="ha-entity"
+              value={settings.ha_entity}
+              onChange={e => setSettings(s => ({ ...s, ha_entity: e.target.value }))}
+              placeholder="todo.google_keep_einkaufsliste"
+              disabled={settings.env?.ha_entity}
+              className="h-11"
+            />
+            <Hint>
+              {settings.env?.ha_entity ? envHint('HA_ENTITY') : 'HA → Entwicklerwerkzeuge → Zustände → nach „todo.“ suchen.'}
+            </Hint>
+          </div>
+          {errors.ha && <StatusBox ok={false}>{errors.ha}</StatusBox>}
+          <PrimaryButton onClick={saveHa} disabled={saving} done={haSaved} label="Speichern" />
+        </Section>
+
+        {/* App-Adresse: used by reminders, dashboard and calendar */}
+        <Section
+          id="app-url" icon="🔗" title="App-Adresse" open={open.has('app-url')} onToggle={toggle}
+          meta={settings.app_public_url && <MetaText>{settings.app_public_url.replace(/^https?:\/\//, '')}</MetaText>}
+        >
+          {loaded ? (
+            <AppAddressSection
+              initial={settings.app_public_url ?? ''}
+              authedFetch={authedFetch}
+              onSaved={value => setSettings(s => ({ ...s, app_public_url: value }))}
+            />
+          ) : (
+            <p className="text-sm text-[#a8a8a8]">Wird geladen …</p>
+          )}
+        </Section>
+
+        {/* Home Assistant Dashboard */}
+        <Section
+          id="ha-dashboard" icon="📺" title="Home Assistant Dashboard" open={open.has('ha-dashboard')} onToggle={toggle}
+          meta={loaded && haConfigured && settings.ha_dashboard_enabled !== '0' && <span className="text-xs text-green-400">✓ An</span>}
+        >
+          {loaded ? (
+            <HaDashboardSection
+              enabled={settings.ha_dashboard_enabled !== '0'}
+              haConfigured={haConfigured}
+              appUrl={settings.app_public_url ?? ''}
+              authedFetch={authedFetch}
+              onSaved={value => setSettings(s => ({ ...s, ha_dashboard_enabled: value ? '1' : '0' }))}
+            />
+          ) : (
+            <p className="text-sm text-[#a8a8a8]">Wird geladen …</p>
+          )}
+        </Section>
+
+        {/* Kalender */}
+        <Section id="calendar" icon="📅" title="Kalender" open={open.has('calendar')} onToggle={toggle}>
+          <CalendarSection appUrl={settings.app_public_url ?? ''} />
+        </Section>
+
+        {/* Nutzung */}
+        <Section id="usage" icon="📊" title="Nutzung (30 Tage)" open={open.has('usage')} onToggle={toggle}>
+          <UsageSection profileNames={profileNames} authedFetch={authedFetch} softFetch={softFetch} />
+        </Section>
+
+        {/* Über & Docker */}
+        <Section id="about" icon="ℹ️" title="Über & Docker" open={open.has('about')} onToggle={toggle}>
+          <div className="space-y-3 text-sm text-[#a8a8a8]">
+            <p>Ein Essensplaner für zwei. Plant eure Woche, holt Rezepte aus Mealie und bekommt die Einkaufsliste automatisch.</p>
+            <ul className="border-t border-[#262626] pt-3 space-y-1.5 text-xs text-[#9a9a9a] list-disc pl-4">
+              <li>Rezepte liegen lokal in einer SQLite-Datenbank.</li>
+              <li>Mealie-Rezepte werden gespiegelt: in Mealie bearbeiten, hier neu abgleichen.</li>
+              <li>Die Einkaufsliste sortiert Zutaten automatisch nach Kategorien.</li>
+              <li>Die Einkaufsliste lässt sich kopieren und mit allen teilen.</li>
+              <li>Jeden Tag wird automatisch ein Backup in DATA_DIR/backups angelegt (14 Tage aufbewahrt).</li>
+            </ul>
+          </div>
+          <button type="button" onClick={downloadBackup} className={secondaryButtonClass}>
+            <Download size={15} />
+            Datenbank-Backup herunterladen
+          </button>
+          <div className="bg-[#0f0f0f] border border-[#262626] rounded-lg px-4 py-3">
+            <p className="text-xs font-semibold text-[#c4c4c4] mb-2">Docker-Umgebungsvariablen</p>
+            <div className="font-mono text-xs text-[#a8a8a8] space-y-1 break-all">
+              <p className="text-[#8a8a8a]"># Optional: Mealie vorkonfigurieren</p>
+              <p>MEALIE_URL=https://mealie.example.com</p>
+              <p>MEALIE_TOKEN=euer-token</p>
+              <p className="text-[#8a8a8a]"># Optional: Home Assistant vorkonfigurieren</p>
+              <p>HA_URL=http://homeassistant.local:8123</p>
+              <p>HA_TOKEN=euer-token</p>
+              <p>HA_ENTITY=todo.shopping_list</p>
+              <p className="text-[#8a8a8a]"># Speicherort der Daten</p>
+              <p>DATA_DIR=/app/data</p>
+            </div>
+          </div>
+        </Section>
+
         </div>
-      </Section>
+      )}
     </div>
   )
 }

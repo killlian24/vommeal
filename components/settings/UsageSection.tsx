@@ -5,6 +5,7 @@ import { RefreshCw } from 'lucide-react'
 import { Avatar } from '@/components/Avatar'
 import { StatusBox, secondaryButtonClass } from './ui'
 import type { AuthedFetch } from './ui'
+import { countByLabel, OTHER_LABEL } from '@/lib/eventLabels'
 
 type EventsSummary = {
   since?: string
@@ -19,19 +20,6 @@ type LoadState =
   | { status: 'ok'; data: EventsSummary }
   | { status: 'auth' }
   | { status: 'error'; error: string }
-
-export const EVENT_LABELS: Record<string, string> = {
-  plan_add: 'Abend geplant',
-  autofill: 'Woche gefüllt',
-  fun_open: 'Abstimmen geöffnet',
-  fun_vote: 'Stimmen abgegeben',
-  tonight_suggest_pick: 'Heute-Vorschlag übernommen',
-  rating_prompt: 'Bewertet',
-  recipe_import: 'Rezept importiert',
-  cook_mode_open: 'Kochmodus',
-  shopping_review_open: 'Zutaten der Woche geöffnet',
-  shopping_send_keep: 'Abgeglichen nach Zutaten der Woche',
-}
 
 const TOP_N = 10
 const numberFormat = new Intl.NumberFormat('de-DE')
@@ -97,7 +85,7 @@ export function UsageSection({ profileNames, authedFetch, softFetch }: {
   }
 
   const { data } = state
-  const names = sortedEntries(data.byName)
+  const names = countByLabel(data.byName)
   const users = sortedEntries(data.byUser)
   const activeDays = sortedEntries(data.byDay).length
 
@@ -105,8 +93,11 @@ export function UsageSection({ profileNames, authedFetch, softFetch }: {
     return <p className="text-sm text-[#a8a8a8]">Noch keine Daten. Sobald ihr Vommeal benutzt, erscheint hier, was ihr am häufigsten macht.</p>
   }
 
-  const top = names.slice(0, TOP_N)
-  const rest = names.slice(TOP_N).reduce((sum, [, n]) => sum + n, 0)
+  // "Sonstige" always last
+  const known = names.filter(([label]) => label !== OTHER_LABEL)
+  const other = names.find(([label]) => label === OTHER_LABEL)?.[1] ?? 0
+  const top = known.slice(0, TOP_N)
+  const rest = known.slice(TOP_N).reduce((sum, [, n]) => sum + n, 0) + other
 
   return (
     <>
@@ -127,17 +118,15 @@ export function UsageSection({ profileNames, authedFetch, softFetch }: {
         <p className="text-[13px] font-medium text-[#c4c4c4] mb-2">Häufigste Aktionen</p>
         <table className="w-full text-sm">
           <tbody>
-            {top.map(([name, count]) => (
-              <tr key={name} className="border-t border-[#222] first:border-t-0">
-                <td className="py-2 pr-3 text-[#e0e0e0]">
-                  {EVENT_LABELS[name] ?? <span className="font-mono text-xs text-[#a8a8a8]">{name}</span>}
-                </td>
+            {top.map(([label, count]) => (
+              <tr key={label} className="border-t border-[#222] first:border-t-0">
+                <td className="py-2 pr-3 text-[#e0e0e0]">{label}</td>
                 <td className="py-2 text-right text-white tabular-nums font-medium">{numberFormat.format(count)}</td>
               </tr>
             ))}
             {rest > 0 && (
               <tr className="border-t border-[#222]">
-                <td className="py-2 pr-3 text-[#a8a8a8]">Sonstige ({names.length - TOP_N})</td>
+                <td className="py-2 pr-3 text-[#a8a8a8]">{OTHER_LABEL}</td>
                 <td className="py-2 text-right text-[#a8a8a8] tabular-nums">{numberFormat.format(rest)}</td>
               </tr>
             )}

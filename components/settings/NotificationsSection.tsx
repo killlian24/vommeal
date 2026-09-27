@@ -17,7 +17,6 @@ export type NotifySettings = {
   notify_weekly_time: string
   notify_daily_enabled: string
   notify_daily_time: string
-  app_public_url: string
   notify_people: string
   notify_text_daily_planned: string
   notify_text_daily_empty: string
@@ -105,12 +104,6 @@ export function suggestPerson(serviceId: string, profileNames: string[]): string
   return matches.length === 1 ? matches[0] : ''
 }
 
-function isValidAppUrl(value: string): boolean {
-  if (!value) return true
-  if (!/^https?:\/\//i.test(value)) return false
-  try { new URL(value); return true } catch { return false }
-}
-
 function describeTestErrors(errors: unknown): string[] {
   if (!errors) return []
   const list = Array.isArray(errors) ? errors : typeof errors === 'object' ? Object.entries(errors as Record<string, unknown>).map(([k, v]) => ({ service: k, error: v })) : [errors]
@@ -136,7 +129,6 @@ type FormState = {
   weeklyTime: string
   dailyEnabled: boolean
   dailyTime: string
-  appUrl: string
   texts: TextState
 }
 
@@ -159,7 +151,6 @@ function buildValues(form: FormState, defaults: TextState, profileNames: string[
     notify_weekly_time: form.weeklyTime,
     notify_daily_enabled: form.dailyEnabled ? '1' : '0',
     notify_daily_time: form.dailyTime,
-    app_public_url: form.appUrl.trim(),
     notify_text_daily_planned: text('daily_planned'),
     notify_text_daily_empty: text('daily_empty'),
     notify_text_weekly: text('weekly'),
@@ -167,9 +158,13 @@ function buildValues(form: FormState, defaults: TextState, profileNames: string[
 }
 
 export function NotificationsSection({
-  initial, haConfigured, timezone, profileNames: rawProfileNames, textDefaults, authedFetch, softFetch, onSaved,
+  initial, appUrl, onOpenAppUrl, haConfigured, timezone, profileNames: rawProfileNames, textDefaults, authedFetch, softFetch, onSaved,
 }: {
   initial: NotifySettings
+  /** Saved app address (edited under Verbindungen → App-Adresse) */
+  appUrl: string
+  /** Opens the App-Adresse section */
+  onOpenAppUrl: () => void
   haConfigured: boolean
   timezone?: string
   profileNames: string[]
@@ -199,7 +194,6 @@ export function NotificationsSection({
   const [weeklyTime, setWeeklyTime] = useState(initial.notify_weekly_time || '18:00')
   const [dailyEnabled, setDailyEnabled] = useState(initial.notify_daily_enabled === '1')
   const [dailyTime, setDailyTime] = useState(initial.notify_daily_time || '16:00')
-  const [appUrl, setAppUrl] = useState(initial.app_public_url || '')
   const [texts, setTexts] = useState<TextState>(() => ({
     daily_planned: initialText('daily_planned'),
     daily_empty: initialText('daily_empty'),
@@ -213,7 +207,7 @@ export function NotificationsSection({
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<TestResult>(null)
 
-  const form: FormState = { selected, people, weeklyEnabled, weeklyDay, weeklyTime, dailyEnabled, dailyTime, appUrl, texts }
+  const form: FormState = { selected, people, weeklyEnabled, weeklyDay, weeklyTime, dailyEnabled, dailyTime, texts }
   const values = buildValues(form, defaults, profileNames)
   const serialized = JSON.stringify(values)
   // What the server has; compared against the form to know about unsaved changes
@@ -285,16 +279,10 @@ export function NotificationsSection({
   }
 
   const appUrlTrimmed = appUrl.trim()
-  const appUrlValid = isValidAppUrl(appUrlTrimmed)
 
   /** Saves the whole section. Returns true when the server has the current values. */
   const save = async (): Promise<boolean> => {
     setSaveError(''); setSaved(false)
-    if (!appUrlValid) {
-      // The inline message under the field already explains the problem
-      document.getElementById('app-public-url')?.focus()
-      return false
-    }
     setSaving(true)
     try {
       const res = await authedFetch('/api/settings', {
@@ -550,36 +538,24 @@ export function NotificationsSection({
               value={texts[kind]}
               defaultText={defaults[kind]}
               previewName={previewName}
-              hasAppUrl={appUrlTrimmed !== '' && appUrlValid}
+              hasAppUrl={appUrlTrimmed !== ''}
               onChange={text => { setTexts(prev => ({ ...prev, [kind]: text })); setSaveError('') }}
             />
           ))}
         </div>
       </div>
 
-      {/* Public app URL */}
-      <div className="border-t border-[#262626] pt-4">
-        <Label htmlFor="app-public-url">App-Adresse</Label>
-        <input
-          id="app-public-url"
-          type="url"
-          inputMode="url"
-          autoCapitalize="off"
-          autoCorrect="off"
-          spellCheck={false}
-          value={appUrl}
-          onChange={e => { setAppUrl(e.target.value); setSaveError('') }}
-          placeholder="https://vommeal.tail1234.ts.net"
-          aria-invalid={!appUrlValid}
-          className={`h-11 ${!appUrlValid ? '!border-red-500/70' : ''}`}
-        />
-        {!appUrlValid ? (
-          <p className="text-xs text-red-300 mt-1.5">Die Adresse muss mit http:// oder https:// beginnen.</p>
-        ) : (
-          <Hint>
-            Die Adresse, unter der ihr Vommeal öffnet, z. B. die Tailscale-Adresse. Sonst öffnet ein Tipp auf die Nachricht nichts.
+      {/* The app address lives in one place, under Verbindungen */}
+      <div className="border-t border-[#262626] pt-4 flex items-start gap-3">
+        <div className="flex-1 min-w-0">
+          <p className="text-[13px] font-medium text-[#c4c4c4]">App-Adresse</p>
+          <Hint className="mt-1 break-all">
+            {appUrlTrimmed || 'Nicht eingetragen: ein Tipp auf die Nachricht öffnet dann nichts.'}
           </Hint>
-        )}
+        </div>
+        <button type="button" onClick={onOpenAppUrl} className={`${secondaryButtonClass} flex-shrink-0`}>
+          {appUrlTrimmed ? 'Ändern' : 'Eintragen'}
+        </button>
       </div>
 
       {/* Test notification */}
