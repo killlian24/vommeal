@@ -65,7 +65,7 @@ function ShareImport() {
           type="button"
           onClick={confirm}
           disabled={importing}
-          className="flex items-center justify-center gap-2 h-12 rounded-xl bg-primary hover:bg-primary-hover text-white text-base font-semibold transition-all disabled:opacity-60 active:scale-[0.98]"
+          className="flex items-center justify-center gap-2 h-12 rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold transition-all disabled:opacity-60 active:scale-[0.98]"
         >
           {importing && <Loader2 size={18} className="animate-spin" />}
           {importing ? 'Wird importiert…' : error ? 'Nochmal versuchen' : 'Importieren'}

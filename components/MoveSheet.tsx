@@ -110,7 +110,7 @@ export function MoveSheet({ entry, weekStart, today, busy, onClose, onShift, onM
               <span aria-hidden className="relative flex-shrink-0 w-11 h-6 rounded-full bg-[#333] peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary/60 transition-colors after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5" />
             </label>
             <button onClick={() => onShift(1, fill)} disabled={busy || !later?.ok}
-              className="w-full min-h-[44px] rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-50">
+              className="w-full min-h-[44px] rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-semibold transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none">
               1 Tag später schieben
             </button>
           </div>

@@ -210,7 +210,7 @@ export default function RecipesPage() {
           <button
             type="submit"
             disabled={importing || !importUrl.trim()}
-            className="flex items-center justify-center gap-1.5 px-4 h-11 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-40 flex-shrink-0"
+            className="flex items-center justify-center gap-1.5 px-4 h-11 rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-semibold transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none flex-shrink-0"
           >
             {importing ? <Loader2 size={16} className="animate-spin" /> : null}
             {importing ? 'Lädt…' : 'Hinzufügen'}
@@ -333,7 +333,7 @@ export default function RecipesPage() {
                 <button
                   onClick={sync}
                   disabled={syncing}
-                  className="flex items-center gap-2 px-4 h-11 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-all disabled:opacity-50"
+                  className="flex items-center gap-2 px-4 h-11 rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-medium transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none"
                 >
                   <RefreshCw size={15} className={syncing ? 'animate-spin' : ''} />
                   Aus Mealie holen

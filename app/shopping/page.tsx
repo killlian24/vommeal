@@ -992,7 +992,7 @@ export default function ShoppingPage() {
         <div className="flex items-stretch gap-2">
           <button
             onClick={openReview}
-            className="flex-1 min-h-[48px] flex items-center justify-center gap-2 px-4 rounded-xl bg-primary hover:bg-primary-hover text-white text-base font-semibold transition-colors"
+            className="flex-1 min-h-[48px] flex items-center justify-center gap-2 px-4 rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold transition-colors"
           >
             <ListPlus size={19} />
             Zutaten der Woche
@@ -1047,7 +1047,7 @@ export default function ShoppingPage() {
           value={newItem}
           onChange={e => setNewItem(e.target.value)}
           placeholder="Was fehlt? z. B. Banane, Milch"
-          className="flex-1 min-h-[48px] placeholder:text-[#7a7a7a]"
+          className="flex-1 min-h-[48px]"
           enterKeyHint="enter"
           autoComplete="off"
           aria-label="Eintrag hinzufügen"
@@ -1056,7 +1056,7 @@ export default function ShoppingPage() {
           type="submit"
           disabled={!newItem.trim()}
           aria-label="Auf die Liste"
-          className="min-w-[48px] min-h-[48px] flex items-center justify-center rounded-lg bg-primary hover:bg-primary-hover text-white transition-colors disabled:opacity-40"
+          className="min-w-[48px] min-h-[48px] flex items-center justify-center rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white transition-colors disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none"
         >
           <Plus size={20} />
         </button>
@@ -1083,13 +1083,13 @@ export default function ShoppingPage() {
               value={newStaple}
               onChange={e => setNewStaple(e.target.value)}
               placeholder="z. B. Olivenöl, Knoblauch …"
-              className="flex-1 text-sm min-h-[44px] placeholder:text-[#7a7a7a]"
+              className="flex-1 text-sm min-h-[44px]"
               aria-label="Neuer Vorrat"
               enterKeyHint="done"
             />
             <button
               type="submit"
-              className="px-4 min-h-[44px] rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-colors"
+              className="px-4 min-h-[44px] rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-medium transition-colors"
             >
               Hinzufügen
             </button>
@@ -1135,7 +1135,7 @@ export default function ShoppingPage() {
             onChange={e => setSearch(e.target.value)}
             placeholder="Nach Zutat oder Gericht filtern …"
             aria-label="Einkaufsliste filtern"
-            className="w-full pl-9 pr-11 min-h-[44px] placeholder:text-[#7a7a7a]"
+            className="w-full pl-9 pr-11 min-h-[44px]"
           />
           {search && (
             <button
@@ -1218,7 +1218,7 @@ export default function ShoppingPage() {
                             className="w-10 h-10 flex-shrink-0 flex items-center justify-center"
                           >
                             <span className={`w-[22px] h-[22px] rounded-full border-2 flex items-center justify-center transition-all ${
-                              item.checked ? 'bg-primary border-primary' : 'border-[#555] hover:border-primary'
+                              item.checked ? 'bg-primary border-primary' : 'border-[#6b6b6b] hover:border-primary'
                             }`}>
                               {item.checked && <Check size={12} className="text-white" strokeWidth={3} />}
                             </span>
@@ -1417,7 +1417,7 @@ export default function ShoppingPage() {
                                   className="flex-1 min-w-0 min-h-[52px] flex items-center gap-3 px-2 py-2 rounded-lg text-left hover:bg-[#1a1a1a] disabled:hover:bg-transparent"
                                 >
                                   <span className={`w-[22px] h-[22px] flex-shrink-0 rounded-md border-2 flex items-center justify-center transition-colors ${
-                                    itemSelected ? 'bg-primary border-primary' : isOnList ? 'border-[#3a3a3a] bg-[#262626]' : 'border-[#555]'
+                                    itemSelected ? 'bg-primary border-primary' : isOnList ? 'border-[#3a3a3a] bg-[#262626]' : 'border-[#6b6b6b]'
                                   }`}>
                                     {itemSelected && <Check size={13} className="text-white" strokeWidth={3} />}
                                     {isOnList && <Check size={13} className="text-[#8a8a8a]" strokeWidth={3} />}
@@ -1482,7 +1482,7 @@ export default function ShoppingPage() {
                   <button
                     onClick={closeReview}
                     className={canFinish || (allBought && review.markedBought.length > 0)
-                      ? 'w-full min-h-[48px] rounded-xl bg-primary hover:bg-primary-hover text-white text-base font-semibold transition-colors'
+                      ? 'w-full min-h-[48px] rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold transition-colors'
                       : 'w-full min-h-[48px] rounded-xl bg-[#1c1c1c] border border-[#2a2a2a] text-[#e5e5e5] text-base font-medium'}
                   >
                     {canFinish || (allBought && review.markedBought.length > 0) ? 'Fertig' : 'Schließen'}
@@ -1491,7 +1491,7 @@ export default function ShoppingPage() {
                   <button
                     onClick={commitReview}
                     disabled={selectedCount === 0 || review.phase !== 'select'}
-                    className="w-full min-h-[48px] rounded-xl bg-primary hover:bg-primary-hover disabled:bg-[#2a2a2a] disabled:text-[#9a9a9a] text-white text-base font-semibold transition-colors"
+                    className="w-full min-h-[48px] rounded-xl bg-primary-solid hover:bg-primary-solidHover disabled:bg-[#2a2a2a] disabled:text-[#9a9a9a] text-white text-base font-semibold transition-colors"
                   >
                     {review.phase === 'saving'
                       ? 'Wird hinzugefügt …'
@@ -1513,7 +1513,7 @@ export default function ShoppingPage() {
                   <button
                     onClick={sendToKeep}
                     disabled={review.phase === 'sending'}
-                    className="flex-1 min-h-[48px] flex items-center justify-center gap-2 rounded-xl bg-primary hover:bg-primary-hover disabled:opacity-80 text-white text-base font-semibold transition-colors"
+                    className="flex-1 min-h-[48px] flex items-center justify-center gap-2 rounded-xl bg-primary-solid hover:bg-primary-solidHover disabled:opacity-80 text-white text-base font-semibold transition-colors"
                   >
                     {review.phase === 'sending'
                       ? <><RefreshCw size={17} className="animate-spin" /> Wird gesendet …</>
@@ -1533,7 +1533,7 @@ export default function ShoppingPage() {
                   )}
                   <button
                     onClick={closeReview}
-                    className="flex-1 min-h-[48px] rounded-xl bg-primary hover:bg-primary-hover text-white text-base font-semibold"
+                    className="flex-1 min-h-[48px] rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold"
                   >
                     Fertig
                   </button>

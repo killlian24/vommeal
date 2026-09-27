@@ -227,7 +227,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
           </Link>
         ) : (
           <button type="button" onClick={loadRecipe}
-            className="min-h-[44px] px-4 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-semibold">
+            className="min-h-[44px] px-4 rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-semibold">
             Erneut laden
           </button>
         )}
@@ -275,7 +275,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
           {editing && (
             <>
               <button onClick={save} disabled={saving}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-xs font-medium transition-all disabled:opacity-50">
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-xs font-medium transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none">
                 <Save size={12} />
                 {saving ? 'Speichert…' : 'Speichern'}
               </button>
@@ -396,7 +396,7 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ id: str
           <button
             type="button"
             onClick={openCookMode}
-            className="w-full flex items-center justify-center gap-2 h-12 rounded-xl bg-primary hover:bg-primary-hover text-white text-base font-semibold transition-all active:scale-[0.98]"
+            className="w-full flex items-center justify-center gap-2 h-12 rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold transition-all active:scale-[0.98]"
           >
             <CookingPot size={19} /> Kochen
           </button>

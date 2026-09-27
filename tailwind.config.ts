@@ -19,6 +19,11 @@ const config: Config = {
           DEFAULT: '#f97316',
           hover: '#ea6c0a',
           muted: '#f9731620',
+          // Filled buttons and badges with white text: #fff on DEFAULT is only
+          // 2.8:1, on solid 5.2:1 (WCAG AA). DEFAULT stays for text, icons,
+          // accents and focus rings.
+          solid: '#c2410c',
+          solidHover: '#9a3412',
         },
         amber: {
           muted: '#f59e0b20',
@@ -26,7 +31,6 @@ const config: Config = {
         text: {
           DEFAULT: '#f0f0f0',
           muted: '#9a9a9a',
-          faint: '#767676',
         },
         // Readable text scale for the dark background. Use these instead of
         // ad-hoc greys: body text never darker than ink-muted, hints/labels
@@ -35,7 +39,7 @@ const config: Config = {
           DEFAULT: '#f0f0f0',
           soft: '#c8c8c8',
           muted: '#9a9a9a',
-          hint: '#7a7a7a',
+          hint: '#8c8c8c',
         },
       },
       fontFamily: {

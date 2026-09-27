@@ -117,7 +117,7 @@ function MealThumb({ entry, recipe, size }: { entry?: MealEntry; recipe?: Recipe
 
 const iconBtn = 'w-10 h-10 flex items-center justify-center rounded-lg transition-all'
 // Highlight for the day row under a dragged card
-const dropBadge = 'absolute top-1.5 right-1.5 z-10 px-2 py-0.5 rounded-full bg-primary text-white text-xs font-semibold pointer-events-none'
+const dropBadge = 'absolute top-1.5 right-1.5 z-10 px-2 py-0.5 rounded-full bg-primary-solid text-white text-xs font-semibold pointer-events-none'
 const secondaryBtn = 'min-h-[40px] flex items-center justify-center gap-1.5 px-3 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-ink-soft hover:text-white text-sm font-medium transition-all disabled:opacity-50'
 
 export default function PlanPage() {
@@ -903,7 +903,7 @@ export default function PlanPage() {
       <div className="space-y-2">
         {!loading && freeUpcoming.length > 0 && (
           <button onClick={autofillWeek} disabled={autofilling}
-            className="w-full min-h-[48px] flex items-center justify-center gap-2 px-4 rounded-xl bg-primary hover:bg-primary-hover text-white text-base font-semibold shadow-lg shadow-primary/10 transition-all disabled:opacity-60">
+            className="w-full min-h-[48px] flex items-center justify-center gap-2 px-4 rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold shadow-lg shadow-primary/10 transition-all disabled:opacity-60">
             <Zap size={18} className={autofilling ? 'animate-pulse' : ''} />
             {autofilling ? 'Wird gefüllt…' : `${freeUpcoming.length} ${freeUpcoming.length === 1 ? 'freien Abend' : 'freie Abende'} füllen`}
           </button>
@@ -1176,7 +1176,7 @@ export default function PlanPage() {
                 {customName.trim() && (
                   <div className="flex gap-2">
                     <button onClick={createRecipeAndPlan} disabled={saving || creatingRecipe}
-                      className="flex-1 min-h-[44px] px-3 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-50">
+                      className="flex-1 min-h-[44px] px-3 rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-semibold transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none">
                       {creatingRecipe ? 'Lege an…' : sameNameRecipe(customName) ? 'Vorhandenes Rezept planen' : 'Als Rezept anlegen & planen'}
                     </button>
                     <button onClick={() => planMeal({})} disabled={saving || creatingRecipe}
@@ -1262,7 +1262,7 @@ export default function PlanPage() {
               <div className="text-4xl mb-4">🎉</div>
               <p className="text-white font-semibold text-lg">Alles geplant!</p>
               <p className="text-ink-muted text-sm mt-1 mb-6">Diese Woche gibt es nichts mehr zu swipen.</p>
-              <button onClick={closeFunMode} className="min-h-[44px] px-6 rounded-lg bg-primary text-white text-sm font-medium">Fertig</button>
+              <button onClick={closeFunMode} className="min-h-[44px] px-6 rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-medium">Fertig</button>
             </div>
           </div>
         )
@@ -1325,7 +1325,7 @@ export default function PlanPage() {
                   ))}
                 </div>
                 <div className="px-4 py-3 border-t border-[#1a1a1a] flex-shrink-0">
-                  <button onClick={closeFunMode} className="w-full min-h-[44px] rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-all">Fertig</button>
+                  <button onClick={closeFunMode} className="w-full min-h-[44px] rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-medium transition-all">Fertig</button>
                 </div>
               </div>
             </div>
@@ -1511,7 +1511,7 @@ export default function PlanPage() {
               <button
                 onClick={startFunMode}
                 disabled={funSelectedDates.size === 0}
-                className="w-full min-h-[48px] rounded-xl bg-primary hover:bg-primary-hover text-white text-base font-semibold transition-all disabled:opacity-40"
+                className="w-full min-h-[48px] rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none"
               >
                 Los geht&apos;s – {abende(funSelectedDates.size)} 🎲
               </button>

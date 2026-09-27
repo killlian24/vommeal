@@ -2,7 +2,8 @@
 // see the same colour for the same person everywhere in the app.
 // user1 (index 0) → orange, user2 (index 1) → blue, anything else → grey.
 
-export const AVATAR_COLORS = ['#f97316', '#3b82f6'] as const
+// Dark enough for the white initial (WCAG AA, 5.2:1): orange-700 and blue-600.
+export const AVATAR_COLORS = ['#c2410c', '#2563eb'] as const
 export const AVATAR_FALLBACK = '#6b7280'
 
 export function getInitials(name: string) {

@@ -37,7 +37,7 @@ export function ThisPhone() {
           <div className="flex gap-2">
             <button type="button" onClick={() => setConfirming(false)} className={`${secondaryButtonClass} flex-1`}>Abbrechen</button>
             <button type="button" onClick={() => { setUser(other); setConfirming(false) }}
-              className="flex-1 min-h-[44px] px-4 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-colors">
+              className="flex-1 min-h-[44px] px-4 rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-semibold transition-colors">
               Ja, als {other}
             </button>
           </div>

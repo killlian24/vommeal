@@ -99,7 +99,7 @@ export function PrimaryButton({ onClick, disabled, done, label, doneLabel = 'Ges
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex items-center justify-center gap-1.5 min-h-[44px] px-4 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-all disabled:opacity-50"
+      className="inline-flex items-center justify-center gap-1.5 min-h-[44px] px-4 rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-medium transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none"
     >
       {done ? <><Check size={15} /> {doneLabel}</> : <><Save size={15} /> {label}</>}
     </button>

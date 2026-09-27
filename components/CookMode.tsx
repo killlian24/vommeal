@@ -209,7 +209,7 @@ export default function CookMode({ name, ingredients, instructions, mealieUrl, f
                         }`}
                       >
                         <span className={`w-7 h-7 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${
-                          done ? 'bg-primary border-primary' : 'border-[#555]'
+                          done ? 'bg-primary border-primary' : 'border-[#6b6b6b]'
                         }`}>
                           {done && <Check size={16} className="text-white" strokeWidth={3} />}
                         </span>
@@ -253,7 +253,7 @@ export default function CookMode({ name, ingredients, instructions, mealieUrl, f
           <button
             type="button"
             onClick={next}
-            className="flex-1 flex items-center justify-center gap-1 h-14 rounded-2xl bg-primary hover:bg-primary-hover text-white text-base font-semibold active:scale-[0.97] transition-all"
+            className="flex-1 flex items-center justify-center gap-1 h-14 rounded-2xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold active:scale-[0.97] transition-all"
           >
             {nextLabel}
             {!(isLast && !onIngredients) && total > 0 && <ChevronRight size={20} />}

@@ -501,7 +501,7 @@ export default function TonightPage() {
               <div className="flex flex-col gap-2 mt-4">
                 <Link
                   href={`/recipes/${todayEntry.recipe_id}`}
-                  className="flex items-center justify-center gap-2 h-12 rounded-xl bg-primary hover:bg-primary-hover text-white text-base font-semibold transition-all active:scale-[0.98]"
+                  className="flex items-center justify-center gap-2 h-12 rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-base font-semibold transition-all active:scale-[0.98]"
                 >
                   <BookOpen size={18} /> Rezept öffnen
                 </Link>
@@ -535,7 +535,7 @@ export default function TonightPage() {
                     type="button"
                     onClick={() => postponeToday(true)}
                     disabled={postpone === 'busy'}
-                    className="min-h-[44px] flex items-center justify-center gap-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-50"
+                    className="min-h-[44px] flex items-center justify-center gap-1.5 rounded-lg bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-semibold transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none"
                   >
                     <span aria-hidden>🍽️</span> {EATING_OUT}
                   </button>
@@ -597,7 +597,7 @@ export default function TonightPage() {
                       type="button"
                       onClick={() => cookSuggestion(r, i)}
                       disabled={planning !== null}
-                      className="self-start flex items-center gap-1.5 px-4 h-10 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-semibold transition-all disabled:opacity-50 active:scale-95"
+                      className="self-start flex items-center gap-1.5 px-4 h-10 rounded-xl bg-primary-solid hover:bg-primary-solidHover text-white text-sm font-semibold transition-all disabled:bg-bg-border disabled:text-ink-hint disabled:shadow-none active:scale-95"
                     >
                       {planning === r.id ? 'Wird geplant…' : 'Heute kochen'}
                     </button>
