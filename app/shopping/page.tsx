@@ -5,9 +5,15 @@ import {
   Check, Plus, Copy, RefreshCw, ChevronDown, ChevronRight, X, Moon, Package, Tags, Search,
   MoreHorizontal, ListPlus, Send, CircleCheck,
 } from 'lucide-react'
-import { format, startOfWeek, addDays, parseISO } from 'date-fns'
+import { format, startOfWeek, addDays, parseISO, isToday } from 'date-fns'
 import { de } from 'date-fns/locale'
 import { track } from '@/lib/track'
+import { apiCall } from '@/lib/apiCall'
+import { useRefreshOnResume } from '@/lib/useRefreshOnResume'
+import { categorizeWithRules } from '@/lib/categoryRules'
+import {
+  type QueuedOp, enqueue, applyQueue, flushQueue, newItemId, readCache, writeCache, readQueue, writeQueue,
+} from '@/lib/shoppingOffline'
 import {
   type Selection, initialSelection, isSelected, toggleItem, setMealOn, setAllMealsOn,
   activeMealIds, isHidden, mealCounts, buildCommitLines,
@@ -94,6 +100,8 @@ const CATEGORIES = ['produce', 'meat', 'dairy', 'bakery', 'pantry', 'frozen', 'b
 const UNDO_MS = 6000
 const ERROR_MS = 6000
 const SEARCH_THRESHOLD = 8
+// While the list is open it picks up the partner's changes this often
+const POLL_MS = 20_000
 
 const STATUS_ORDER: Record<ReviewItem['status'], number> = { new: 0, staple: 1, on_list: 2 }
 
@@ -126,6 +134,22 @@ function endOfNextWeek(): string {
 function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`
 }
+
+/** An item added while offline, until the server has it. */
+function offlineItem(op: { id: string; name: string; checked: boolean }): ShoppingItem {
+  return {
+    id: op.id, name: op.name, amount: '', unit: '', checked: op.checked, source: 'manual',
+    category: categorizeWithRules(op.name, {}), recipe_names: [], meal_plan_ids: [],
+  }
+}
+
+/** "14:05" today, otherwise "Mo 14:05" */
+function standLabel(at: number): string {
+  const d = new Date(at)
+  return format(d, isToday(d) ? 'HH:mm' : 'EEEEEE HH:mm', { locale: de })
+}
+
+const changes = (n: number) => `${n} ${n === 1 ? 'Änderung' : 'Änderungen'}`
 
 /** Turn a sync result into a short German summary ("2 an Keep gesendet, 1 aus Keep übernommen"). */
 function syncSummary(data: SyncResult & { added?: number }): string {
@@ -161,6 +185,19 @@ export default function ShoppingPage() {
   const [sel, setSel] = useState<Selection>(() => initialSelection([]))
   const [stapleBusy, setStapleBusy] = useState<string | null>(null)
   const [markBusy, setMarkBusy] = useState<string | null>(null)
+  // Loading failed and there is nothing to show: error state instead of "leer"
+  const [loadError, setLoadError] = useState(false)
+  // No connection at the last attempt
+  const [offline, setOffline] = useState(false)
+  // Shown list is older than the server: time it last came from the server
+  const [staleAt, setStaleAt] = useState<number | null>(null)
+  // Changes made offline, waiting to be sent (mirrored in localStorage)
+  const [queue, setQueue] = useState<QueuedOp[]>([])
+  // When the list last came from the server (for the cache)
+  const serverAt = useRef(0)
+  // Local changes on their way: background loads must not paint over them
+  const mutations = useRef({ pending: 0, gen: 0 })
+  const flushing = useRef(false)
 
   const hideToast = () => {
     if (toastTimer.current) clearTimeout(toastTimer.current)
@@ -198,18 +235,99 @@ export default function ShoppingPage() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const load = async (showSkeleton = true) => {
+  const beginMutation = () => { mutations.current.pending++; mutations.current.gen++ }
+  const endMutation = () => { mutations.current.pending = Math.max(0, mutations.current.pending - 1) }
+
+  const goOffline = () => {
+    setOffline(true)
+    if (serverAt.current) setStaleAt(serverAt.current)
+  }
+
+  const updateQueue = (next: QueuedOp[]) => { writeQueue(next); setQueue(next) }
+  const queueOp = (op: QueuedOp) => updateQueue(enqueue(readQueue(), op))
+
+  // `background`: polling / coming back to the app. Never shows a skeleton
+  // or toast, and drops its result if the list was changed meanwhile.
+  const load = async (showSkeleton = true, background = false) => {
     if (showSkeleton) setLoading(true)
+    const gen = mutations.current.gen
+    const res = await apiCall<ShoppingItem[]>('/api/shopping')
+    if (res.ok && Array.isArray(res.data)) {
+      setOffline(false)
+      if (!(background && (mutations.current.pending > 0 || mutations.current.gen !== gen))) {
+        // Changes still waiting in the queue stay visible on top
+        const waiting = readQueue()
+        serverAt.current = Date.now()
+        setItems(applyQueue(res.data, waiting, offlineItem))
+        setQueue(waiting)
+        setStaleAt(null)
+        setLoadError(false)
+      }
+    } else {
+      // Keep what is on screen, otherwise the list this phone saw last
+      setOffline(res.status === 0)
+      const cache = readCache<ShoppingItem>()
+      const waiting = readQueue()
+      setQueue(waiting)
+      if (serverAt.current) {
+        setStaleAt(serverAt.current)
+      } else if (cache) {
+        setItems(applyQueue(cache.items, waiting, offlineItem))
+        setStaleAt(cache.at)
+        setLoadError(false)
+      } else {
+        setLoadError(true)
+      }
+    }
+    setLoading(false)
+  }
+
+  // Send what was changed offline, oldest first
+  const flush = async () => {
+    const waiting = readQueue()
+    if (waiting.length === 0 || flushing.current) return
+    flushing.current = true
+    beginMutation()
     try {
-      const res = await fetch('/api/shopping')
-      if (!res.ok) throw new Error('shopping load failed')
-      setItems(await res.json())
-    } catch {
-      showToast('Einkaufsliste konnte nicht geladen werden', { duration: ERROR_MS })
+      const { remaining, sent } = await flushQueue(waiting, async op => {
+        if (op.kind === 'check') {
+          const r = await apiCall(`/api/shopping/${op.id}`, { method: 'PATCH', body: { checked: op.checked } })
+          return { ok: r.ok, status: r.status }
+        }
+        if (op.kind === 'delete') {
+          const r = await apiCall(`/api/shopping/${op.id}`, { method: 'DELETE' })
+          return { ok: r.ok, status: r.status }
+        }
+        // 409: sent before, only the answer got lost
+        const r = await apiCall('/api/shopping', { method: 'POST', body: { id: op.id, name: op.name } })
+        if (!r.ok && r.status !== 409) return { ok: false, status: r.status }
+        if (!op.checked) return { ok: true, status: r.status }
+        const c = await apiCall(`/api/shopping/${op.id}`, { method: 'PATCH', body: { checked: true } })
+        return { ok: c.ok, status: c.status }
+      })
+      // Operations queued while sending stay behind the unsent ones
+      const later = readQueue().slice(waiting.length)
+      updateQueue(later.reduce(enqueue, remaining))
+      if (sent > 0) track('shopping_offline_flush', { sent })
     } finally {
-      setLoading(false)
+      endMutation()
+      flushing.current = false
     }
   }
+
+  const reload = async (showSkeleton = false, background = false) => {
+    await flush()
+    await load(showSkeleton, background)
+  }
+
+  // The list this phone saw last, for the next offline start
+  useEffect(() => {
+    if (loading || loadError || !serverAt.current && !staleAt) return
+    writeCache({ items, at: staleAt ?? serverAt.current })
+  }, [items, loading, loadError, staleAt])
+
+  // Coming back to the app or online, and every 20 s while the list is open
+  useRefreshOnResume(() => { reload(false, true) }, { pollMs: POLL_MS })
 
   const loadStaples = async () => {
     try {
@@ -225,7 +343,9 @@ export default function ShoppingPage() {
         try { setCategoryOrder(JSON.parse(s.category_order)) } catch { /* use default */ }
       }
     }).catch(() => { /* keep default order */ })
-    load()
+    // Changes from an earlier offline visit go out first
+    setQueue(readQueue())
+    reload(true)
     loadStaples()
   }, [])
 
@@ -239,22 +359,34 @@ export default function ShoppingPage() {
     if (!item) return
     const checked = !item.checked
     setItems(prev => prev.map(i => i.id === id ? { ...i, checked } : i))
-    try {
-      const res = await fetch(`/api/shopping/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ checked }),
-      })
-      if (!res.ok) throw new Error('toggle failed')
-    } catch {
-      revertItem(id, { checked: !checked })
-      showToast('Eintrag konnte nicht geändert werden', { duration: ERROR_MS })
+    // Offline (or changes still waiting): queue it, sent when back online
+    if (offline || readQueue().length > 0) {
+      queueOp({ kind: 'check', id, checked })
+      if (!offline) flush()
+      return
     }
+    beginMutation()
+    const res = await apiCall(`/api/shopping/${id}`, { method: 'PATCH', body: { checked } })
+    endMutation()
+    if (res.ok) return
+    if (res.status === 0) {
+      goOffline()
+      queueOp({ kind: 'check', id, checked })
+      return
+    }
+    if (res.status === 404) {
+      setItems(prev => prev.filter(i => i.id !== id))
+      showToast(`„${item.name}“ wurde inzwischen entfernt`, { duration: ERROR_MS })
+      return
+    }
+    revertItem(id, { checked: !checked })
+    showToast('Eintrag konnte nicht geändert werden', { duration: ERROR_MS })
   }
 
   const changeCategory = async (id: string, category: string) => {
     const previousCategory = items.find(i => i.id === id)?.category
     setItems(prev => prev.map(i => i.id === id ? { ...i, category } : i))
+    beginMutation()
     try {
       const res = await fetch(`/api/shopping/${id}`, {
         method: 'PATCH',
@@ -266,6 +398,8 @@ export default function ShoppingPage() {
     } catch {
       showToast('Kategorie konnte nicht geändert werden', { duration: ERROR_MS })
       if (previousCategory !== undefined) revertItem(id, { category: previousCategory })
+    } finally {
+      endMutation()
     }
   }
 
@@ -303,7 +437,15 @@ export default function ShoppingPage() {
     const item = items.find(i => i.id === id)
     if (!item) return
     setItems(prev => prev.filter(i => i.id !== id))
+    // Offline: an item added offline just leaves the queue, others are removed later
+    if (offline || readQueue().some(op => op.id === id)) {
+      queueOp({ kind: 'delete', id })
+      showToast(`„${item.name}“ entfernt`)
+      return
+    }
+    beginMutation()
     const pending = fetch(`/api/shopping/${id}`, { method: 'DELETE' })
+    pending.finally(endMutation).catch(() => {})
     showToast(`„${item.name}“ entfernt`, {
       duration: UNDO_MS,
       action: { label: 'Rückgängig', onClick: () => { hideToast(); restoreItems([item], pending) } },
@@ -321,7 +463,9 @@ export default function ShoppingPage() {
     const removed = items.filter(i => i.checked)
     if (removed.length === 0) return
     setItems(prev => prev.filter(i => !i.checked))
+    beginMutation()
     const pending = fetch('/api/shopping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'clear_checked' }) })
+    pending.finally(endMutation).catch(() => {})
     showToast(`${plural(removed.length, 'erledigter Eintrag', 'erledigte Einträge')} entfernt`, {
       duration: UNDO_MS,
       action: { label: 'Rückgängig', onClick: () => { hideToast(); restoreItems(removed, pending) } },
@@ -342,6 +486,7 @@ export default function ShoppingPage() {
     if (!confirm('Wirklich die ganze Liste löschen? Das lässt sich nicht rückgängig machen.')) return
     const previous = items
     setItems([])
+    beginMutation()
     try {
       const res = await fetch('/api/shopping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'clear_all' }) })
       if (!res.ok) throw new Error('clear all failed')
@@ -349,6 +494,8 @@ export default function ShoppingPage() {
     } catch {
       setItems(previous)
       showToast('Liste konnte nicht gelöscht werden', { duration: ERROR_MS })
+    } finally {
+      endMutation()
     }
   }
 
@@ -616,6 +763,8 @@ export default function ShoppingPage() {
 
   // Adds one or more items ("Banane, Milch, Brot"). The field stays open and
   // focused so several things can be typed in a row without tapping "+" again.
+  // Each item gets its id here, so sending it again (offline queue) can
+  // never create a second one.
   const addItem = async () => {
     const names = newItem.split(/[,;\n]+/).map(n => n.trim()).filter(Boolean)
     if (names.length === 0) return
@@ -623,25 +772,33 @@ export default function ShoppingPage() {
     addInputRef.current?.focus()
     const added: ShoppingItem[] = []
     const failed: string[] = []
+    const queued: ShoppingItem[] = []
+    let noConnection = offline
+    beginMutation()
     for (const name of names) {
-      try {
-        const res = await fetch('/api/shopping', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name }),
-        })
-        const item = await res.json().catch(() => ({}))
-        if (res.ok) added.push(item as ShoppingItem)
-        else failed.push(name)
-      } catch {
-        failed.push(name)
+      const id = newItemId()
+      if (noConnection) {
+        queueOp({ kind: 'add', id, name, checked: false })
+        queued.push(offlineItem({ id, name, checked: false }))
+        continue
       }
+      const res = await apiCall<ShoppingItem>('/api/shopping', { method: 'POST', body: { id, name } })
+      if (res.ok) added.push(res.data)
+      else if (res.status === 0) {
+        noConnection = true
+        goOffline()
+        queueOp({ kind: 'add', id, name, checked: false })
+        queued.push(offlineItem({ id, name, checked: false }))
+      } else failed.push(name)
     }
-    if (added.length > 0) {
-      setItems(prev => [...prev, ...added])
-      track('shopping_manual_add', { count: added.length })
+    endMutation()
+    if (added.length > 0 || queued.length > 0) {
+      setItems(prev => [...prev, ...added, ...queued.filter(q => !prev.some(i => i.id === q.id))])
+      track('shopping_manual_add', { count: added.length + queued.length, offline: queued.length })
     }
-    if (failed.length > 0) {
+    if (queued.length > 0 && failed.length === 0) {
+      showToast(queued.length === 1 ? `${queued[0].name} kommt auf die Liste, sobald wieder Verbindung da ist` : `${queued.length} Einträge kommen auf die Liste, sobald wieder Verbindung da ist`, { duration: 4000 })
+    } else if (failed.length > 0) {
       setNewItem(failed.join(', '))
       showToast(`Nicht hinzugefügt: ${failed.join(', ')}`, { duration: ERROR_MS })
     } else if (added.length === 1) {
@@ -779,7 +936,7 @@ export default function ShoppingPage() {
           <div className="min-w-0">
             <h1 className="text-2xl font-bold text-white">Einkauf</h1>
             <p className="text-sm text-[#9a9a9a] mt-0.5">
-              {totalCount === 0 ? 'Liste ist leer' : `${openCount} offen${checkedCount > 0 ? ` · ${checkedCount} erledigt` : ''}`}
+              {loadError ? 'Nicht geladen' : loading ? '\u00a0' : totalCount === 0 ? 'Liste ist leer' : `${openCount} offen${checkedCount > 0 ? ` · ${checkedCount} erledigt` : ''}`}
             </p>
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -851,6 +1008,23 @@ export default function ShoppingPage() {
             <span>Keep</span>
           </button>
         </div>
+
+        {/* Offline or not up to date: which state the list shows, what still waits */}
+        {!loadError && (offline || staleAt !== null || queue.length > 0) && (
+          <div role="status" className="flex items-center gap-2 min-h-[40px] rounded-lg border border-amber-500/25 bg-amber-500/10 pl-3 pr-1 py-1 text-xs text-amber-200">
+            <span className="flex-1 min-w-0">
+              {offline ? 'Offline' : staleAt !== null ? 'Nicht aktuell' : 'Wird gesendet …'}
+              {staleAt !== null && ` · Stand ${standLabel(staleAt)}`}
+              {queue.length > 0 && ` · ${changes(queue.length)} ${offline ? 'warten' : 'noch nicht gesendet'}`}
+            </span>
+            {staleAt !== null && (
+              <button type="button" onClick={() => reload()}
+                className="flex-shrink-0 min-h-[36px] px-2.5 rounded-md font-semibold text-amber-100 hover:bg-amber-500/15">
+                Erneut laden
+              </button>
+            )}
+          </div>
+        )}
 
         {lastSync && (
           <div className={`rounded-lg border px-3 py-2 text-xs ${
@@ -980,6 +1154,18 @@ export default function ShoppingPage() {
       {loading ? (
         <div className="space-y-2">
           {Array.from({ length: 5 }).map((_, i) => <div key={i} className="skeleton h-12 rounded-xl" />)}
+        </div>
+      ) : loadError ? (
+        <div className="text-center py-16">
+          <div className="text-5xl mb-3">📡</div>
+          <p className="text-[#d0d0d0]">Die Liste konnte nicht geladen werden</p>
+          <p className="text-sm text-[#8a8a8a] mt-1">
+            {offline ? 'Keine Verbindung, und auf diesem Handy ist noch keine Liste gespeichert.' : 'Vommeal antwortet gerade nicht.'}
+          </p>
+          <button type="button" onClick={() => reload(true)}
+            className="mt-4 min-h-[44px] px-5 rounded-lg bg-[#1c1c1c] hover:bg-[#252525] border border-[#2a2a2a] text-sm font-medium text-white transition-colors">
+            Erneut laden
+          </button>
         </div>
       ) : totalCount === 0 ? (
         <div className="text-center py-16">
