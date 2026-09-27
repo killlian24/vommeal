@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo } from 'react'
 import {
-  Check, Plus, Copy, RefreshCw, ChevronDown, ChevronRight, X, Package, Tags, Search,
+  Check, Plus, Copy, RefreshCw, ChevronDown, ChevronRight, X, Package, Search,
   MoreHorizontal, ListPlus, Trash2,
 } from 'lucide-react'
 import { format, startOfWeek, addDays, isToday } from 'date-fns'
@@ -223,6 +223,34 @@ export default function ShoppingPage() {
   // succeed is not undone with it.
   const revertItem = (id: string, patch: Partial<ShoppingItem>) =>
     setItems(prev => prev.map(i => i.id === id ? { ...i, ...patch } : i))
+
+  // Long press (or the context menu) on a row opens its category; the tap
+  // that ends a long press must not also check the item off.
+  const categoryPress = useRef<{ id: string; timer: number; x: number; y: number } | null>(null)
+  const suppressTap = useRef(false)
+  const pressStart = (e: React.PointerEvent, id: string) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    suppressTap.current = false
+    const timer = window.setTimeout(() => {
+      categoryPress.current = null
+      suppressTap.current = true
+      try { navigator.vibrate?.(10) } catch { /* not supported */ }
+      setEditingCategoryId(id)
+    }, 500)
+    categoryPress.current = { id, timer, x: e.clientX, y: e.clientY }
+  }
+  const pressMove = (e: React.PointerEvent) => {
+    const p = categoryPress.current
+    if (p && Math.hypot(e.clientX - p.x, e.clientY - p.y) > 8) { window.clearTimeout(p.timer); categoryPress.current = null }
+  }
+  const pressEnd = () => {
+    if (categoryPress.current) window.clearTimeout(categoryPress.current.timer)
+    categoryPress.current = null
+  }
+  const tapRow = (id: string) => {
+    if (suppressTap.current) { suppressTap.current = false; return }
+    toggle(id)
+  }
 
   const toggle = async (id: string) => {
     const item = items.find(i => i.id === id)
@@ -729,13 +757,17 @@ export default function ShoppingPage() {
         </div>
       )}
 
-      {/* Progress bar */}
-      {totalCount > 0 && (
-        <div className="h-1.5 bg-[#1c1c1c] rounded-full overflow-hidden">
-          <div
-            className="h-full bg-primary rounded-full transition-all duration-500"
-            style={{ width: `${(checkedCount / totalCount) * 100}%` }}
-          />
+      {/* Progress, once something is checked off */}
+      {checkedCount > 0 && (
+        <div className="flex items-center gap-3">
+          <div className="flex-1 h-1.5 bg-[#1c1c1c] rounded-full overflow-hidden" role="progressbar"
+            aria-valuemin={0} aria-valuemax={totalCount} aria-valuenow={checkedCount} aria-label="Erledigt">
+            <div
+              className="h-full bg-primary rounded-full transition-all duration-500"
+              style={{ width: `${(checkedCount / totalCount) * 100}%` }}
+            />
+          </div>
+          <span className="flex-shrink-0 text-xs text-ink-muted tabular-nums">{checkedCount} von {totalCount}</span>
         </div>
       )}
 
@@ -828,6 +860,8 @@ export default function ShoppingPage() {
                         >
                           <button
                             onClick={() => toggle(item.id)}
+                            // Keyboard: the context-menu key (or Shift+F10) opens the category
+                            onContextMenu={e => { e.preventDefault(); if (!item.checked) setEditingCategoryId(item.id) }}
                             aria-label={item.checked ? `„${item.name}“ wieder offen` : `„${item.name}“ abhaken`}
                             className="w-10 h-10 flex-shrink-0 flex items-center justify-center"
                           >
@@ -839,9 +873,14 @@ export default function ShoppingPage() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => toggle(item.id)}
+                            onClick={() => tapRow(item.id)}
+                            onPointerDown={e => pressStart(e, item.id)}
+                            onPointerMove={pressMove}
+                            onPointerUp={pressEnd}
+                            onPointerCancel={pressEnd}
+                            onContextMenu={e => { e.preventDefault(); pressEnd(); if (!item.checked) setEditingCategoryId(item.id) }}
                             tabIndex={-1}
-                            className="flex-1 min-w-0 min-h-[40px] flex flex-col justify-center text-left py-1.5"
+                            className="flex-1 min-w-0 min-h-[40px] flex flex-col justify-center text-left py-1.5 select-none [-webkit-touch-callout:none]"
                           >
                             <span className={`block text-[15px] leading-snug ${item.checked ? 'line-through text-[#8a8a8a]' : 'text-white'}`}>
                               {item.name}
@@ -858,34 +897,29 @@ export default function ShoppingPage() {
                             )}
                           </button>
                           <button
-                            onClick={() => setEditingCategoryId(editingCategoryId === item.id ? null : item.id)}
-                            disabled={item.checked}
-                            title="Kategorie ändern"
-                            aria-label={`Kategorie von „${item.name}“ ändern`}
-                            aria-expanded={editingCategoryId === item.id}
-                            className={`${iconBtn} text-[#8a8a8a] hover:text-primary hover:bg-[#1c1c1c] disabled:opacity-30`}
-                          >
-                            <Tags size={15} />
-                          </button>
-                          <button
                             onClick={() => remove(item.id)}
                             aria-label={`„${item.name}“ entfernen`}
-                            className={`${iconBtn} text-[#8a8a8a] hover:text-red-400 hover:bg-[#1c1c1c]`}
+                            className={`${iconBtn} relative after:absolute after:-inset-0.5 text-ink-hint hover:text-red-400 hover:bg-[#1c1c1c]`}
                           >
-                            <X size={16} />
+                            <X size={15} />
                           </button>
                           {editingCategoryId === item.id && (
-                            <div className="basis-full pl-11 pr-2 pb-2">
+                            <div className="basis-full flex items-center gap-1 pl-11 pr-0 pb-2">
                               <select
                                 value={item.category}
                                 onChange={e => changeCategory(item.id, e.target.value)}
-                                aria-label="Kategorie"
-                                className="w-full min-h-[44px] bg-[#101010] border-[#2a2a2a] text-[#d0d0d0]"
+                                aria-label={`Kategorie von „${item.name}“`}
+                                autoFocus
+                                className="flex-1 min-w-0 min-h-[44px] bg-[#101010] border-[#2a2a2a] text-[#d0d0d0]"
                               >
                                 {CATEGORIES.map(c => (
                                   <option key={c} value={c}>{CATEGORY_LABELS[c] || c}</option>
                                 ))}
                               </select>
+                              <button type="button" onClick={() => setEditingCategoryId(null)} aria-label="Kategorie nicht ändern"
+                                className={`${iconBtn} flex-shrink-0 text-ink-muted hover:text-white`}>
+                                <X size={15} />
+                              </button>
                             </div>
                           )}
                         </div>
@@ -898,6 +932,8 @@ export default function ShoppingPage() {
           })}
 
           {/* Clear actions */}
+          <p className="text-xs text-ink-hint text-center">Eintrag lange drücken, um die Kategorie zu ändern</p>
+
           {checkedCount > 0 && (
             <button
               onClick={clearChecked}
